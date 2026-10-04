@@ -1671,6 +1671,41 @@ async function _repaginateCurrentDocument() {
   return true;
 }
 
+// Compact-level CSS for standalone documents (the True-PDF preview/print iframe is a
+// separate document, so it never sees styles.css's html[data-paginate-compact] rules).
+// Returns '' at level 0. Must stay in sync with the level table in styles.css.
+const PAGINATE_COMPACT_LEVELS = {
+  1: { fs: 12,   lh: 1.34, pmb: 6,   h1: 21, h1mb: 8, h2: 15.5, h2mt: 10, h2mb: 5,   h3: 12.5, h3mt: 8, h3mb: 3,   lmt: 5, lmb: 6, li: 2,   tm: 8, pad: '5px 7px', tf: 98, fz: 1 },
+  2: { fs: 11.8, lh: 1.31, pmb: 5,   h1: 20, h1mb: 7, h2: 15,   h2mt: 8,  h2mb: 4,   h3: 12.5, h3mt: 7, h3mb: 3,   lmt: 4, lmb: 5, li: 1.5, tm: 7, pad: '4px 6px', tf: 96, fz: 0.97 },
+  3: { fs: 11.5, lh: 1.28, pmb: 4.5, h1: 19, h1mb: 6, h2: 14.5, h2mt: 7,  h2mb: 3.5, h3: 12,   h3mt: 6, h3mb: 2.5, lmt: 3, lmb: 4, li: 1,   tm: 6, pad: '3px 6px', tf: 94, fz: 0.94 },
+  4: { fs: 11.2, lh: 1.25, pmb: 4,   h1: 18, h1mb: 5, h2: 14,   h2mt: 6,  h2mb: 3,   h3: 12,   h3mt: 5, h3mb: 2,   lmt: 3, lmb: 3, li: 1,   tm: 5, pad: '3px 5px', tf: 92, fz: 0.90 },
+  5: { fs: 10.8, lh: 1.22, pmb: 3,   h1: 17, h1mb: 4, h2: 13.5, h2mt: 5,  h2mb: 2.5, h3: 11.5, h3mt: 4, h3mb: 2,   lmt: 2, lmb: 2, li: 0.5, tm: 4, pad: '2px 4px', tf: 90, fz: 0.86 },
+  6: { fs: 10.5, lh: 1.20, pmb: 2.5, h1: 16, h1mb: 4, h2: 13,   h2mt: 4,  h2mb: 2,   h3: 11.5, h3mt: 3, h3mb: 1.5, lmt: 2, lmb: 2, li: 0,   tm: 3, pad: '2px 4px', tf: 88, fz: 0.82 }
+};
+
+function getPaginateCompactLevel() { return paginateCompactLevel || 0; }
+
+function getPaginateCompactCSS(scope) {
+  const v = PAGINATE_COMPACT_LEVELS[paginateCompactLevel];
+  if (!v) return '';
+  const s = scope || '.pdf-page';
+  return `
+      ${s} { font-size:${v.fs}pt !important; }
+      ${s} p { margin-bottom:${v.pmb}pt !important; line-height:${v.lh} !important; }
+      ${s} li { margin-top:0 !important; margin-bottom:${v.li}pt !important; line-height:${v.lh} !important; }
+      ${s} ul, ${s} ol { margin-top:${v.lmt}pt !important; margin-bottom:${v.lmb}pt !important; }
+      ${s} h1 { font-size:${v.h1}pt !important; margin-bottom:${v.h1mb}pt !important; }
+      ${s} h2 { font-size:${v.h2}pt !important; margin-top:${v.h2mt}pt !important; margin-bottom:${v.h2mb}pt !important; }
+      ${s} h3 { font-size:${v.h3}pt !important; margin-top:${v.h3mt}pt !important; margin-bottom:${v.h3mb}pt !important; }
+      ${s} table { margin:${v.tm}pt 0 !important; font-size:${v.tf}% !important; }
+      ${s} table th, ${s} table td { padding:${v.pad} !important; }
+      ${s} figure.figure-pro { zoom:${v.fz}; }
+      ${paginateCompactLevel >= 3 ? `${s} p:not([style*="text-align"]) { text-align:justify; text-justify:inter-word; }` : ''}
+  `;
+}
+window.getPaginateCompactCSS = getPaginateCompactCSS;
+window.getPaginateCompactLevel = getPaginateCompactLevel;
+
 async function paginateDocumentProgressive() {
   if (_paginateProgressiveBusy || !docContainer) return;
   const pagesOf = () => docContainer.querySelectorAll('.doc-page-canvas').length;
