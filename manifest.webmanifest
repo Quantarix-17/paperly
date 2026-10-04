@@ -1,0 +1,16 @@
+{
+  "name": "PaperLy",
+  "short_name": "PaperLy",
+  "description": "AI diye PDF, Word ebong Slide toiri o edit korar studio",
+  "id": "./",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#ffffff",
+  "theme_color": "#4f7df3",
+  "lang": "bn",
+  "icons": [
+    { "src": "icons/tamim.png", "sizes": "192x192 512x512", "type": "image/png", "purpose": "any" }
+  ]
+}
