@@ -2395,8 +2395,41 @@
   // Opens the .docx once, writes equations, charts, diagrams and OMR bubbles
   // into it, gives every drawing a unique id (Word flags duplicates as
   // unreadable content), and compresses once.
+  // The docx CDN bundle does NOT expose JSZip as a global, so load it on demand
+  // (cdnjs first, jsDelivr as backup). Resolves to JSZip or null; never hangs.
+  let _jszipPromise = null;
+  function ensureJSZip() {
+    if (window.JSZip) return Promise.resolve(window.JSZip);
+    if (_jszipPromise) return _jszipPromise;
+    const urls = [
+      'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js',
+      'https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js'
+    ];
+    const loadOne = (url) => withTimeout(new Promise((resolve, reject) => {
+      const sc = document.createElement('script');
+      sc.src = url; sc.async = true;
+      sc.onload = () => resolve(); sc.onerror = () => { sc.remove(); reject(new Error('failed ' + url)); };
+      document.head.appendChild(sc);
+    }), LIB_TIMEOUT, 'JSZip load');
+    _jszipPromise = (async () => {
+      for (const u of urls) {
+        try { await loadOne(u); if (window.JSZip) return window.JSZip; } catch (e) { console.warn('[WordExport] JSZip load failed:', e.message || e); }
+      }
+      return null;
+    })();   // failure is cached on purpose: don't make every later step wait again
+    return _jszipPromise;
+  }
+
   async function finalizeDocx(blob, st) {
-    const zip = await window.JSZip.loadAsync(blob);
+    const needsPatch = !!((st.maths && st.maths.length) || (st.charts && st.charts.length) ||
+      (st.diagrams && st.diagrams.length) || (st.bubbles && st.bubbles.length));
+    const Z = await ensureJSZip();
+    if (!Z) {
+      // No zip library available: a plain document is still perfectly valid as-is.
+      if (!needsPatch) { console.warn('[WordExport] JSZip unavailable — saving unpatched .docx.'); return blob; }
+      throw new Error('JSZip library could not be loaded');
+    }
+    const zip = await Z.loadAsync(blob);
     const ctx = {
       zip,
       doc: await zip.file('word/document.xml').async('string'),
@@ -2490,6 +2523,7 @@
       };
       BASE = runFormat(stage);
       toast('⏳ Preparing Word export…');
+      await ensureJSZip();   // needed for native charts/equations; non-fatal if it can't load
       const uneditableCount = await withTimeout(prepareMedia(stage, st.media), MEDIA_TOTAL_TIMEOUT + 15000, 'media preparation', 0);  // equations, charts, images -> sharp embedded media
 
       const rootCtx = { indentLeft: 0, indentRight: 0, shading: null, border: null, list: null, listDepth: 0, width: contentTw };
@@ -2560,7 +2594,7 @@
 
     if (failed) {
       if (typeof legacy === 'function') {
-        toast('⚠️ Native Word export failed — saving compatibility version instead.');
+        toast('⚠️ Native Word export failed (' + (failed.message || 'unknown error') + ') — saving compatibility version instead.');
         return legacy(btn);
       }
       toast('⚠️ Word export failed: ' + (failed.message || 'Unknown error'));
