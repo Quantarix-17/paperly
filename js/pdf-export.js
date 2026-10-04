@@ -804,7 +804,7 @@ function hashPDFPreviewSignature() {
   // Include dark mode and monochrome state in the signature so theme changes trigger refresh
   const isDark = document.body.classList.contains('dark');
   const isMonochrome = document.body.classList.contains('photocopy-mode');
-  return `${_pdfDocumentRevision}:${pages.length}:${(hash >>> 0).toString(16)}:dark${isDark ? '1' : '0'}:mono${isMonochrome ? '1' : '0'}`;
+  return `${_pdfDocumentRevision}:${pages.length}:${(hash >>> 0).toString(16)}:dark${isDark ? '1' : '0'}:mono${isMonochrome ? '1' : '0'}:pc${typeof getPaginateCompactLevel === 'function' ? getPaginateCompactLevel() : 0}`;
 }
 
 function prepareDocumentForPDFPreview(signature) {
@@ -1482,6 +1482,7 @@ function _buildFallbackPreviewHTML(pageChunks, isMonochromeMode, isDark) {
       @media screen and (max-width:850px) { body{padding:8px 0 !important;} .pdf-page-wrap { overflow:hidden; margin:0 auto 12px; } .pdf-page { transform-origin:top left; } }
       @page { size:210mm 297mm; margin:0; }
       @media print { html, body { height:auto !important; overflow:visible !important; } .pdf-page-wrap { width:210mm !important; height:297mm !important; background:${pageBg} !important; content-visibility:visible !important; contain-intrinsic-size:auto !important; page-break-before:always !important; break-before:page !important; page-break-after:avoid !important; break-after:avoid !important; margin:0 !important; } .pdf-page-wrap:first-of-type { page-break-before:auto !important; break-before:auto !important; } .pdf-page { width:210mm !important; height:297mm !important; } body { padding:0; background:${pageBg} !important; } }
+      ${typeof getPaginateCompactCSS === 'function' ? getPaginateCompactCSS('.pdf-page') : ''}
     </style>
   </head><body${pageClasses ? ` class="${pageClasses}"` : ''}>${pagesHTML}
   <script>
@@ -1677,6 +1678,7 @@ function buildUnifiedPDFPreviewDocument(pageChunks, isMonochromeMode, isDark) {
       .katex-eq .katex { color:${textColor} !important; }
       @media print { .pdf-page-wrap{content-visibility:visible !important;contain:none !important;contain-intrinsic-size:auto !important;} .pdf-page,.pdf-page *{filter:none !important;backdrop-filter:none !important;mix-blend-mode:normal !important;text-shadow:none !important;} .katex-eq,.katex-eq *{opacity:1 !important;} html, body { height:auto !important; overflow:visible !important; -webkit-overflow-scrolling:auto !important; } body{padding:0 !important;background:${pageBg} !important; display:block !important;} .pdf-page-wrap{width:210mm !important;height:297mm !important;background:${pageBg} !important;margin:0 !important;overflow:hidden !important;page-break-before:always !important; break-before:page !important; page-break-after:avoid !important; break-after:avoid !important; page-break-inside:avoid !important; break-inside:avoid !important;} .pdf-page-wrap:first-of-type{page-break-before:auto !important; break-before:auto !important;} .pdf-page{width:210mm !important;height:297mm !important;transform:none !important;box-shadow:none !important; border:none !important; border-radius:0 !important; page-break-inside:avoid !important; break-inside:avoid !important;} }
       @media screen and (max-width:850px) { body{padding:8px 0 !important; align-items:center;} .pdf-page-wrap{margin:0 auto 12px; overflow:hidden;} .pdf-page{transform-origin:top left;} }
+      ${typeof getPaginateCompactCSS === 'function' ? getPaginateCompactCSS('.pdf-page') : ''}
     </style>
   </head><body${pageClasses ? ` class="${pageClasses}"` : ''}>${pagesHTML}
   <script>
