@@ -25,6 +25,18 @@
 (function () {
   'use strict';
 
+  // ---- speed: computed-style cache ---------------------------------------
+  // The converter asks for the same element's computed style dozens of times
+  // (run format, decoration, background, display ...). The off-screen stage is
+  // static while exporting, so one style object per element is enough.
+  let _csCache = new WeakMap();
+  function getComputedStyle(el, pseudo) {
+    if (pseudo || !el || el.nodeType !== 1) return window.getComputedStyle(el, pseudo);
+    let cs = _csCache.get(el);
+    if (!cs) { cs = window.getComputedStyle(el); _csCache.set(el, cs); }
+    return cs;
+  }
+
   // ---- unit helpers (CSS px @96dpi -> Word units) -----------------------
   const TW = 15;        // 1px = 15 twips (DXA)
   const HALF_PT = 1.5;  // 1px = 0.75pt = 1.5 half-points
@@ -654,7 +666,7 @@
   async function drawSvgToPng(xml, w, h) {
     const img = await loadImage('data:image/svg+xml;charset=utf-8,' + encodeURIComponent(xml), false);
     // ~4x the on-page size (capped) so the PNG stays sharp when zoomed in Word
-    const scale = Math.max(1, Math.min(4, 4096 / w, 4096 / h));
+    const scale = Math.max(1, Math.min(2, 2048 / w, 2048 / h));
     const c = document.createElement('canvas');
     c.width = Math.round(w * scale); c.height = Math.round(h * scale);
     const ctx = c.getContext('2d');
@@ -693,7 +705,16 @@
   }
 
   // KaTeX equation -> transparent PNG, sized like the on-page equation.
+  const _mathPicCache = new Map();   // identical equations are snapshotted only once per export
   async function rasterizeMathNode(eq) {
+    const pe = eq.parentElement || eq;
+    const key = (eq.getAttribute('data-latex') || eq.textContent || '') + '|' + getComputedStyle(pe).fontSize + '|' + getComputedStyle(pe).color;
+    if (key.length > 2 && _mathPicCache.has(key)) return _mathPicCache.get(key);
+    const p = rasterizeMathNodeUncached(eq);
+    if (key.length > 2) _mathPicCache.set(key, p);
+    return p;
+  }
+  async function rasterizeMathNodeUncached(eq) {
     if (!(await ensureHtml2Canvas())) return null;
     const pcs = getComputedStyle(eq.parentElement || eq);
     const holderStage = document.createElement('div');
@@ -712,17 +733,14 @@
       // pass so layout has settled, before snapshotting — otherwise complex
       // equations (fractions, radicals, matrices) can be captured mid-layout
       // or with fallback glyph metrics, which reads as "blurry"/misaligned.
-      if (document.fonts && document.fonts.ready) {
-        await Promise.race([document.fonts.ready, new Promise(r => setTimeout(r, 800))]);
-      }
-      // requestAnimationFrame never fires in a background tab -> would hang forever
+      // (fonts are awaited once, up-front, in the main entry; one short frame is enough here)
       await Promise.race([
-        new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))),
-        new Promise(r => setTimeout(r, 300))
+        new Promise(r => requestAnimationFrame(r)),
+        new Promise(r => setTimeout(r, 60))
       ]);
       // scale 6 on a big equation can exceed canvas limits / take forever: cap total pixels
       const hw = Math.max(1, holder.offsetWidth), hh = Math.max(1, holder.offsetHeight);
-      const mathScale = Math.max(1, Math.min(6, Math.sqrt(12e6 / (hw * hh))));
+      const mathScale = Math.max(1, Math.min(4, Math.sqrt(4e6 / (hw * hh))));   // 4x is still very sharp in Word
       const canvas = await withTimeout(window.html2canvas(holder, {
         backgroundColor: null,
         scale: mathScale,
@@ -892,7 +910,7 @@
             rect = { width: targetW, height: targetW * (vb.h / vb.w) };
           }
           const targetW = Math.max(rect.width, 640);
-          const snapScale = Math.min(4, Math.max(3, targetW / Math.max(1, rect.width)));
+          const snapScale = Math.min(3, Math.max(2, targetW / Math.max(1, rect.width)));
           let m = null;
           try { m = await rasterizeWithHtml2Canvas(n, snapScale); }
           finally { hidden.forEach(el => { el.style.visibility = ''; }); }
@@ -955,7 +973,7 @@
         if (++doneCount % step === 0) toast(`⏳ Preparing visuals ${Math.round(100 * doneCount / nodes.length)}%`);
       }
     };
-    await mapLimit(nodes, 3, async (n) => {
+    await mapLimit(nodes, 6, async (n) => {
       // one stuck visual is skipped instead of freezing the export
       try { await withTimeout(processNode(n), MEDIA_NODE_TIMEOUT, 'visual'); }
       catch (e) { timedOutNodes++; console.warn('[WordExport] skipped a visual:', e); }
@@ -2456,7 +2474,7 @@
     zip.file('word/document.xml', ctx.doc);
     zip.file('word/_rels/document.xml.rels', ctx.rels);
     zip.file('[Content_Types].xml', ctx.types);
-    return zip.generateAsync({ type: 'blob', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', compression: 'DEFLATE' });
+    return zip.generateAsync({ type: 'blob', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', compression: 'DEFLATE', compressionOptions: { level: 1 } });   // level 1: much faster, files barely larger
   }
 
   // ---- download ---------------------------------------------------------
@@ -2504,6 +2522,9 @@
     if (!rawContent || rawContent.includes('Start typing here')) { toast('⚠️ Document is empty.'); return; }
 
     busy(btn, true);
+    const _t0 = performance.now(), _lap = (label) => console.log(`[WordExport] ${label}: ${Math.round(performance.now() - _t0)} ms`);
+    const jszipReady = ensureJSZip();   // start downloading now; runs in parallel with everything below
+    _csCache = new WeakMap(); _mathPicCache.clear();
     let stage = null, failed = null;
     try {
       const D = window.docx;
@@ -2513,7 +2534,7 @@
       Array.from(temp.querySelectorAll('*')).forEach(el => { el.removeAttribute('contenteditable'); el.removeAttribute('spellcheck'); });
 
       stage = mountStage(temp);
-      if (document.fonts && document.fonts.ready) { try { await withTimeout(document.fonts.ready, 3000, 'fonts', undefined); } catch (_) { /* ignore */ } }
+      if (document.fonts && document.fonts.ready) { try { await withTimeout(document.fonts.ready, 1200, 'fonts', undefined); } catch (_) { /* ignore */ } }
 
       const L = pageLayout();
       const contentTw = A4.w - Math.round((L.left + L.right) * TW);
@@ -2523,9 +2544,10 @@
       };
       BASE = runFormat(stage);
       toast('⏳ Preparing Word export…');
-      await ensureJSZip();   // needed for native charts/equations; non-fatal if it can't load
+      await jszipReady;   // already loading in parallel; needed for native charts/equations; non-fatal
       const uneditableCount = await withTimeout(prepareMedia(stage, st.media), MEDIA_TOTAL_TIMEOUT + 15000, 'media preparation', 0);  // equations, charts, images -> sharp embedded media
 
+      _lap('media prepared (images/equations/charts)');
       const rootCtx = { indentLeft: 0, indentRight: 0, shading: null, border: null, list: null, listDepth: 0, width: contentTw };
       const name = typeof getDocumentTopicName === 'function' ? getDocumentTopicName() : 'Document';
 
@@ -2573,6 +2595,7 @@
       };
 
       let blob = await withTimeout(assemble(true, true), 60000, 'docx packing');
+      _lap('docx built');
       try {
         blob = await withTimeout(finalizeDocx(blob, st), 60000, 'docx finalize');
       } catch (e) {
@@ -2580,6 +2603,7 @@
         blob = await withTimeout(assemble(false, false), 60000, 'docx packing (fallback)');
         blob = await withTimeout(finalizeDocx(blob, st), 60000, 'docx finalize (fallback)');
       }
+      _lap('finalized — total');
       downloadBlob(blob, name + '.docx');
       toast(uneditableCount
         ? `⚠️ Saved. ${uneditableCount} chart/figure(s) were exported as pictures, so their text is not editable.`
@@ -2600,6 +2624,9 @@
       toast('⚠️ Word export failed: ' + (failed.message || 'Unknown error'));
     }
   }
+
+  // warm-up: fetch JSZip in the background so the first click doesn't wait for the network
+  setTimeout(() => { try { ensureJSZip(); } catch (_) { /* ignore */ } }, 2000);
 
   window.exportToWordDocumentPro = exportToWordDocumentPro;
   window.exportToWordDocument = exportToWordDocumentPro;
