@@ -562,14 +562,28 @@
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
     return bytes;
   }
+  // Never let a single stalled step (image, font, CDN script, html2canvas)
+  // hang the whole export: reject (or resolve with `fallback`) after `ms`.
+  function withTimeout(promise, ms, label, fallback) {
+    let timer;
+    const timeout = new Promise((resolve, reject) => {
+      timer = setTimeout(() => {
+        if (arguments.length >= 4) resolve(fallback);
+        else reject(new Error((label || 'operation') + ' timed out after ' + Math.round(ms / 1000) + 's'));
+      }, ms);
+    });
+    return Promise.race([Promise.resolve(promise), timeout]).finally(() => clearTimeout(timer));
+  }
+  const IMG_TIMEOUT = 10000, H2C_TIMEOUT = 25000, LIB_TIMEOUT = 8000, MEDIA_NODE_TIMEOUT = 40000, MEDIA_TOTAL_TIMEOUT = 90000;
+
   function loadImage(src, cors) {
-    return new Promise((resolve, reject) => {
+    return withTimeout(new Promise((resolve, reject) => {
       const img = new Image();
       if (cors) img.crossOrigin = 'anonymous';
       img.onload = () => resolve(img);
       img.onerror = () => reject(new Error('image load failed'));
       img.src = src;
-    });
+    }), IMG_TIMEOUT, 'image load');
   }
   function canvasToMedia(canvas, mime) {
     const jpg = mime === 'image/jpeg';
@@ -667,14 +681,14 @@
   async function ensureHtml2Canvas() {
     if (typeof window.html2canvas === 'function') return true;
     if (typeof ensurePDFRenderLibraries === 'function') {
-      try { const libs = await ensurePDFRenderLibraries(); return !!(libs && libs.htmlOK && typeof window.html2canvas === 'function'); } catch (_) { return false; }
+      try { const libs = await withTimeout(ensurePDFRenderLibraries(), LIB_TIMEOUT, 'html2canvas library load'); return !!(libs && libs.htmlOK && typeof window.html2canvas === 'function'); } catch (_) { return false; }
     }
     return false;
   }
 
   async function rasterizeWithHtml2Canvas(el, scale) {
     if (!(await ensureHtml2Canvas())) return null;
-    const canvas = await window.html2canvas(el, { backgroundColor: null, scale: scale || 3 });
+    const canvas = await withTimeout(window.html2canvas(el, { backgroundColor: null, scale: scale || 3, logging: false }), H2C_TIMEOUT, 'html2canvas snapshot');
     return canvasToMedia(canvas);
   }
 
@@ -701,12 +715,20 @@
       if (document.fonts && document.fonts.ready) {
         await Promise.race([document.fonts.ready, new Promise(r => setTimeout(r, 800))]);
       }
-      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
-      const canvas = await window.html2canvas(holder, {
+      // requestAnimationFrame never fires in a background tab -> would hang forever
+      await Promise.race([
+        new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))),
+        new Promise(r => setTimeout(r, 300))
+      ]);
+      // scale 6 on a big equation can exceed canvas limits / take forever: cap total pixels
+      const hw = Math.max(1, holder.offsetWidth), hh = Math.max(1, holder.offsetHeight);
+      const mathScale = Math.max(1, Math.min(6, Math.sqrt(12e6 / (hw * hh))));
+      const canvas = await withTimeout(window.html2canvas(holder, {
         backgroundColor: null,
-        scale: 6,
-        letterRendering: true
-      });
+        scale: mathScale,
+        letterRendering: true,
+        logging: false
+      }), H2C_TIMEOUT, 'equation snapshot');
       // A holder that failed to lay out (0 width/height) must not become an
       // embedded picture: w/h=0 propagates through imageRun()'s size math as
       // NaN, which docx.js writes straight into the picture's <wp:extent> —
@@ -788,7 +810,7 @@
     const mime = jpg ? 'image/jpeg' : type === 'gif' ? 'image/gif' : type === 'bmp' ? 'image/bmp' : 'image/png';
     const blob = new Blob([bytes], { type: mime });
     let src;
-    if (typeof createImageBitmap === 'function') { try { src = await createImageBitmap(blob); } catch (_) { src = null; } }
+    if (typeof createImageBitmap === 'function') { try { src = await withTimeout(createImageBitmap(blob), IMG_TIMEOUT, 'createImageBitmap'); } catch (_) { src = null; } }
     if (!src) {
       const url = await new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = rej; fr.readAsDataURL(blob); });
       src = await loadImage(url, false);
@@ -821,8 +843,11 @@
     let uneditable = 0;
     let doneCount = 0;
     const step = Math.max(1, Math.ceil(nodes.length / 4));
-    await mapLimit(nodes, 3, async (n) => {
+    const deadline = Date.now() + MEDIA_TOTAL_TIMEOUT;
+    let timedOutNodes = 0;
+    const processNode = async (n) => {
       try {
+        if (Date.now() > deadline) { timedOutNodes++; return; }   // out of time: skip the rest, keep what we have
         if (!n.isConnected || isHidden(n)) return;
         if (n.closest('.katex-mathml, .katex-html')) return;
         const tag = tagOf(n);
@@ -868,9 +893,9 @@
           }
           const targetW = Math.max(rect.width, 640);
           const snapScale = Math.min(4, Math.max(3, targetW / Math.max(1, rect.width)));
-          const m = await rasterizeWithHtml2Canvas(n, snapScale);
-
-          hidden.forEach(el => { el.style.visibility = ''; });
+          let m = null;
+          try { m = await rasterizeWithHtml2Canvas(n, snapScale); }
+          finally { hidden.forEach(el => { el.style.visibility = ''; }); }
 
           if (m) {
             Object.assign(m, { w: rect.width, h: rect.height });
@@ -879,7 +904,7 @@
           }
           return;
         }
-        if (tag === 'img' && n.decode) { try { await n.decode(); } catch (_) { /* keep going */ } }
+        if (tag === 'img' && n.decode) { try { await withTimeout(n.decode(), 5000, 'image decode'); } catch (_) { /* keep going */ } }
         const rect = n.getBoundingClientRect();
         if (rect.width < 1 || rect.height < 1) return;
         let m = null;
@@ -929,8 +954,14 @@
       } finally {
         if (++doneCount % step === 0) toast(`⏳ Preparing visuals ${Math.round(100 * doneCount / nodes.length)}%`);
       }
+    };
+    await mapLimit(nodes, 3, async (n) => {
+      // one stuck visual is skipped instead of freezing the export
+      try { await withTimeout(processNode(n), MEDIA_NODE_TIMEOUT, 'visual'); }
+      catch (e) { timedOutNodes++; console.warn('[WordExport] skipped a visual:', e); }
     });
-    if (isMono()) await grayMedia(made);
+    if (timedOutNodes) { console.warn('[WordExport] ' + timedOutNodes + ' visual(s) skipped (timeout).'); uneditable += timedOutNodes; }
+    if (isMono()) await withTimeout(grayMedia(made), 30000, 'grayscale', undefined).catch(() => {});
     return uneditable;
   }
 
@@ -2449,7 +2480,7 @@
       Array.from(temp.querySelectorAll('*')).forEach(el => { el.removeAttribute('contenteditable'); el.removeAttribute('spellcheck'); });
 
       stage = mountStage(temp);
-      if (document.fonts && document.fonts.ready) { try { await document.fonts.ready; } catch (_) { /* ignore */ } }
+      if (document.fonts && document.fonts.ready) { try { await withTimeout(document.fonts.ready, 3000, 'fonts', undefined); } catch (_) { /* ignore */ } }
 
       const L = pageLayout();
       const contentTw = A4.w - Math.round((L.left + L.right) * TW);
@@ -2459,7 +2490,7 @@
       };
       BASE = runFormat(stage);
       toast('⏳ Preparing Word export…');
-      const uneditableCount = await prepareMedia(stage, st.media);  // equations, charts, images -> sharp embedded media
+      const uneditableCount = await withTimeout(prepareMedia(stage, st.media), MEDIA_TOTAL_TIMEOUT + 15000, 'media preparation', 0);  // equations, charts, images -> sharp embedded media
 
       const rootCtx = { indentLeft: 0, indentRight: 0, shading: null, border: null, list: null, listDepth: 0, width: contentTw };
       const name = typeof getDocumentTopicName === 'function' ? getDocumentTopicName() : 'Document';
@@ -2507,13 +2538,13 @@
         return D.Packer.toBlob(doc);
       };
 
-      let blob = await assemble(true, true);
+      let blob = await withTimeout(assemble(true, true), 60000, 'docx packing');
       try {
-        blob = await finalizeDocx(blob, st);
+        blob = await withTimeout(finalizeDocx(blob, st), 60000, 'docx finalize');
       } catch (e) {
         console.warn('[WordExport] native chart/diagram embed failed, retrying with pictures:', e);
-        blob = await assemble(false, false);
-        blob = await finalizeDocx(blob, st);
+        blob = await withTimeout(assemble(false, false), 60000, 'docx packing (fallback)');
+        blob = await withTimeout(finalizeDocx(blob, st), 60000, 'docx finalize (fallback)');
       }
       downloadBlob(blob, name + '.docx');
       toast(uneditableCount
