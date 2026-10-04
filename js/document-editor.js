@@ -500,6 +500,9 @@ async function _paginateDocumentHTMLCore(rawHtml, triggerSave = true) {
   // then-page-break gap seen with math-heavy tables. Waiting for
   // document.fonts.ready here guarantees every contentFits() check from
   // this point on measures the final, real font metrics.
+  if (typeof ensureKatexDelimiterFonts === 'function') {
+    try { await ensureKatexDelimiterFonts(); } catch (_) { /* best effort */ }
+  }
   if (document.fonts && document.fonts.ready) {
     try { await document.fonts.ready; } catch (_) { /* proceed with best-effort metrics */ }
   }
@@ -862,6 +865,9 @@ async function _paginateDocumentCanvasAsyncCore(rawHtml, triggerSave = true) {
   // (not just the katex JS library) before contentFits() starts
   // measuring, or math-heavy rows can be mismeasured against fallback-
   // font heights.
+  if (typeof ensureKatexDelimiterFonts === 'function') {
+    try { await ensureKatexDelimiterFonts(); } catch (_) { /* best effort */ }
+  }
   if (document.fonts && document.fonts.ready) {
     try { await document.fonts.ready; } catch (_) { /* proceed with best-effort metrics */ }
   }
@@ -2114,12 +2120,21 @@ function extractBeautifyHtmlFromAIResponse(rawContent) {
     try {
       return JSON.parse('"' + m[1] + '"');
     } catch (_) {
-      return m[1]
-        .replace(/\\n/g, '\n')
-        .replace(/\\r/g, '')
-        .replace(/\\t/g, '\t')
-        .replace(/\\"/g, '"')
-        .replace(/\\\\/g, '\\');
+      // Single-pass JSON unescape. The old chain of .replace(/\\r/g,'') etc. ran over the
+      // text several times and also matched the "\r" of LaTeX commands, so "\\right]"
+      // became "\ight]" (and \theta/\times/\neq were corrupted too) - which is how matrix
+      // brackets ended up broken or collapsed to plain [ ].
+      return m[1].replace(/\\(u[0-9a-fA-F]{4}|["\\\/bfnrt])/g, (full, k) => {
+        switch (k[0]) {
+          case 'n': return '\n';
+          case 'r': return '';
+          case 't': return '\t';
+          case 'b': return '\b';
+          case 'f': return '\f';
+          case 'u': return String.fromCharCode(parseInt(k.slice(1), 16));
+          default: return k;   // \\  \"  \/
+        }
+      });
     }
   }
   const trimmed = String(rawContent).trim();
@@ -2620,6 +2635,8 @@ function stripEmojiFromNode(root) {
   nodes.forEach(node => {
     const parent = node.parentElement;
     if (!parent || ['SCRIPT', 'STYLE'].includes(parent.tagName)) return;
+    // never touch rendered math glyphs (brackets, arrows, symbols inside KaTeX output)
+    if (parent.closest && parent.closest('.katex, .katex-eq')) return;
     node.nodeValue = node.nodeValue.replace(EMOJI_RE, '');
   });
 }
