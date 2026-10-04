@@ -5900,3 +5900,71 @@ window.addEventListener('load', () => {
     } catch (_) {}
   }, 800);
 });
+
+/* ============================================================
+   DARK MODE EDITOR READABILITY: light-background tagger
+   In dark mode the editor forces light text on every element, so an
+   element with its own light inline background (AI callouts, highlighted
+   cells, figure frames) would show light-on-light. This tags such
+   elements with data-dm-light="1" (and dark ones with data-dm-dark="1");
+   styles.css turns that into dark/light ink. It only sets data-*
+   attributes, never colours, so saved/exported HTML and light mode are
+   unaffected, and the observer ignores its own changes.
+   ============================================================ */
+(function () {
+  'use strict';
+  function parseColor(str) {
+    var m = String(str || '').match(/rgba?\(([^)]+)\)/);
+    if (!m) return null;
+    var p = m[1].split(/[ ,\/]+/).filter(Boolean).map(parseFloat);
+    if (p.length < 3 || p.slice(0, 3).some(isNaN)) return null;
+    return { r: p[0], g: p[1], b: p[2], a: (p.length > 3 && !isNaN(p[3])) ? p[3] : 1 };
+  }
+  function lum(c) {
+    var f = function (v) { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+    return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b);
+  }
+  function bgKind(el) {
+    var cs = getComputedStyle(el);
+    var c = parseColor(cs.backgroundColor);
+    if (c && c.a >= 0.6) return lum(c) > 0.5 ? 'light' : 'dark';
+    var bi = cs.backgroundImage;
+    if (bi && bi !== 'none') {
+      var cols = (bi.match(/rgba?\([^)]+\)/g) || []).map(parseColor).filter(function (x) { return x && x.a >= 0.6; });
+      if (cols.length) {
+        var avg = cols.reduce(function (s, x) { return s + lum(x); }, 0) / cols.length;
+        return avg > 0.5 ? 'light' : 'dark';
+      }
+    }
+    return null;
+  }
+  function isDark() {
+    return document.documentElement.classList.contains('dark') || (document.body && document.body.classList.contains('dark'));
+  }
+  function scan() {
+    if (!isDark()) return;
+    document.querySelectorAll('.doc-page-canvas [style*="background"], .doc-page-canvas [bgcolor]').forEach(function (el) {
+      var kind = null;
+      try { kind = bgKind(el); } catch (_) {}
+      if (kind === 'light') { el.setAttribute('data-dm-light', '1'); el.removeAttribute('data-dm-dark'); }
+      else if (kind === 'dark') { el.setAttribute('data-dm-dark', '1'); el.removeAttribute('data-dm-light'); }
+      else { el.removeAttribute('data-dm-light'); el.removeAttribute('data-dm-dark'); }
+    });
+  }
+  var timer = null;
+  function schedule() { clearTimeout(timer); timer = setTimeout(scan, 250); }
+  function start() {
+    if (!document.body) return;
+    new MutationObserver(function (muts) {
+      for (var i = 0; i < muts.length; i++) {
+        var t = muts[i].target;
+        var el = t && t.nodeType === 1 ? t : (t && t.parentElement);
+        if (!el) continue;
+        if (el === document.documentElement || el === document.body || (el.closest && el.closest('.doc-page-canvas'))) { schedule(); return; }
+        if (muts[i].type === 'childList' && el.querySelector && el.querySelector('.doc-page-canvas')) { schedule(); return; }
+      }
+    }).observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['style', 'class'] });
+    scan();
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
+})();
