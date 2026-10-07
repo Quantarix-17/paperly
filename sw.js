@@ -1,6 +1,6 @@
 // PaperLy — service worker (app shell offline cache).
 // Code update dile CACHE_VERSION ta bodle din (v1 -> v2), tahole purono cache muche jabe.
-const CACHE_VERSION = 'v6';
+const CACHE_VERSION = 'v7';
 const SHELL_CACHE = 'shell-' + CACHE_VERSION;
 const LIB_CACHE = 'libs-' + CACHE_VERSION;
 
@@ -11,7 +11,7 @@ const SHELL_FILES = [
   './js/ai-models.js', './js/command-menu.js', './js/math-renderer.js',
   './js/document-editor.js', './js/ocr.js', './js/pdf-export.js',
   './js/diagram-library.js', './js/chart-library.js', './js/illustration-library.js',
-  './js/element-library.js', './js/slide-studio.js', './js/word-export.js', './js/app.js',
+  './js/element-library.js', './js/instruction-panel.js', './js/slide-studio.js', './js/word-export.js', './js/app.js',
   './js/firebase-config.js', './js/paperly-vault.js', './js/paperly-cloud.js'
 ];
 
