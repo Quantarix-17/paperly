@@ -1,0 +1,912 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover">
+  <!-- ===== PWA: installable app ===== -->
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#4f7df3">
+  <!-- Apply last-selected theme instantly (no light/dark flash on launch) -->
+  <script>try{['theme','mode','local_owner','sync_state'].forEach(function(k){var o=localStorage.getItem('pata_'+k);if(o!==null){if(localStorage.getItem('paperly_'+k)===null)localStorage.setItem('paperly_'+k,o);localStorage.removeItem('pata_'+k);}});}catch(e){}</script>
+  <script>try{if(localStorage.getItem('paperly_mode')==='guest')document.documentElement.classList.add('paperly-guest');else{
+    // Start downloading the Firebase SDK while the page is still loading (the cloud module imports these same URLs later).
+    ['app','auth','firestore'].forEach(function(m){var l=document.createElement('link');l.rel='modulepreload';l.href='https://www.gstatic.com/firebasejs/10.14.1/firebase-'+m+'.js';document.head.appendChild(l);});
+  }}catch(e){}</script>
+  <script>try{if(localStorage.getItem('paperly_theme')==='dark')document.documentElement.classList.add('dark');}catch(e){}</script>
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="PaperLy">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="icon" type="image/png" href="icons/tamim.png">
+  <link rel="apple-touch-icon" href="icons/tamim.png">
+  <title>PaperLy</title>
+
+  <!-- ===== CORE FUNCTION POLYFILLS (MUST BE IN HEAD) ===== -->
+  <script>
+    // Missing dependency fix: isMobileDeviceLayout() is called all over
+    // ui-helpers.js, app.js and this file's own inline scripts, but it was
+    // never actually defined anywhere in the loaded JS. Every unguarded call
+    // (e.g. setMobileView's desktop-sync branch, the topbar-menu resize
+    // handler, and the mobile keyboard/visualViewport sync below) threw a
+    // ReferenceError and silently stopped executing right at that point —
+    // which is why, on phones, the chat input could end up hidden behind the
+    // on-screen keyboard: the script that resizes the layout to the real,
+    // keyboard-shrunk viewport height never got to run. Defining it here
+    // (before anything else loads) makes it match the same <=850px
+    // breakpoint the rest of the app already uses in CSS and in
+    // applyDesktopWorkspaceZoom's own fallback, so it can never be missing.
+    var isMobileDeviceLayout = function() {
+        return window.innerWidth <= 850;
+    };
+
+    // Missing dependencies fix for math-renderer.js & document-editor.js
+    var findBrokenDiagrams = function(container) {
+        return []; 
+    };
+
+    var applyPDFVisualFormat = function(formatName) {
+        var canvases = document.querySelectorAll('.doc-page-canvas');
+        canvases.forEach(function(canvas) {
+            canvas.className = canvas.className.replace(/pdf-format-\w+/g, '').replace(/text-format-\w+/g, '');
+            if (formatName && formatName !== 'none' && formatName !== 'default') {
+                canvas.classList.add(formatName.includes('format-') ? formatName : 'pdf-format-' + formatName);
+            }
+        });
+    };
+
+    // Global UI Action Handlers
+    var toggleDarkMode = function() {
+        var root = document.documentElement;
+        var body = document.body;
+        var isDark = !body.classList.contains('dark');
+        root.classList.toggle('dark', isDark);
+        body.classList.toggle('dark', isDark);
+        if (window.APP_STATE) {
+            window.APP_STATE.theme = isDark ? 'dark' : 'light';
+        }
+        if (typeof window.applyCurrentTheme === 'function') {
+            window.applyCurrentTheme();
+        }
+        localStorage.setItem('studio_theme', isDark ? 'dark' : 'light');
+    };
+
+    var togglePhotocopyMode = function() {
+        var isPhoto = document.body.classList.toggle('photocopy-mode');
+        var label = document.getElementById('mode-toggle-label');
+        if (label) label.textContent = isPhoto ? 'B&W' : 'Color';
+    };
+
+    var setMobileView = function(view) {
+        var container = document.getElementById('main-container');
+        if (container) container.className = 'mobile-view-' + view;
+        document.querySelectorAll('.mobile-nav-btn').forEach(function(btn) { btn.classList.remove('active'); });
+        var activeBtn = document.getElementById('mob-btn-' + view);
+        if (activeBtn) activeBtn.classList.add('active');
+    };
+
+    var switchPreviewTab = function(tab) {
+        // Keep this early stub consistent with the real switchPreviewTab()
+        // in pdf-export.js: a slide-deck tab has no A4 "editor" view, so an
+        // 'editor' request while a slide deck is active should land on the
+        // Slides view instead.
+        if (tab === 'editor' && window.APP_STATE && window.APP_STATE.slideDeck &&
+            Array.isArray(window.APP_STATE.slideDeck.slides) && window.APP_STATE.slideDeck.slides.length) {
+            tab = 'slides';
+        }
+        var docContainer = document.getElementById('document-view-container');
+        var pdfContainer = document.getElementById('pdf-view-container');
+        var slideContainer = document.getElementById('slide-view-container');
+        var editorBtn = document.getElementById('tab-editor-btn');
+        var pdfBtn = document.getElementById('tab-pdf-btn');
+        // The A4 document toolbar (Undo/Paginate/fonts/Bold-Italic/...) only
+        // applies to .doc-page-canvas content — it does nothing useful (and
+        // is confusing) while a slide deck is showing, since slides have
+        // their own dedicated editing toolbar inside #slide-view-container.
+        var docToolbar = document.getElementById('editor-toolbar');
+
+        if (tab === 'editor') {
+            if (docContainer) docContainer.style.display = 'flex';
+            if (pdfContainer) pdfContainer.style.display = 'none';
+            if (slideContainer) slideContainer.style.display = 'none';
+            if (docToolbar) docToolbar.style.display = '';
+            if (editorBtn) editorBtn.classList.add('active');
+            if (pdfBtn) pdfBtn.classList.remove('active');
+        } else if (tab === 'slides') {
+            if (docContainer) docContainer.style.display = 'none';
+            if (pdfContainer) pdfContainer.style.display = 'none';
+            if (slideContainer) slideContainer.style.display = 'flex';
+            if (docToolbar) docToolbar.style.display = 'none';
+            if (editorBtn) editorBtn.classList.remove('active');
+            if (pdfBtn) pdfBtn.classList.remove('active');
+        } else {
+            if (docContainer) docContainer.style.display = 'none';
+            if (pdfContainer) pdfContainer.style.display = 'flex';
+            if (slideContainer) slideContainer.style.display = 'none';
+            if (docToolbar) docToolbar.style.display = '';
+            if (pdfBtn) pdfBtn.classList.add('active');
+            if (editorBtn) editorBtn.classList.remove('active');
+        }
+    };
+    
+    var switchPreviewTabDesktop = switchPreviewTab;
+
+    var executeEditorCommand = function(command, value) {
+        document.execCommand(command, false, value);
+        var activePage = document.querySelector('.doc-page-canvas');
+        if (activePage) activePage.focus();
+    };
+
+    var openAIModelsModal = function() {
+        var modal = document.getElementById('ai-models-modal');
+        if (modal) modal.style.display = 'flex';
+    };
+    
+    var closeAIModelsModal = function() {
+        var modal = document.getElementById('ai-models-modal');
+        if (modal) modal.style.display = 'none';
+    };
+    
+    var toggleAtCommandMenu = function() {
+        var menu = document.getElementById('at-command-menu');
+        var backdrop = document.getElementById('at-command-menu-backdrop');
+        if (menu) {
+            var isOpen = menu.classList.toggle('open');
+            if (backdrop) backdrop.classList.toggle('open', isOpen);
+        }
+    };
+    
+    var closeAtCommandMenu = function() {
+        var menu = document.getElementById('at-command-menu');
+        var backdrop = document.getElementById('at-command-menu-backdrop');
+        if (menu) menu.classList.remove('open');
+        if (backdrop) backdrop.classList.remove('open');
+    };
+  </script>
+  <!-- =================================================== -->
+
+  <!-- Modern UI fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Lexend:wght@500;600;700;800&family=Inter:wght@400;500;600;700;800&family=Hind+Siliguri:wght@400;500;600;700&family=Outfit:wght@500;600;700;800&family=Playfair+Display:wght@600;700;800&family=Lora:wght@400;500;600;700&family=Sora:wght@500;600;700;800&family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&family=DM+Serif+Display&family=Nunito+Sans:wght@400;600;700;800&family=Manrope:wght@500;600;700;800&family=Source+Serif+4:wght@400;500;600;700&family=Cormorant+Garamond:wght@600;700&family=Nunito:wght@400;600;700;800&family=Montserrat:wght@600;700;800&family=Open+Sans:wght@400;500;600;700&family=Archivo:wght@700;800;900&family=Atkinson+Hyperlegible:wght@400;700&family=Noto+Serif+Bengali:wght@400;600;700&display=swap" rel="stylesheet">
+
+  <!-- KaTeX -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+
+  <!-- PDF.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <!-- Mammoth.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+  <!-- Tesseract.js -->
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.0/dist/tesseract.min.js"></script>
+  <!-- html2canvas & jsPDF -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <!-- PptxGenJS (client-side .pptx generation for Slide Studio) -->
+  <script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"></script>
+  <!-- docx (client-side real .docx generation for the Word export; global: window.docx) -->
+  <script src="https://cdn.jsdelivr.net/npm/docx@9.6.1/dist/index.iife.js"></script>
+  <!-- JSZip: lets word-export.js add native (editable) charts to the .docx; optional, charts fall back to pictures without it -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+
+  <!-- Main Styles -->
+  <link rel="stylesheet" href="css/styles.css">
+  <style id="paperly-session-css">
+    /* Single-session model: no tab bar, so give its height back to the layout */
+    #tab-bar,#desktop-close-all-tabs-btn,#topbar-newtab-fab-btn,#tab-new-btn{display:none!important}
+    :root,html,body{--tabbar-height:0px!important;--mobile-tabbar:0px!important}
+    /* Top-left Google account avatar (replaces the app icon) */
+    #topbar #paperly-avatar-btn{position:relative;display:flex!important;align-items:center;justify-content:center;flex:0 0 auto;width:38px!important;height:38px!important;
+      padding:0;border:0;border-radius:50%!important;background:#4f7df3;color:#fff;cursor:pointer;font:700 16px Inter,Arial,sans-serif;box-shadow:0 2px 8px rgba(79,125,243,.35)}
+    #paperly-avatar-btn .pa-face{width:100%;height:100%;border-radius:50%;overflow:hidden;display:flex;align-items:center;justify-content:center}
+    #paperly-avatar-btn .pa-face img{width:100%;height:100%;object-fit:cover;display:block}
+    #paperly-avatar-btn .pa-face svg{width:22px;height:22px}
+    #paperly-avatar-btn .pa-dot{position:absolute;right:-1px;bottom:-1px;width:11px;height:11px;border-radius:50%;background:#9ca3af;border:2px solid #fff;box-sizing:border-box}
+    html.dark #paperly-avatar-btn .pa-dot{border-color:#111827}
+    #paperly-avatar-btn.ok .pa-dot{background:#22c55e}#paperly-avatar-btn.busy .pa-dot{background:#f59e0b}#paperly-avatar-btn.err .pa-dot{background:#ef4444}
+    #topbar .logo-text{margin-left:2px;color:var(--text-primary)!important;font-weight:800!important}
+    .brand-l,.logo .logo-text .brand-l,#paperly-gate h1 .brand-l{color:#2563eb!important;-webkit-text-fill-color:#2563eb;font-weight:inherit!important}
+    html.dark .brand-l,html.dark .logo .logo-text .brand-l,html.dark #paperly-gate h1 .brand-l{color:#4f8cff!important;-webkit-text-fill-color:#4f8cff}
+  </style>
+  <!-- PaperLy: sign-in gate (visible immediately; hidden by js/paperly-cloud.js once the user is signed in) -->
+  <style id="paperly-gate-css">
+    #paperly-gate{position:fixed;inset:0;z-index:2147482000;display:flex;align-items:center;justify-content:center;padding:20px;
+      background:linear-gradient(135deg,#eef2ff,#f8fafc 55%,#e0e7ff);color:#0f172a;font-family:Inter,"Hind Siliguri",Arial,sans-serif;overflow:auto}
+    html.dark #paperly-gate{background:linear-gradient(135deg,#0b1020,#111827 55%,#1e1b4b);color:#f1f5f9}
+    #paperly-gate[hidden]{display:none!important}
+    html.paperly-guest #paperly-gate{display:none!important}
+    #paperly-gate .pg-card{width:100%;max-width:400px;text-align:center;background:#fff;border-radius:26px;padding:30px 26px 24px;box-shadow:0 24px 70px rgba(30,41,99,.22)}
+    html.dark #paperly-gate .pg-card{background:#111827;box-shadow:0 24px 70px rgba(0,0,0,.55)}
+    #paperly-gate .pg-logo{width:72px;height:72px;border-radius:18px;object-fit:cover}
+    #paperly-gate h1{margin:10px 0 2px;font-size:24px;font-weight:800;letter-spacing:-.01em}
+    #paperly-gate h2{margin:14px 0 8px;font-size:19px;font-weight:800}
+    #paperly-gate .pg-muted{margin:0 0 16px;font-size:14px;line-height:1.6;color:#64748b}
+    html.dark #paperly-gate .pg-muted{color:#94a3b8}
+    #paperly-gate .pg-warn{margin:0 0 14px;font-size:13px;color:#b45309;background:#fef3c7;border-radius:10px;padding:8px 10px}
+    #paperly-gate .pg-err{min-height:18px;margin:2px 0 10px;font-size:13px;color:#ef4444}
+    #paperly-gate .pg-btn{width:100%;border:0;border-radius:14px;padding:13px 16px;font:700 15px Inter,Arial,sans-serif;background:#4f7df3;color:#fff;cursor:pointer;
+      display:flex;align-items:center;justify-content:center;gap:10px;transition:transform .12s,opacity .12s}
+    #paperly-gate .pg-btn:active{transform:scale(.97)}#paperly-gate .pg-btn[disabled]{opacity:.55;cursor:not-allowed}
+    #paperly-gate .pg-google{background:#fff;color:#1f2937;border:1px solid #dadce0}
+    html.dark #paperly-gate .pg-google{background:#1f2937;color:#f1f5f9;border-color:#374151}
+    #paperly-gate .pg-sec{background:rgba(148,163,184,.2);color:inherit;flex:1}
+    #paperly-gate .pg-row{display:flex;gap:8px;margin-bottom:12px}
+    #paperly-gate .pg-in{width:100%;box-sizing:border-box;margin-bottom:10px;padding:12px 14px;font:500 15px Inter,Arial,sans-serif;border-radius:12px;
+      border:1px solid #cbd5e1;background:transparent;color:inherit}
+    #paperly-gate .pg-in:focus{outline:2px solid #4f7df3;border-color:transparent}
+    #paperly-gate .pg-link{display:block;width:100%;margin-top:8px;border:0;background:transparent;color:#64748b;font:600 13.5px Inter,Arial,sans-serif;padding:8px;cursor:pointer}
+    #paperly-gate .pg-key{font:700 16px ui-monospace,Menlo,Consolas,monospace;letter-spacing:.04em;word-break:break-all;padding:14px;border-radius:12px;background:rgba(79,125,243,.1);margin-bottom:12px;user-select:all}
+    #paperly-gate .pg-check{display:flex;gap:8px;align-items:center;justify-content:center;font-size:13.5px;margin:4px 0 14px;cursor:pointer}
+    #paperly-gate .pg-spin{width:38px;height:38px;margin:22px auto 14px;border-radius:50%;border:4px solid rgba(79,125,243,.2);border-top-color:#4f7df3;animation:pgspin .8s linear infinite}
+    #paperly-gate .pg-tabs{display:flex;gap:4px;padding:4px;margin:14px 0 4px;border-radius:14px;background:rgba(148,163,184,.18)}
+    #paperly-gate .pg-tabs button{flex:1;border:0;border-radius:10px;padding:9px 10px;font:700 14px Inter,Arial,sans-serif;background:transparent;color:inherit;cursor:pointer;opacity:.7}
+    #paperly-gate .pg-tabs button.on{background:#4f7df3;color:#fff;opacity:1}
+    #paperly-gate .pg-list{list-style:none;margin:0 0 16px;padding:0;text-align:left;font-size:13.5px;line-height:1.9;color:#475569}
+    html.dark #paperly-gate .pg-list{color:#cbd5e1}
+    #paperly-gate .pg-list li::before{content:"✓ ";color:#22c55e;font-weight:800}
+    @keyframes pgspin{to{transform:rotate(360deg)}}
+  </style>
+
+  <!-- Critical inline styles -->
+  <style>
+    .visually-hidden-input {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+    #pdf-print-stage { display: none; }
+
+    /* Small override for mobile/desktop */
+    .topbar-btn.btn-exporting {
+      cursor: default;
+      opacity: 0.88;
+      pointer-events: none;
+    }
+    .btn-spinner {
+      width: 13px;
+      height: 13px;
+      flex-shrink: 0;
+      border-radius: 50%;
+      border: 2px solid rgba(255, 255, 255, 0.4);
+      border-top-color: #fff;
+      animation: btn-spin 0.65s linear infinite;
+    }
+    @keyframes btn-spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+
+  <!-- Include any additional style overrides -->
+  <style id="pdf-viewer-full-width-fix">
+    #pdf-view-container {
+      padding-left: 0 !important;
+      padding-right: 0 !important;
+    }
+    @media (max-width: 850px) {
+      #pdf-view-container {
+        padding-top: 6px !important;
+        padding-bottom: max(10px, env(safe-area-inset-bottom, 10px)) !important;
+      }
+    }
+    @media (min-width: 851px) {
+      #pdf-view-container {
+        padding-top: 14px !important;
+        padding-bottom: 14px !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <!-- PaperLy: sign-in gate -->
+  <div id="paperly-gate" role="dialog" aria-modal="true" aria-label="Sign in">
+    <div class="pg-card">
+      <img class="pg-logo" src="icons/tamim.png" alt="" width="72" height="72">
+      <h1>Paper<span class="brand-l">L</span>y</h1>
+      <div id="pg-body"><div class="pg-spin"></div><p class="pg-muted">Loading…</p></div>
+    </div>
+  </div>
+  <div id="pdf-print-stage"></div>
+
+  <!-- TOP NAV -->
+  <div id="topbar">
+    <div class="logo">
+      <button type="button" id="paperly-avatar-btn" class="logo-img" aria-label="Account and history" title="History &amp; account">
+        <span class="pa-face"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="9" r="4" fill="currentColor"/><path d="M4 20c1.2-4 4.2-6 8-6s6.8 2 8 6z" fill="currentColor"/></svg></span><span class="pa-dot"></span>
+      </button>
+      <span class="logo-text">Paper<span class="brand-l">L</span>y</span>
+      <div id="chat-model-bar">
+        <span id="chat-model-bar-icon" class="ui-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8 12h8M12 8v8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        </span>
+        <select id="active-model-select" onchange="setActiveAIModel(this.value)">
+          <option value="">⚠️ No model added</option>
+        </select>
+      </div>
+      <div id="creation-mode-bar" title="Choose what 'New document' creates">
+        <span class="ui-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M6 3.5h9l3 3V20H6z" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M14.5 3.5V7H18" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+        </span>
+        <select id="creation-mode-select" onchange="setCreationMode(this.value)" aria-label="Choose what New document creates">
+          <option value="pdf">PDF / Doc</option>
+          <option value="slides">Slide Deck</option>
+        </select>
+      </div>
+    </div>
+    <div class="spacer"></div>
+
+    <button class="topbar-fab-btn" id="topbar-new-fab-btn" onclick="startNewProject()" aria-label="Start new document" title="New document">+</button>
+    <button class="topbar-btn" id="topbar-more-btn" type="button" aria-label="More options" aria-haspopup="menu" aria-expanded="false">⋮</button>
+
+    <div id="topbar-actions" role="menu">
+      <button class="mode-toggle-btn" id="mode-toggle-btn" type="button" onclick="togglePhotocopyMode()" aria-label="Toggle monochrome color mode" title="Toggle Color / Monochrome">
+        <span id="mode-toggle-icon" class="ui-icon" aria-hidden="true"></span>
+        <span id="mode-toggle-label" class="mode-label">Color</span>
+      </button>
+      <button class="topbar-btn" onclick="openAIModelsModal()">
+        <span class="ui-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v7A2.5 2.5 0 0 1 17.5 15H11l-4.5 4v-4.6A2.5 2.5 0 0 1 4 12.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg></span>AI Models
+      </button>
+      <button class="topbar-btn" onclick="startNewProject()">
+        <span class="ui-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h9l3 3V20H6z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M14.5 3.5V7H18" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></span>New
+      </button>
+      <button class="topbar-btn" onclick="saveProjectFile()">
+        <span class="ui-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v16H5z" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8 4v5h8V4M8 16h8" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></span>Save
+      </button>
+      <button class="topbar-btn" onclick="document.getElementById('project-load-input').click()">
+        <span class="ui-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6.5h6l2 2h8v9a2 2 0 0 1-2 2H4z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg></span>Load
+      </button>
+      <button class="topbar-btn btn-primary" id="topbar-word-btn" onclick="exportToWordDocument(this)">
+        <span class="ui-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h9l3 3V20H6z" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M14.5 3.5V7H18" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></span>Word
+      </button>
+      <button class="topbar-btn btn-accent" id="topbar-truepdf-btn" onclick="exportToHighQualityPDF(this)">
+        <span class="ui-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h9l3 3V20H6z" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M14.5 3.5V7H18M8 16h8" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></span>True PDF
+      </button>
+      <button class="topbar-btn" id="view-slides-btn" onclick="viewSlideDeck()" title="View the generated slide deck">
+        <span class="ui-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="12" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8 20.5h8M12 17v3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></span>Slides
+      </button>
+      <button class="topbar-btn" id="export-pptx-btn" onclick="exportSlideDeckToPptx()" title="Download the slide deck as a PowerPoint file">
+        <span class="ui-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M12 15l-4-4M12 15l4-4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 17.5v2.5h14v-2.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></span>PowerPoint
+      </button>
+      <button class="topbar-btn" id="export-slides-pdf-btn" onclick="exportSlideDeckToPdf(this)" title="Download the slide deck as a true PDF at its own slide size (not A4)">
+        <span class="ui-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="18" height="12" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8 20.5h8M12 18v2.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M9.5 10v4M9.5 10h1.4a1.6 1.6 0 0 1 0 3.2H9.5M13.5 10v4M15.5 10v4h1.3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg></span>True PDF
+      </button>
+      <button class="topbar-btn" id="topbar-imagepdf-btn" onclick="exportToImagePDF(this)">
+        <span class="ui-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="9" cy="10" r="1.4" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="m6.5 17 4-4 2.5 2.5 2-2 2.5 3.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg></span>Image PDF
+      </button>
+      <button class="topbar-btn" id="theme-toggle-btn" onclick="toggleDarkMode()">
+        <span id="theme-toggle-icon" class="ui-icon" aria-hidden="true"></span>Theme
+      </button>
+    </div>
+  </div>
+
+  <!-- TAB BAR -->
+  <div id="tab-bar"></div>
+
+  <!-- MOBILE NAV -->
+  <div id="mobile-nav-bar">
+    <button class="mobile-nav-btn active" id="mob-btn-chat" onclick="setMobileView('chat')">AI Chat</button>
+    <button class="mobile-nav-btn mobile-nav-more-btn" id="mob-btn-more" type="button" aria-label="More options" onclick="toggleTopbarMenu()" title="More options">⋯</button>
+    <button class="mobile-nav-btn" id="mob-btn-editor" onclick="setMobileView('editor')">Editor</button>
+  </div>
+
+  <!-- MAIN -->
+  <div id="main-container" class="mobile-view-chat desktop-view-chat">
+
+    <!-- SIDEBAR -->
+    <div id="sidebar" ondragover="event.preventDefault(); this.classList.add('drag-over');" ondragleave="this.classList.remove('drag-over');" ondrop="handleSidebarFileDrop(event)">
+      <div id="chat-history">
+        <div id="chat-empty-state" class="chat-empty-state">
+          <span class="chat-empty-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v7A2.5 2.5 0 0 1 17.5 15H11l-4.5 4v-4.6A2.5 2.5 0 0 1 4 12.5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+          </span>
+          <div class="chat-empty-title">AI Chat</div>
+          <div class="chat-empty-desc">Ask the AI to create notes, generate a PDF, or edit this document. Type below to get started.</div>
+        </div>
+      </div>
+      <div id="attachment-bar"></div>
+      <div id="at-command-chips"></div>
+      <div id="at-command-menu-backdrop" onclick="closeAtCommandMenu()"></div>
+      <div id="at-command-menu" role="listbox" aria-label="Select AI intent command">
+        <button id="at-command-menu-close" onclick="closeAtCommandMenu()" aria-label="Close menu"></button>
+      </div>
+      <form id="chat-form" action="javascript:void(0);" onsubmit="handleChatFormSubmit(event)" novalidate>
+        <label class="icon-btn" for="file-upload-input" id="file-attach-btn" title="Attach files" aria-label="Attach files">
+          <svg viewBox="0 0 24 24" aria-hidden="true" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M6.5 3.5h8l3 3V20H6.5z"/>
+            <path d="M14 3.5V7h3.5M9 11h5.5M9 14.5h5.5M9 18h3.5"/>
+          </svg>
+        </label>
+        <button type="button" class="icon-btn" id="at-command-btn" title="Select intent" aria-label="Select intent" onclick="toggleAtCommandMenu()">@</button>
+        <textarea id="chat-input-textarea" rows="1" placeholder="Ask AI to create..." oninput="handleChatInputChanged(this, event)" onkeydown="handleChatKeyPress(event)"></textarea>
+        <button type="submit" class="icon-btn primary" id="send-message-btn" title="Send message">↑</button>
+      </form>
+    </div>
+
+    <!-- RESIZE HANDLE -->
+    <div id="resize-handle" onmousedown="initializeSidebarResize(event)"></div>
+
+    <!-- PREVIEW PANEL -->
+    <div id="preview-panel">
+      <div id="preview-tabs-desktop">
+        <button class="tab-btn active" id="tab-editor-btn-desktop" onclick="switchPreviewTabDesktop('editor')">Editor</button>
+      </div>
+      <div id="preview-tabs">
+        <button class="tab-btn active" id="tab-editor-btn" onclick="switchPreviewTab('editor')">Editor</button>
+      </div>
+
+      <div id="editor-toolbar">
+        <div class="tool-group">
+          <button class="tool-btn" onclick="HISTORY.undo()" title="Undo">↩</button>
+          <button class="tool-btn" onclick="HISTORY.redo()" title="Redo">↪</button>
+          <button class="tool-btn" onclick="executeEditorCommand('removeFormat')">✕</button>
+          <button class="tool-btn" data-paginate-btn onclick="paginateDocumentProgressive()" title="Click again to compact and polish the layout further">Paginate</button>
+          <button class="tool-btn" id="paginate-reset-btn" data-paginate-reset onclick="resetPaginateCompact()" title="Reset to normal spacing">↺</button>
+        </div>
+        <div class="tool-group">
+          <button class="tool-btn" onclick="addPageAfterCurrent()">Add Page</button>
+          <button class="tool-btn" onclick="removeCurrentPage()">Remove Page</button>
+        </div>
+        <div class="tool-group">
+          <select class="tool-select" onchange="executeEditorCommand('fontName', this.value)">
+            <option value="Times New Roman">Times New Roman</option>
+            <option value="Arial">Arial</option>
+            <option value="Courier New">Courier</option>
+            <option value="Georgia">Georgia</option>
+          </select>
+          <select class="tool-select" onchange="executeEditorCommand('fontSize', this.value)">
+            <option value="3">Normal</option>
+            <option value="1">Small</option>
+            <option value="4">Large</option>
+            <option value="5">Heading 2</option>
+            <option value="6">Heading 1</option>
+          </select>
+          <button class="tool-btn" onclick="decreaseSelectedFontSize()" title="Decrease font size (click repeatedly to keep shrinking)">A−</button>
+          <button class="tool-btn" onclick="increaseSelectedFontSize()" title="Increase font size (click repeatedly to keep growing)">A+</button>
+        </div>
+        <div class="tool-group">
+          <button class="tool-btn" id="btn-bold" onclick="executeEditorCommand('bold')"><b>B</b></button>
+          <button class="tool-btn" id="btn-italic" onclick="executeEditorCommand('italic')"><i>I</i></button>
+          <button class="tool-btn" id="btn-underline" onclick="executeEditorCommand('underline')"><u>U</u></button>
+          <div class="color-btn-container" title="Text Color"><span>A</span><input type="color" onmousedown="saveEditorSelectionForColorPicker()" onchange="applyColorCommand('foreColor', this.value)"></div>
+          <div class="color-btn-container" title="Highlight Color" style="background:#fef08a;"><span></span><input type="color" value="#ffff00" onmousedown="saveEditorSelectionForColorPicker()" onchange="applyColorCommand('hiliteColor', this.value)"></div>
+        </div>
+        <div class="tool-group">
+          <button class="tool-btn" id="btn-justifyLeft" onclick="executeEditorCommand('justifyLeft')">⫷</button>
+          <button class="tool-btn" id="btn-justifyCenter" onclick="executeEditorCommand('justifyCenter')">≡</button>
+          <button class="tool-btn" id="btn-justifyRight" onclick="executeEditorCommand('justifyRight')">⫸</button>
+          <button class="tool-btn" id="btn-justifyFull" onclick="executeEditorCommand('justifyFull')">▤</button>
+        </div>
+        <div class="tool-group">
+          <button class="tool-btn" onclick="executeEditorCommand('insertUnorderedList')">• List</button>
+          <button class="tool-btn" onclick="executeEditorCommand('insertOrderedList')">1. List</button>
+        </div>
+      </div>
+
+      <div id="preview-content-area">
+        <button class="mobile-back-to-chat-btn" id="mobile-back-to-chat-btn" type="button" onclick="setMobileView('chat')">← AI Chat</button>
+        <div id="document-view-container">
+          <div class="doc-page-canvas" contenteditable="true" spellcheck="false" oninput="handleCanvasInput(event)" onkeydown="handlePageKeydown(event)">
+            <div style="min-height:900px;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;font-family:'Times New Roman',Georgia,serif;color:#111827;">
+              <p style="font-size:14pt;margin:0 0 10px;">Created by Tamim Hossen Emon</p>
+              <p style="font-size:13pt;margin:0 0 10px;">Department of Statistics and Data Science</p>
+              <p style="font-size:13pt;margin:0 0 10px;">Session:2025-2026</p>
+              <p style="font-size:13pt;margin:0;">Islamic University,Kushtia</p>
+            </div>
+            <div class="page-footer-number" contenteditable="false">Page 1 of 1</div>
+          </div>
+        </div>
+        <div id="pdf-view-container">
+          <div id="pdf-preview-loading" class="pdf-preview-loading" aria-live="polite" aria-busy="true">
+            <div class="pdf-preview-loading-card">
+              <div class="pdf-preview-spinner"></div>
+              <div class="pdf-preview-loading-title">Preparing PDF Preview</div>
+              <div id="pdf-preview-loading-status" class="pdf-preview-loading-status">Building page layout and rendering equations…</div>
+            </div>
+          </div>
+          <iframe id="pdf-iframe" title="PDF Live Preview" loading="eager"></iframe>
+        </div>
+        <div id="slide-view-container">
+          <div class="slide-empty-state">
+            <div class="slide-empty-icon">🖼️</div>
+            <p>No slide deck yet. Use <b>@Create Slides</b> in the chat to generate one.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== OVERLAYS & INPUTS ===== -->
+  
+  <!-- GLOBAL PROGRESS OVERLAY (REDESIGNED) -->
+  <div id="global-progress-overlay">
+    <div class="progress-card">
+      <!-- Header -->
+      <div class="progress-header">
+        <div class="progress-ring-wrap">
+          <svg class="progress-ring" viewBox="0 0 64 64" aria-hidden="true">
+            <circle class="progress-ring-track" cx="32" cy="32" r="27"></circle>
+            <circle id="progress-ring-fill" class="progress-ring-fill" cx="32" cy="32" r="27"></circle>
+          </svg>
+          <span class="progress-ring-icon" id="progress-ring-icon" aria-hidden="true"></span>
+        </div>
+        <div class="progress-title-group">
+          <h3 id="progress-overlay-title">Working...</h3>
+          <p id="progress-overlay-subtitle"></p>
+          <div class="progress-stats-row">
+            <span id="progress-model-badge"></span>
+            <span id="progress-scope"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- File Processing Panel (only appears while files are being processed) -->
+      <div class="progress-live-preview-wrap" id="progress-live-preview-wrap">
+        <div class="preview-label"><span>ফাইল প্রসেসিং</span></div>
+        <div id="progress-live-preview-scroll" class="progress-live-preview-scroll"></div>
+      </div>
+
+      <!-- Quote Container -->
+      <div class="progress-quote-container">
+        <div id="progress-quote-text">
+          <span class="quote-mark">“</span>
+          <span id="progress-quote-content">Loading wisdom...</span>
+          <span class="quote-mark">”</span>
+          <span class="quote-attribution" id="progress-quote-attribution">— AI</span>
+        </div>
+      </div>
+
+      <!-- Modern Stepper -->
+      <div id="progress-steps" class="progress-steps" aria-hidden="true">
+        <span data-step="1"><span class="step-icon">📝</span> Plan</span>
+        <i></i>
+        <span data-step="2"><span class="step-icon">✍️</span> Write</span>
+        <i></i>
+        <span data-step="3"><span class="step-icon">🧮</span> Render</span>
+        <i></i>
+        <span data-step="4"><span class="step-icon">✅</span> Finish</span>
+      </div>
+
+      <!-- Progress Bar (Play Store style indeterminate shapes) -->
+      <div class="progress-bar-track">
+        <div id="progress-bar-fill" class="progress-bar-fill"></div>
+      </div>
+
+      <!-- Meta Row -->
+      <div class="progress-meta-row">
+        <span id="progress-bar-time"></span>
+      </div>
+
+      <!-- Action Row -->
+      <div class="progress-action-row">
+        <button class="cancel-btn" id="cancel-processing-btn" onclick="requestCancelProcessing()">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast-notification">Notification</div>
+
+  <input type="file" id="file-upload-input" accept=".pdf,.txt,.docx,.png,.jpg,.jpeg,.webp,.bmp" multiple onchange="handleFileUploads(this.files)" class="visually-hidden-input">
+  <input type="file" id="project-load-input" accept=".aipdf" onchange="loadProjectFromFile(this.files)" style="display:none;">
+
+  <!-- ===== PAGE RANGE MODAL (ENHANCED) ===== -->
+  <div id="page-range-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); backdrop-filter:blur(8px); z-index:10000; align-items:center; justify-content:center; padding:16px; box-sizing:border-box;">
+    <div class="modal-card" style="background:var(--surface-color); padding:28px 30px 24px; border-radius:var(--radius-lg); max-width:400px; width:100%; box-shadow:var(--shadow-lg); box-sizing:border-box; border:1px solid var(--border-color);">
+      <h3 style="margin-bottom:4px; font-family:var(--font-display); font-size:1.1rem;">Select Page Range</h3>
+      <p class="modal-desc" style="color:var(--text-secondary); font-size:0.82rem; margin-bottom:8px; line-height:1.5;">Enter start and end page numbers (1‑based).</p>
+      <span id="page-range-total-badge" class="total-pages-badge" style="font-size:0.7rem; font-weight:700; color:var(--primary-color); background:var(--primary-light); padding:2px 12px; border-radius:var(--radius-pill); display:inline-block; margin-bottom:10px;">Total: 0 pages</span>
+      
+      <div class="range-inputs" style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
+        <input type="number" id="range-start" min="1" value="1" style="flex:1; padding:8px 10px; border:1.5px solid var(--border-color); border-radius:var(--radius-sm); background:var(--bg-color); color:var(--text-primary); font-size:0.95rem; box-sizing:border-box; min-width:0;">
+        <span style="flex:0 0 auto; color:var(--text-secondary);">to</span>
+        <input type="number" id="range-end" min="1" value="50" style="flex:1; padding:8px 10px; border:1.5px solid var(--border-color); border-radius:var(--radius-sm); background:var(--bg-color); color:var(--text-primary); font-size:0.95rem; box-sizing:border-box; min-width:0;">
+      </div>
+
+      <div class="range-presets" style="display:flex; flex-wrap:wrap; gap:4px; margin-bottom:14px;">
+        <button onclick="document.getElementById('range-start').value=1; document.getElementById('range-end').value=document.getElementById('page-range-modal').dataset.totalPages || 1;" style="padding:4px 12px; border:1px solid var(--border-color); background:var(--bg-color); color:var(--text-secondary); border-radius:var(--radius-pill); font-size:0.7rem; font-weight:600; cursor:pointer; transition:all 0.15s ease;">All</button>
+        <button onclick="document.getElementById('range-start').value=1; document.getElementById('range-end').value=Math.min(10, document.getElementById('page-range-modal').dataset.totalPages || 1);" style="padding:4px 12px; border:1px solid var(--border-color); background:var(--bg-color); color:var(--text-secondary); border-radius:var(--radius-pill); font-size:0.7rem; font-weight:600; cursor:pointer; transition:all 0.15s ease;">First 10</button>
+        <button onclick="var total=parseInt(document.getElementById('page-range-modal').dataset.totalPages)||1; var start=Math.max(1, total-9); document.getElementById('range-start').value=start; document.getElementById('range-end').value=total;" style="padding:4px 12px; border:1px solid var(--border-color); background:var(--bg-color); color:var(--text-secondary); border-radius:var(--radius-pill); font-size:0.7rem; font-weight:600; cursor:pointer; transition:all 0.15s ease;">Last 10</button>
+        <button onclick="document.getElementById('range-start').value=1; document.getElementById('range-end').value=document.getElementById('page-range-modal').dataset.totalPages || 1;" style="padding:4px 12px; border:1px solid var(--border-color); background:var(--bg-color); color:var(--text-secondary); border-radius:var(--radius-pill); font-size:0.7rem; font-weight:600; cursor:pointer; transition:all 0.15s ease;">Reset</button>
+      </div>
+
+      <div class="modal-actions" style="display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap;">
+        <button class="topbar-btn" onclick="closePageRangeModal()">Cancel</button>
+        <button class="topbar-btn btn-primary" onclick="confirmPageRange()">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== EDIT PAGE MODAL (ENHANCED) ===== -->
+  <div id="edit-page-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); backdrop-filter:blur(8px); z-index:10000; align-items:center; justify-content:center; padding:16px; box-sizing:border-box;">
+    <div class="modal-card" style="background:var(--surface-color); padding:28px 30px 24px; border-radius:var(--radius-lg); max-width:440px; width:100%; box-shadow:var(--shadow-lg); box-sizing:border-box; border:1px solid var(--border-color);">
+      <h3 style="margin-bottom:4px; font-family:var(--font-display); font-size:1.1rem;">Edit Page(s)</h3>
+      <p class="modal-desc" style="color:var(--text-secondary); font-size:0.82rem; margin-bottom:8px; line-height:1.5;">
+        Enter page numbers separated by spaces (e.g., <b>9 10 11</b>).
+      </p>
+      <span id="edit-page-hint" class="page-hint" style="font-size:0.7rem; color:var(--text-secondary); background:var(--bg-color); padding:4px 10px; border-radius:var(--radius-pill); display:inline-block; margin-bottom:10px;">Document has 0 pages</span>
+
+      <input type="text" id="edit-page-input" placeholder="e.g., 5 or 9 10 11" autocomplete="off" style="width:100%; padding:10px 12px; border:1.5px solid var(--border-color); border-radius:var(--radius-sm); background:var(--bg-color); color:var(--text-primary); font-size:0.95rem; box-sizing:border-box; transition:border 0.2s;">
+      
+      <div id="edit-page-chips" class="chip-preview" style="display:flex; flex-wrap:wrap; gap:4px; margin-top:8px; min-height:28px;">
+        <!-- chips will appear here dynamically -->
+      </div>
+
+      <div class="modal-actions" style="display:flex; gap:8px; justify-content:flex-end; margin-top:16px; flex-wrap:wrap;">
+        <button class="topbar-btn" onclick="closeEditPageModal()">Cancel</button>
+        <button class="topbar-btn btn-primary" onclick="confirmEditPages()">Edit</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- AI MODELS MODAL -->
+  <div id="ai-models-modal" style="display:none; position:fixed; inset:0; z-index:10000; align-items:center; justify-content:center; padding:14px; box-sizing:border-box;">
+    <div class="ai-models-modal-card">
+      <div class="ai-models-modal-header">
+        <div class="ai-models-modal-title-wrap">
+          <h3>AI Models</h3>
+          <div class="ai-models-modal-subtitle">Manage active model and fallback order</div>
+        </div>
+        <button type="button" class="ai-model-head-btn" onclick="toggleAIModelsInfo()" aria-label="Information" title="Information">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 10v6"/><circle cx="12" cy="7.2" r=".8" fill="currentColor" stroke="none"/></svg>
+        </button>
+        <button type="button" class="ai-model-head-btn close" onclick="closeAIModelsModal()" aria-label="Close" title="Close">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17"/></svg>
+        </button>
+      </div>
+
+      <div id="ai-model-info-panel" class="ai-model-info-panel">
+        <div class="ai-model-info-grid">
+          <div class="ai-model-info-row"><span class="ai-model-info-label">Connection</span><span>Any OpenAI-compatible endpoint can be configured. API keys remain in this browser.</span></div>
+          <div class="ai-model-info-row"><span class="ai-model-info-label">Fallback</span><span>Models are tried in the order shown below when an AI request fails.</span></div>
+          <div class="ai-model-info-row"><span class="ai-model-info-label">Reorder</span><span>Use the handle at the left of a model card to change its priority.</span></div>
+          <div class="ai-model-auto-row">
+            <div class="ai-model-auto-main">
+              <input type="checkbox" id="ai-model-autoswitch-checkbox" onchange="handleAutoSwitchToggle(this.checked)">
+              <div><b style="color:var(--text-primary)">Auto-switch on error</b><div>Always enabled by the application.</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="ai-models-toolbar">
+        <button class="topbar-btn" onclick="document.getElementById('ai-models-import-input').click()">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V4"/><path d="m8 8 4-4 4 4"/><path d="M5 13v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"/></svg>
+          <span class="label-desktop">Import</span>
+        </button>
+        <button class="topbar-btn" onclick="exportAIModels()">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 9V20"/><path d="m8 16 4 4 4-4"/><path d="M5 4h14v6"/></svg>
+          <span class="label-desktop">Export</span>
+        </button>
+        <div class="ai-models-toolbar-spacer"></div>
+        <button class="topbar-btn btn-primary" onclick="toggleAIModelAddForm()">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+          <span class="label-desktop">Add model</span>
+        </button>
+        <input type="file" id="ai-models-import-input" accept=".json" style="display:none;" onchange="importAIModels(this.files)">
+      </div>
+
+      <div id="ai-models-list" class="ai-models-list"></div>
+
+      <div class="ai-model-add-form" id="ai-model-add-form">
+        <h4 class="ai-model-add-title">Add model</h4>
+        <div class="ai-model-form-grid">
+          <div class="ai-field"><label for="ai-model-name-input">Name</label><input type="text" id="ai-model-name-input" placeholder="e.g. GPT-4o"></div>
+          <div class="ai-field"><label for="ai-model-id-input">Model ID</label><input type="text" id="ai-model-id-input" placeholder="e.g. gpt-4o"></div>
+          <div class="ai-field ai-field-full"><label for="ai-model-url-input">API URL</label><input type="text" id="ai-model-url-input" placeholder="https://api.openai.com/v1/chat/completions"></div>
+          <div class="ai-field ai-field-full"><label for="ai-model-key-input">API Key</label><input type="password" id="ai-model-key-input" placeholder="API key"></div>
+          <div class="ai-field ai-field-full">
+            <label for="ai-model-api-type-select">API Type</label>
+            <select id="ai-model-api-type-select">
+              <option value="openai">OpenAI-compatible</option>
+              <option value="gemini">Google Gemini</option>
+            </select>
+          </div>
+        </div>
+        <label class="ai-model-json-label"><input type="checkbox" id="ai-model-json-checkbox" checked> Supports JSON response format</label>
+        <label class="ai-model-json-label"><input type="checkbox" id="ai-model-search-checkbox" checked> Enable Google Search grounding (Gemini only)</label>
+        <div id="ai-model-add-status" class="ai-model-add-status"></div>
+        <div class="ai-model-form-actions">
+          <button type="button" class="topbar-btn" onclick="clearAIModelForm()">Clear</button>
+          <button type="button" class="topbar-btn btn-primary" id="ai-model-add-btn" onclick="handleAddNewAIModel()">Verify &amp; Add</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function fillChatSuggestion(btn) {
+        const ta = document.getElementById('chat-input-textarea');
+        if (!ta || !btn) return;
+        ta.value = (btn.textContent || '').replace(/^\S+\s*/, '').trim();
+        ta.focus();
+        if (typeof handleChatInputChanged === 'function') {
+            handleChatInputChanged(ta, null);
+        } else {
+            ta.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        const moreBtn = document.getElementById('topbar-more-btn');
+        const actionsMenu = document.getElementById('topbar-actions');
+        if (moreBtn && actionsMenu) {
+            moreBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                actionsMenu.classList.toggle('open');
+                moreBtn.classList.toggle('active');
+            });
+            document.addEventListener('click', () => {
+                actionsMenu.classList.remove('open');
+                moreBtn.classList.remove('active');
+            });
+        }
+
+        // File-processing preview container starts empty; it is shown only while files are queued
+        const previewScroll = document.getElementById('progress-live-preview-scroll');
+        if (previewScroll) {
+            previewScroll.innerHTML = '';
+        }
+    });
+  </script>
+
+  <!-- ===== JAVASCRIPT MODULES ===== -->
+
+  <!-- 1. Configuration -->
+  <script src="js/config.js"></script>
+
+  <!-- 2. Constants & UI Icons -->
+  <script src="js/constants.js"></script>
+
+  <!-- 3. UI Helpers (toast, progress, theme, etc.) -->
+  <script src="js/ui-helpers.js"></script>
+
+  <!-- 3b. AI Quotes (progress modal) — uses callAIAPIRaw/getActiveAIModel from app.js at call time -->
+  <script src="js/ai-quotes.js"></script>
+
+  <!-- 4. Tab Manager -->
+  <script src="js/tab-manager.js"></script>
+
+  <!-- 5. AI Models Manager -->
+  <script src="js/ai-models.js"></script>
+
+  <!-- 6. Command Menu (@ commands) -->
+  <script src="js/command-menu.js"></script>
+
+  <!-- 7. Math Renderer (KaTeX) -->
+  <script src="js/math-renderer.js"></script>
+
+  <!-- 8. Document Editor (core editing, pagination, history) -->
+  <script src="js/document-editor.js"></script>
+
+  <!-- 9. OCR Pipeline -->
+  <script src="js/ocr.js"></script>
+
+  <!-- 10. PDF Export -->
+  <script src="js/pdf-export.js"></script>
+
+  <!-- 11. Diagram Template Library (verified, hand-authored SVG diagrams
+       for well-known subjects — must load before app.js, which reads
+       getDiagramTemplateCatalogForPrompt()/injectDiagramTemplates()) -->
+  <script src="js/diagram-library.js"></script>
+
+  <!-- 11b. Chart Library (deterministic, code-computed bar/line/pie/donut
+       chart SVGs — must load before app.js, which reads
+       getChartCatalogForPrompt()/injectChartTemplates()) -->
+  <script src="js/chart-library.js"></script>
+
+  <!-- 11c. Illustration Library (deterministic, code-composed flat-design
+       scene SVGs — landscapes, cityscapes, person figures, icon badges —
+       must load before app.js/slide-studio.js, which read
+       getIllustrationCatalogForPrompt()/injectIllustrationTemplates()) -->
+  <script src="js/illustration-library.js"></script>
+
+  <!-- 11d. Element Library (small, code-authored SVG pieces — sun, clock,
+       pen, house, mobile phone, graduation cap, icons, plain shapes —
+       droppable onto/into any other hand-drawn figure — must load before
+       app.js, which reads getElementCatalogForPrompt()/injectElementTemplates()) -->
+  <script src="js/element-library.js"></script>
+
+  <!-- 11e. Slide Theme System (fonts, palettes, AI/inline themes — must load before slide-studio.js,
+       which calls resolveSlideTheme()/slideThemePptx()/getSlideThemeRuleForPrompt()) -->
+  <script src="js/slide-theme.js"></script>
+
+  <script src="js/slide-studio.js"></script>
+
+  <!-- Native .docx export — needs rasterizeSvgPreservingAspect from slide-studio.js
+       and the docx CDN script above; must load before app.js -->
+  <script src="js/word-export.js"></script>
+
+  <!-- Exam Library (MCQ প্রশ্নপত্র + compact OMR). All exam behaviour — format, questions the AI
+       asks, difficulty, subjects, prompt rules — lives in this ONE file. Edit it and the AI follows
+       on the next request. Must load after document-editor.js and before app.js.
+       Bump ?v= after editing if the browser/service worker serves a cached copy. -->
+  <script src="js/exam-library.js?v=1"></script>
+
+  <!-- 11f. Instruction box (sidebar) — visible, editable "how to answer" text, cloud-synced via
+       PaperlyMenuPrefs. Must load after command-menu.js and before app.js (buildSharedRules reads it). -->
+  <script src="js/instruction-panel.js?v=2"></script>
+
+  <!-- 12. Main App (initialization) -->
+  <script src="js/app.js"></script>
+
+  <!-- PWA: service worker + install button -->
+  <script src="js/firebase-config.js"></script>
+  <script src="js/paperly-vault.js"></script>
+  <script type="module" src="js/paperly-cloud.js"></script>
+  <script src="pwa.js"></script>
+
+  <!-- ===== MOBILE VIEWPORT SYNC ===== -->
+  <script>
+    (function installMobileViewportSync() {
+      var lastH = 0, lastKb = null, raf = 0;
+      function apply() {
+        raf = 0;
+        try {
+          if (!window.visualViewport || !(typeof isMobileDeviceLayout === 'function' ? isMobileDeviceLayout() : false)) return;
+          var vv = window.visualViewport;
+          var height = Math.max(320, Math.round(vv.height || window.innerHeight || 0));
+          // Only touch the DOM when the value really changed (>=2px): writing the
+          // same/near-same height every frame made the whole layout shimmer.
+          if (Math.abs(height - lastH) >= 2) {
+            lastH = height;
+            document.documentElement.style.setProperty('--mobile-vh', height + 'px');
+          }
+          var kb = (window.innerHeight || 0) - (vv.height || 0) > 140;
+          if (kb !== lastKb) { lastKb = kb; document.documentElement.classList.toggle('kb-open', kb); }
+        } catch (_) {}
+      }
+      function sync() { if (!raf) raf = requestAnimationFrame(apply); }
+      apply();
+      window.addEventListener('resize', sync, { passive: true });
+      window.addEventListener('orientationchange', function() { setTimeout(sync, 120); }, { passive: true });
+      // NOTE: deliberately NOT listening to visualViewport 'scroll' — it fires
+      // continuously while panning and fought the browser, causing jitter.
+      if (window.visualViewport) window.visualViewport.addEventListener('resize', sync, { passive: true });
+      document.addEventListener('visibilitychange', function() { if (!document.hidden) { sync(); setTimeout(sync, 250); } }, { passive: true });
+      window.addEventListener('pageshow', function() { sync(); setTimeout(sync, 250); }, { passive: true });
+      window.__resyncMobileViewportHeight = apply;
+    })();
+  </script>
+
+  <!-- ===== MOBILE INITIAL VIEW FALLBACK =====
+       #main-container starts in the raw HTML with BOTH "mobile-view-chat"
+       and "desktop-view-chat" classes. On a phone, "mobile-view-chat" is
+       what hides the editor panel (CSS: .mobile-view-chat #preview-panel
+       {display:none}) — but only until something changes the className.
+       tab-manager.js is expected to confirm/set the right mobile-view-*
+       class on load; if it (or anything before it) throws, or JS resets
+       #main-container's className without one of the three mobile-view-*
+       classes present, NOTHING is left hiding the editor panel — both the
+       chat panel and the editor panel then lay out side by side at their
+       normal (desktop-sized) widths on a screen far narrower than that,
+       which is what cuts content off on both the right and bottom edges.
+       This is a pure safety net: it only acts if, after everything else
+       has finished loading, #main-container still isn't in any of the
+       three known mobile view states. -->
+  <!-- ===== PROGRESS OVERLAY INITIAL-STATE FALLBACK =====
+       #global-progress-overlay (the "Working..." card with the rotating
+       Bengali quotes and "ফাইল প্রসেসিং" file-processing label) is
+       display:none in CSS by default and is only meant to appear once a
+       PDF-generation call is actually running, toggled on via inline
+       style by app.js. On a fresh page load nothing has started generating
+       yet, so there's no legitimate reason for it to be visible — if it
+       ever is (a stray inline style, a state-restore path that resumed an
+       interrupted previous session's "generating" flag, or anything
+       upstream throwing before it gets a chance to hide things), it sits
+       on top of the AI Chat panel as unexplained Bengali text. This forces
+       it back to hidden once on load; it never runs again afterward, so it
+       can't interfere with a real, legitimately-triggered generation. -->
+  <script>
+    document.addEventListener('DOMContentLoaded', function() {
+      try {
+        var overlay = document.getElementById('global-progress-overlay');
+        if (overlay) overlay.style.display = 'none';
+      } catch (_) {}
+    });
+  </script>
+</body>
+</html>
