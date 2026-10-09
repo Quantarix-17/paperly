@@ -59,7 +59,19 @@ const APP_CONFIG = {
   OCR_FAST_TRIAGE_TIMEOUT_MS: 2200,
   OCR_FAST_TRIAGE_PASSES: 2,
   OCR_MAX_TOTAL_PASSES: 4,
-  ATTACHMENT_MAX_TEXT_CHARS: 100000,
+  // Max characters of an uploaded file that are KEPT. Was 100000 (~30-35 pages) — that is what cut
+  // 500-page PDFs. Copy / Copy & Refine now process the whole text in parts, so keep a lot.
+  ATTACHMENT_MAX_TEXT_CHARS: 6000000,
+  // Chat / Create PDF / other features still send at most this much file text to the AI at once.
+  ATTACHMENT_AI_CONTEXT_MAX_CHARS: 100000,
+  // ---- Copy / Copy & Refine for big files ----
+  // Source characters per AI call. Lower (4500-5500) if your model has a small output limit or you copy
+  // Bengali-heavy text; higher (9000+) for big-output models (faster, fewer calls).
+  COPY_CHUNK_CHARS: 7000,
+  // How many parts are restyled at the same time (raise if your API has no rate-limit problems).
+  COPY_CHUNK_PARALLEL: 3,
+  // If the AI returns fewer than this share of a part's words, the part is split in two and retried.
+  COPY_MIN_WORD_RATIO: 0.85,
 
   SINGLE_SHOT_ESTIMATED_SECONDS: 16,
   // Minimum time (ms) the ordinary chat "typing" bubble must stay visible and
