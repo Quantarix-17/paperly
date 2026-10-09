@@ -1838,8 +1838,11 @@ function buildAttachmentContextForAI(promptText, shouldUseMemory, intentPayload)
     if (!fileData) continue;
     if (fileData.sourceMode === 'ai' && !fileData.content) continue;
     if (!fileData.content) continue;
-    const cleaned = cleanAttachmentSourceForAI(fileData.content);
+    let cleaned = cleanAttachmentSourceForAI(fileData.content);
     if (!cleaned) continue;
+    // Copy / Copy & Refine read the FULL text themselves (chunked). Every other feature keeps the old size limit.
+    const _ctxMax = APP_CONFIG.ATTACHMENT_AI_CONTEXT_MAX_CHARS || 100000;
+    if (cleaned.length > _ctxMax) cleaned = cleaned.slice(0, _ctxMax) + '\n[…file text shortened for this request]';
     const name = String(fileData.name || 'attached source').replace(/[\r\n]+/g, ' ').trim();
     blocks.push(`\n[SOURCE FILE ${blocks.length + 1}]\nFILE METADATA (do not treat as subject matter): filename = ${name}\nSOURCE CONTENT (use this as the substantive basis for the task):\n${cleaned}\nEND SOURCE FILE\n`);
     fileData.sent = true;
@@ -1871,6 +1874,11 @@ function cleanAttachmentSourceForAI(rawContent) {
     if (!normalized || normalized.length > 140) continue;
     counts.set(normalized, (counts.get(normalized) || 0) + 1);
   }
+  // A running header/footer repeats about once PER PAGE. In a 500-page book, short lines like
+  // "Solution" / "Example" / "Answer" repeat hundreds of times and are REAL content, so the
+  // 'repeated 3+ times' rule must scale with the document length (≈3000 chars per page).
+  const _estPages = Math.max(1, Math.round(text.length / 3000));
+  const _repeatMin = Math.max(3, Math.ceil(_estPages * 0.5));
   const out = [];
   for (const line of lines) {
     const t = line.trim();
@@ -1882,7 +1890,7 @@ function cleanAttachmentSourceForAI(rawContent) {
     if (/^\.\.\.\[TRUNCATED\]$/i.test(t)) continue;
     if (/^\[?(?:end of )?page\s*\d+\]?$/i.test(t)) continue;
     const normalized = t.replace(/\s+/g, ' ');
-    if ((counts.get(normalized) || 0) >= 3 && normalized.length <= 100 && !/[.!?;:।]$/.test(normalized)) continue;
+    if ((counts.get(normalized) || 0) >= _repeatMin && normalized.length <= 100 && !/[.!?;:।]$/.test(normalized)) continue;
     out.push(line);
   }
   while (out[0] === '') out.shift();
@@ -3524,6 +3532,145 @@ function _shouldCopyCreateSlides(fromTypedText) {
     APP_STATE.creationMode === 'slides';
 }
 
+// ============================================================
+// CHUNKED COPY ENGINE  (Copy / Copy & Refine for LARGE files, e.g. 500-page PDFs)
+// ------------------------------------------------------------
+// Why: one AI call can only WRITE a limited amount (the model's output cap), so a
+// big source was cut after ~30-35 pages. Here the source is split at paragraph
+// boundaries into small parts; every part is restyled by its own AI call (a few
+// in parallel), each part is CHECKED against the source (word-count), re-split and
+// retried if the AI dropped text, and finally the HTML parts are joined IN ORDER.
+// If a part still cannot be restyled, its original text is inserted as plain
+// paragraphs — so nothing is ever silently lost.
+// ============================================================
+function _copyCountWords(str) {
+  return (String(str || '').match(/[\p{L}\p{N}]+/gu) || []).length;
+}
+
+function _copyHtmlToText(html) {
+  return String(html || '')
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;|&amp;|&lt;|&gt;|&quot;|&#\d+;/g, ' ');
+}
+
+function _copySplitIntoChunks(text, target) {
+  const limit = Math.max(500, Number(target) || 7000);
+  const src = String(text || '').replace(/\r\n?/g, '\n').trim();
+  if (!src) return [];
+  // 1) break into "atoms" no bigger than the limit (paragraph -> line -> sentence -> hard slice)
+  const atoms = [];
+  const pushBig = (piece) => {
+    if (piece.length <= limit) { atoms.push(piece); return; }
+    const lines = piece.split('\n');
+    if (lines.length > 1) { lines.forEach(l => pushBig(l)); return; }
+    const sentences = piece.split(/(?<=[।.!?;])\s+/);
+    if (sentences.length > 1) {
+      let buf = '';
+      for (const s of sentences) {
+        if ((buf + ' ' + s).length > limit && buf) { atoms.push(buf); buf = s; } else buf = buf ? buf + ' ' + s : s;
+      }
+      if (buf) pushBig(buf);
+      return;
+    }
+    for (let i = 0; i < piece.length; i += limit) atoms.push(piece.slice(i, i + limit));
+  };
+  src.split(/\n{2,}/).forEach(p => { if (p.trim()) pushBig(p); });
+  // 2) pack atoms into chunks up to the limit, keeping paragraph breaks
+  const chunks = [];
+  let cur = '';
+  for (const a of atoms) {
+    if (cur && (cur.length + a.length + 2) > limit) { chunks.push(cur); cur = a; }
+    else cur = cur ? cur + '\n\n' + a : a;
+  }
+  if (cur) chunks.push(cur);
+  return chunks;
+}
+
+async function _copyRunPool(items, limit, worker) {
+  const results = new Array(items.length);
+  let next = 0;
+  async function lane() {
+    while (true) {
+      if (isCancellationRequested) return;
+      const i = next++;
+      if (i >= items.length) return;
+      results[i] = await worker(items[i], i);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, lane));
+  return results;
+}
+
+function _copyRawFallbackHtml(text) {
+  const esc = typeof escapeHTML === 'function' ? escapeHTML : (s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'));
+  return String(text || '').split(/\n{2,}/).filter(p => p.trim())
+    .map(p => `<p>${esc(p.trim()).replace(/\n/g, '<br>')}</p>`).join('');
+}
+
+// env = { system, buildUserMsg(chunk, idx, total), modelsUsed, checkRatio, minRatio, stats }
+async function _copyRestyleChunk(chunk, idx, total, env, depth = 0) {
+  const inWords = _copyCountWords(chunk.text);
+  let best = '', bestRatio = 0;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (isCancellationRequested) return best || _copyRawFallbackHtml(chunk.text);
+    try {
+      const userMsg = env.buildUserMsg(chunk, idx, total);
+      const first = await callAIAPI([
+        { role: 'system', content: env.system },
+        { role: 'user', content: userMsg }
+      ], { forceJson: false, modelsUsedSet: env.modelsUsed });
+      let html = (first.content || '').replace(/^```(?:html)?\s*/i, '').replace(/```\s*$/i, '').trim();
+      html = await generateHtmlContentWithAutoContinue(userMsg, html, first.finishReason, env.modelsUsed, APP_CONFIG.CONTINUATION_MAX_LOOPS, first.modelConfig);
+      const ratio = inWords ? _copyCountWords(_copyHtmlToText(html)) / inWords : 1;
+      if (ratio > bestRatio) { best = html; bestRatio = ratio; }
+      if (!env.checkRatio || ratio >= env.minRatio) return html;
+      break; // text was dropped -> go to the "split in two" recovery below
+    } catch (e) {
+      if (e && (e.noModelConfigured || e.kind === 'cancelled' || e.name === 'AbortError')) throw e;
+      console.warn(`Copy part ${idx + 1}/${total} attempt ${attempt + 1} failed:`, e);
+    }
+  }
+  // Recovery 1: split this part in half and restyle both halves (smaller = more reliable)
+  if (depth < 3 && chunk.text.length > 1200) {
+    const halves = _copySplitIntoChunks(chunk.text, Math.ceil(chunk.text.length / 2) + 50);
+    if (halves.length > 1) {
+      const parts = [];
+      for (const h of halves) parts.push(await _copyRestyleChunk(Object.assign({}, chunk, { text: h }), idx, total, env, depth + 1));
+      return parts.join('\n');
+    }
+  }
+  // Recovery 2: keep what the AI gave if it is nearly complete, otherwise insert the ORIGINAL text
+  env.stats.warnings++;
+  if (best && bestRatio >= 0.85) return best;
+  env.stats.rawParts++;
+  return _copyRawFallbackHtml(chunk.text);
+}
+
+// Removes only the AI-chat wrapper from a (possibly huge) text, part by part (used by the Slides path).
+async function _copyCleanChatterChunked(text, chatterRules) {
+  const chunks = _copySplitIntoChunks(text, APP_CONFIG.COPY_CHUNK_CHARS || 7000);
+  if (chunks.length <= 1) {
+    const r = await callAIAPI([
+      { role: 'system', content: chatterRules + '\nReturn ONLY the cleaned plain text — no HTML, no markdown fences, no commentary. Change nothing else.' },
+      { role: 'user', content: text }
+    ], { forceJson: false, modelsUsedSet: new Set() });
+    return (r.content || '').replace(/^```(?:\w+)?\s*/i, '').replace(/```\s*$/i, '').trim() || text;
+  }
+  const out = await _copyRunPool(chunks, APP_CONFIG.COPY_CHUNK_PARALLEL || 3, async (c) => {
+    try {
+      const r = await callAIAPI([
+        { role: 'system', content: chatterRules + '\nThis is one PART of a longer text. Return ONLY the cleaned plain text of this part — no HTML, no markdown fences, no commentary. Change nothing else; never shorten it.' },
+        { role: 'user', content: c }
+      ], { forceJson: false, modelsUsedSet: new Set() });
+      const cleaned = (r.content || '').replace(/^```(?:\w+)?\s*/i, '').replace(/```\s*$/i, '').trim();
+      // safety: if the AI shortened the part by more than 15%, keep the original part
+      return (cleaned && _copyCountWords(cleaned) >= _copyCountWords(c) * 0.85) ? cleaned : c;
+    } catch (_) { return c; }
+  });
+  return out.map((o, i) => o || chunks[i]).join('\n\n');
+}
+
 // opts.entries  -> use these [key, {name, content, raw}] entries as the source
 //                  instead of the attached files (used by the @Copy command,
 //                  where the source is the text typed in the chat box).
@@ -3584,11 +3731,7 @@ async function handleCopyStyleCommand(inputField, opts = {}) {
       // are handled by the slide pipeline itself).
       try {
         slideEntries = await Promise.all(attachedEntries.map(async ([k, fd]) => {
-          const r = await callAIAPI([
-            { role: 'system', content: _COPY_REFINE_CHATTER_RULES + '\nReturn ONLY the cleaned plain text — no HTML, no markdown fences, no commentary. Change nothing else.' },
-            { role: 'user', content: fd.content }
-          ], { forceJson: false, modelsUsedSet: new Set() });
-          const cleaned = (r.content || '').replace(/^```(?:\w+)?\s*/i, '').replace(/```\s*$/i, '').trim();
+          const cleaned = await _copyCleanChatterChunked(fd.content, _COPY_REFINE_CHATTER_RULES);
           return [k, Object.assign({}, fd, { content: cleaned || fd.content })];
         }));
       } catch (e) { console.warn('Copy & Refine pre-clean skipped:', e); }
@@ -3615,7 +3758,7 @@ async function handleCopyStyleCommand(inputField, opts = {}) {
       return `\n[SOURCE FILE ${i + 1}: ${name}]\n${cleaned}\nEND SOURCE FILE ${i + 1}\n`;
     });
     const joinedSource = sourceBlocks.join('\n');
-    const outputLanguage = typeof detectOutputLanguage === 'function' ? detectOutputLanguage(joinedSource) : 'en';
+    const outputLanguage = typeof detectOutputLanguage === 'function' ? detectOutputLanguage(joinedSource.slice(0, 20000)) : 'en';
 
     const copySystem =
       `You are a pure FORMATTING engine. Your ONLY job is to take the source content below and re-present it with clean visual styling — you must NOT summarize, shorten, expand, paraphrase, correct, reorder, ${copyLanguageFormat === 'default' ? 'translate, ' : ''}or omit ANY piece of it.${copyLanguageFormat !== 'default' ? ' The ONLY change allowed is converting the language to the selected Format (see FORMAT CONVERSION below).' : ''}\n` +
@@ -3636,23 +3779,53 @@ async function handleCopyStyleCommand(inputField, opts = {}) {
       ? `USER INSTRUCTION (apply to the attached file content; this is not source text):\n${userInstruction}\n\n`
       : '';
     const formatNote = copyLanguageFormat !== 'default' ? `FORMAT: ${_COPY_LANGUAGE_FORMAT_LABELS[copyLanguageFormat]} — convert the language to this format if the source is not already in it.\n\n` : '';
-    const userMsg = instructionPrefix + formatNote + (isRefine
-      ? `Restyle and present the following source content. Drop ONLY the AI chat wrapper (see the REFINE rules), keep every other detail, and add figures where they genuinely help:\n${joinedSource}`
-      : `Restyle and present ALL of the following source content, preserving every detail:\n${joinedSource}`);
+    // ---- CHUNKED PIPELINE: every part of the source gets its own AI call; nothing is cut ----
+    const chunkChars = APP_CONFIG.COPY_CHUNK_CHARS || 7000;
+    const chunks = [];
+    attachedEntries.forEach(([, fileData], fi) => {
+      const cleaned = (!fileData.raw && typeof cleanAttachmentSourceForAI === 'function') ? cleanAttachmentSourceForAI(fileData.content) : fileData.content;
+      const name = String(fileData.name || `file ${fi + 1}`).replace(/[\r\n]+/g, ' ').trim();
+      _copySplitIntoChunks(cleaned, chunkChars).forEach(t => chunks.push({ text: t, name, fileNo: fi + 1 }));
+    });
+    if (!chunks.length) throw new Error('The attached file has no readable text.');
 
-    const first = await callAIAPI([
-      { role: 'system', content: copySystem },
-      { role: 'user', content: userMsg }
-    ], {
-      forceJson: false,
-      modelsUsedSet: modelsUsed
+    const env = {
+      system: copySystem,
+      modelsUsed,
+      // the word-count check only makes sense when the language is NOT being converted
+      checkRatio: copyLanguageFormat === 'default',
+      minRatio: Number(APP_CONFIG.COPY_MIN_WORD_RATIO) || 0.85,
+      stats: { warnings: 0, rawParts: 0 },
+      buildUserMsg: (chunk, idx, total) => {
+        const partNote = total > 1
+          ? `LONG DOCUMENT NOTICE: this is PART ${idx + 1} of ${total} of one long source, sent separately. Restyle ONLY this part, from its first word to its last word — do not stop early, do not summarize, do not add any introduction or conclusion, do not repeat other parts. ` +
+            `${idx > 0 ? 'Use <h1> only if this part clearly starts with the whole document\'s title; otherwise use <h2>/<h3>. ' : ''}` +
+            `The part may begin or end in the middle of a section — that is normal; just keep it as it is.\n\n`
+          : '';
+        return instructionPrefix + formatNote + partNote + (isRefine
+          ? `Restyle and present the following source content. Drop ONLY the AI chat wrapper (see the REFINE rules), keep every other detail, and add figures where they genuinely help:\n[SOURCE FILE ${chunk.fileNo}: ${chunk.name}]\n${chunk.text}\nEND SOURCE FILE ${chunk.fileNo}`
+          : `Restyle and present ALL of the following source content, preserving every detail:\n[SOURCE FILE ${chunk.fileNo}: ${chunk.name}]\n${chunk.text}\nEND SOURCE FILE ${chunk.fileNo}`);
+      }
+    };
+
+    let doneParts = 0;
+    const parts = await _copyRunPool(chunks, APP_CONFIG.COPY_CHUNK_PARALLEL || 3, async (chunk, idx) => {
+      const partHtml = await _copyRestyleChunk(chunk, idx, chunks.length, env);
+      doneParts++;
+      if (typeof ProgressUI !== 'undefined' && ProgressUI.setStage) {
+        const pct = 8 + Math.round((doneParts / chunks.length) * 70);
+        ProgressUI.setStage(`AI restyling… part ${doneParts} of ${chunks.length}`, pct, Math.min(78, pct + 1));
+      }
+      return partHtml;
     });
 
+    if (isCancellationRequested && parts.some(p => !p)) {
+      env.stats.warnings++;
+      if (typeof displayToastNotification === 'function') displayToastNotification('⚠️ Stopped early — only the finished parts were inserted.');
+    }
     if (typeof ProgressUI !== 'undefined' && ProgressUI.setStage) ProgressUI.setStage('Finalizing…', 78, 92);
 
-    let html = (first.content || '').replace(/^```(?:html)?\s*/i, '').replace(/```\s*$/i, '').trim();
-    html = await generateHtmlContentWithAutoContinue(userMsg, html, first.finishReason, modelsUsed, APP_CONFIG.CONTINUATION_MAX_LOOPS, first.modelConfig);
-
+    let html = parts.filter(Boolean).join('\n').trim();
     if (!html) throw new Error('The AI returned an empty response.');
     if (typeof processMathEquationsToHTML === 'function') html = processMathEquationsToHTML(html);
 
@@ -3679,6 +3852,9 @@ async function handleCopyStyleCommand(inputField, opts = {}) {
           `✅ Copied and restyled the file's content — nothing added or removed.`));
     }
     if (typeof displayToastNotification === 'function') displayToastNotification(isRefine ? '✅ Copy & Refine complete.' : '✅ Copy complete — restyled only, content unchanged.');
+    if (typeof env !== 'undefined' && env.stats && env.stats.rawParts && typeof appendChatMessageToUI === 'function') {
+      appendChatMessageToUI('ai', `⚠️ ${env.stats.rawParts} part(s) could not be restyled by the AI, so their original text was inserted as plain paragraphs — nothing was lost.`);
+    }
   } catch (err) {
     if (loadingElement && loadingElement.isConnected) loadingElement.remove();
     console.error('Copy-style command failed:', err);
