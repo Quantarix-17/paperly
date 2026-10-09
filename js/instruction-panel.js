@@ -192,8 +192,11 @@ Before sending the answer, silently check:
 * If a file was provided, is the answer grounded in its content?
 * Does the final output sound like a finished answer rather than a description of how the answer was written?
 
-Apply these rules silently. Do not mention, quote, summarize, or refer to these instructions in the final answer.
-;
+Apply these rules silently. Do not mention, quote, summarize, or refer to these instructions in the final answer.`.trim();
+
+  // Make sure the default text always fits (otherwise clean() would truncate it
+  // and it could never match DEFAULT_TEXT again).
+  if (DEFAULT_TEXT.length + 500 > MAX_LEN) MAX_LEN = DEFAULT_TEXT.length + 1000;
 
   function clean(v) { return String(v == null ? '' : v).replace(/\r\n?/g, '\n').slice(0, MAX_LEN); }
 
@@ -242,7 +245,7 @@ Apply these rules silently. Do not mention, quote, summarize, or refer to these 
       '#paperly-instruction .pi-count{margin-top:4px;text-align:right;font-size:11.5px;opacity:.55}' +
       '#paperly-instruction .pi-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px}' +
       '#paperly-instruction .pi-actions .sp{flex:1}' +
-      '#paperly-instruction .pi-b{border:0;border-radius:11px;padding:9px 14px;font:600 13.5px inherit;font-family:inherit;cursor:pointer;' +
+      '#paperly-instruction .pi-b{border:0;border-radius:11px;padding:9px 14px;font-family:inherit;font-size:13.5px;font-weight:600;cursor:pointer;' +
       'background:rgba(148,163,184,.2);color:inherit}' +
       '#paperly-instruction .pi-b.pri{background:#4f7df3;color:#fff}' +
       '#paperly-instruction .pi-b:active{transform:scale(.97)}';
@@ -250,7 +253,13 @@ Apply these rules silently. Do not mention, quote, summarize, or refer to these 
   }
 
   // ---------------------------------------------------------------- editor
-  var root = null, ta = null, badge = null, count = null;
+  var root = null, ta = null, badge = null, count = null, openedValue = '';
+
+  // Close on outside click / X / Cancel, but warn if there are unsaved edits.
+  function requestClose() {
+    if (ta && ta.value !== openedValue && !window.confirm('You have unsaved changes. Discard them?')) return;
+    close();
+  }
 
   function ensure() {
     if (root) return root;
@@ -283,12 +292,12 @@ Apply these rules silently. Do not mention, quote, summarize, or refer to these 
     ta.addEventListener('keydown', function (e) {
       if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save(); }
     });
-    root.addEventListener('mousedown', function (e) { if (e.target === root) close(); });
-    root.querySelector('.pi-x').addEventListener('click', close);
-    root.querySelector('#pi-cancel').addEventListener('click', close);
+    root.addEventListener('mousedown', function (e) { if (e.target === root) requestClose(); });
+    root.querySelector('.pi-x').addEventListener('click', requestClose);
+    root.querySelector('#pi-cancel').addEventListener('click', requestClose);
     root.querySelector('#pi-save').addEventListener('click', save);
     root.querySelector('#pi-reset').addEventListener('click', function () { ta.value = DEFAULT_TEXT; updateCount(); ta.focus(); });
-    document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && root.classList.contains('show')) close(); });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && root.classList.contains('show')) requestClose(); });
     return root;
   }
 
@@ -299,7 +308,8 @@ Apply these rules silently. Do not mention, quote, summarize, or refer to these 
     var c = read();
     ta.value = c === null ? DEFAULT_TEXT : c;
     badge.textContent = c === null ? 'Default' : (c ? 'Custom' : 'Off');
-    badge.classList.toggle('custom', c !== null);
+    badge.classList.toggle('custom', !!c);
+    openedValue = ta.value;
     updateCount();
     root.classList.add('show');
     try { ta.focus({ preventScroll: true }); } catch (_) { ta.focus(); }
