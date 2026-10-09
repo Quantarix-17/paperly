@@ -418,6 +418,14 @@ function sanitizeHTML(rawHtml) {
     html = injectElementTemplates(html);
   }
 
+  // Fixed dark "VS Code" theme for every code block + program-output block
+  // (see code-highlight.js and the CODE & PROGRAM OUTPUT BLOCKS rule in
+  // buildSharedRules). Plain <pre class="code-block"> / <pre class="code-output">
+  // written by the AI become coloured, framed blocks here.
+  if (typeof injectCodeBlocks === 'function') {
+    html = injectCodeBlocks(html);
+  }
+
   return html.trim();
 }
 
@@ -1525,6 +1533,10 @@ function buildSharedRules(isMonochromeMode, outputLanguage, options) {
     Other figures are still welcome wherever they genuinely help: data charts (<!--CHART:...--> placeholder), graphs, tables, geometry/math figures, timelines and formula/callout boxes. Existing figures already in the document must be preserved exactly.
   ` : '';
 
+  const codeBlockRule = typeof getCodeBlockRuleForPrompt === 'function' ? `
+    ${getCodeBlockRuleForPrompt()}
+  ` : '';
+
   const superFigureRules = `
     ${illustrationsOffRule}
     === SUPER-HIGH-QUALITY FIGURE / DRAWING ENGINE (MANDATORY) ===
@@ -1746,6 +1758,7 @@ function buildSharedRules(isMonochromeMode, outputLanguage, options) {
     ${styleGuide}
     ${conceptMapRules}
     ${superFigureRules}
+    ${codeBlockRule}
     ${jsonEscapeRule}
 
     === UNIVERSAL MATH DELIMITER RULE (CRITICAL) ===
