@@ -3588,17 +3588,21 @@ function _copySplitIntoChunks(text, target) {
 }
 
 async function _copyRunPool(items, limit, worker) {
+  // `limit` may be a number or a function (so the allowed parallelism can shrink while running)
+  const getLimit = typeof limit === 'function' ? limit : () => limit;
   const results = new Array(items.length);
   let next = 0;
-  async function lane() {
+  async function lane(k) {
     while (true) {
       if (isCancellationRequested) return;
+      if (k >= Math.max(1, getLimit())) return; // this lane was switched off (rate limit)
       const i = next++;
       if (i >= items.length) return;
       results[i] = await worker(items[i], i);
     }
   }
-  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, lane));
+  const maxLanes = Math.max(1, Math.min(typeof limit === 'function' ? limit() : limit, items.length));
+  await Promise.all(Array.from({ length: maxLanes }, (_, k) => lane(k)));
   return results;
 }
 
@@ -3612,14 +3616,14 @@ function _copyRawFallbackHtml(text) {
 async function _copyRestyleChunk(chunk, idx, total, env, depth = 0) {
   const inWords = _copyCountWords(chunk.text);
   let best = '', bestRatio = 0;
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < 3; attempt++) {
     if (isCancellationRequested) return best || _copyRawFallbackHtml(chunk.text);
     try {
       const userMsg = env.buildUserMsg(chunk, idx, total);
       const first = await callAIAPI([
         { role: 'system', content: env.system },
         { role: 'user', content: userMsg }
-      ], { forceJson: false, modelsUsedSet: env.modelsUsed });
+      ], { forceJson: false, modelsUsedSet: env.modelsUsed, fast: true }); // fast = no web-search grounding / light reasoning: copying is pure formatting
       let html = (first.content || '').replace(/^```(?:html)?\s*/i, '').replace(/```\s*$/i, '').trim();
       html = await generateHtmlContentWithAutoContinue(userMsg, html, first.finishReason, env.modelsUsed, APP_CONFIG.CONTINUATION_MAX_LOOPS, first.modelConfig);
       const ratio = inWords ? _copyCountWords(_copyHtmlToText(html)) / inWords : 1;
@@ -3629,6 +3633,17 @@ async function _copyRestyleChunk(chunk, idx, total, env, depth = 0) {
     } catch (e) {
       if (e && (e.noModelConfigured || e.kind === 'cancelled' || e.name === 'AbortError')) throw e;
       console.warn(`Copy part ${idx + 1}/${total} attempt ${attempt + 1} failed:`, e);
+      // Rate limit / overload: slow the whole run down a little and wait, instead of failing parts.
+      const _msg = String((e && (e.status || e.code)) || '') + ' ' + String((e && e.message) || '');
+      if (/429|rate|quota|too many|overload|503|resource.?exhausted/i.test(_msg)) {
+        if (env.limit > 1) {
+          env.limit = Math.max(1, Math.floor(env.limit * 0.6));
+          if (!env.notifiedSlow && typeof displayToastNotification === 'function') { env.notifiedSlow = true; displayToastNotification('⏳ API rate limit reached — slowing down automatically.'); }
+        }
+        await new Promise(r => setTimeout(r, 2500 * (attempt + 1) + Math.random() * 1000));
+      } else {
+        await new Promise(r => setTimeout(r, 800));
+      }
     }
   }
   // Recovery 1: split this part in half and restyle both halves (smaller = more reliable)
@@ -3662,7 +3677,7 @@ async function _copyCleanChatterChunked(text, chatterRules) {
       const r = await callAIAPI([
         { role: 'system', content: chatterRules + '\nThis is one PART of a longer text. Return ONLY the cleaned plain text of this part — no HTML, no markdown fences, no commentary. Change nothing else; never shorten it.' },
         { role: 'user', content: c }
-      ], { forceJson: false, modelsUsedSet: new Set() });
+      ], { forceJson: false, modelsUsedSet: new Set(), fast: true });
       const cleaned = (r.content || '').replace(/^```(?:\w+)?\s*/i, '').replace(/```\s*$/i, '').trim();
       // safety: if the AI shortened the part by more than 15%, keep the original part
       return (cleaned && _copyCountWords(cleaned) >= _copyCountWords(c) * 0.85) ? cleaned : c;
@@ -3796,6 +3811,7 @@ async function handleCopyStyleCommand(inputField, opts = {}) {
       checkRatio: copyLanguageFormat === 'default',
       minRatio: Number(APP_CONFIG.COPY_MIN_WORD_RATIO) || 0.85,
       stats: { warnings: 0, rawParts: 0 },
+      limit: Number(APP_CONFIG.COPY_CHUNK_PARALLEL) || 3,
       buildUserMsg: (chunk, idx, total) => {
         const partNote = total > 1
           ? `LONG DOCUMENT NOTICE: this is PART ${idx + 1} of ${total} of one long source, sent separately. Restyle ONLY this part, from its first word to its last word — do not stop early, do not summarize, do not add any introduction or conclusion, do not repeat other parts. ` +
@@ -3809,7 +3825,7 @@ async function handleCopyStyleCommand(inputField, opts = {}) {
     };
 
     let doneParts = 0;
-    const parts = await _copyRunPool(chunks, APP_CONFIG.COPY_CHUNK_PARALLEL || 3, async (chunk, idx) => {
+    const parts = await _copyRunPool(chunks, () => env.limit, async (chunk, idx) => {
       const partHtml = await _copyRestyleChunk(chunk, idx, chunks.length, env);
       doneParts++;
       if (typeof ProgressUI !== 'undefined' && ProgressUI.setStage) {
