@@ -69,7 +69,7 @@ const APP_CONFIG = {
   // Bengali-heavy text; higher (9000+) for big-output models (faster, fewer calls).
   COPY_CHUNK_CHARS: 7000,
   // How many parts are restyled at the same time (raise if your API has no rate-limit problems).
-  COPY_CHUNK_PARALLEL: 3,
+  COPY_CHUNK_PARALLEL: 8, // starts here; the app lowers it by itself if the API says 'rate limit'
   // If the AI returns fewer than this share of a part's words, the part is split in two and retried.
   COPY_MIN_WORD_RATIO: 0.85,
 
