@@ -1,6 +1,9 @@
 // ========================================================================
 // EXAM LIBRARY — MCQ + OMR (Compact / Classic / Grid 2×2 / Auto)
 // ------------------------------------------------------------------------
+// v1.8.0:
+//   • ★ OMR বাবল এখন ফন্ট দিয়ে আঁকা (fonts/NazrulOMR-Regular.ttf): বৃত্ত আঁকার CSS/কোডিং বাদ,
+//     শুধু অক্ষরটা Nazrul OMR ফন্টে লেখা হয় (omrBubbleHtml). ফন্ট না পেলে পুরনো CSS-বৃত্ত ফলব্যাক।
 // v1.7.0:
 //   • ★ নতুন "grid" (২×২ অপশন) OMR টেমপ্লেট — ১০ কলাম/সারি, ২ সারি অপশন
 //   • ★ "auto" মোড: জায়গা থাকলে grid (সুন্দর), না হলে compact
@@ -12,7 +15,7 @@
   const root = (typeof window !== 'undefined') ? window : globalThis;
 
   const EXAM_LIBRARY = {
-    version: '1.7.0',
+    version: '1.8.0',
     enabled: true,
 
     detect: {
@@ -262,10 +265,10 @@
         '  <div class="q-col" style="border:1px solid #000;border-radius:3px;overflow:hidden;display:flex;flex-direction:column;flex:1;min-width:0;background:#fff;">',
         '    <div class="q-number" style="background:#dcdcdc;text-align:center;font-weight:bold;font-size:9px;padding:2px 0;border-bottom:1px solid #000;line-height:1.1;">১</div>',
         '    <div class="options" style="display:flex;flex-direction:column;padding:2px 1px;gap:1.5px;">',
-        '      <div class="opt-row" style="background:#ededed;"><div class="circle" style="width:11px;height:11px;border:1px solid #000;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:6px;font-weight:bold;background:#fff;">ক</div></div>',
-        '      <div class="opt-row"><div class="circle" style="width:11px;height:11px;border:1px solid #000;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:6px;font-weight:bold;background:#fff;">খ</div></div>',
-        '      <div class="opt-row" style="background:#ededed;"><div class="circle" style="width:11px;height:11px;border:1px solid #000;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:6px;font-weight:bold;background:#fff;">গ</div></div>',
-        '      <div class="opt-row"><div class="circle" style="width:11px;height:11px;border:1px solid #000;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:6px;font-weight:bold;background:#fff;">ঘ</div></div>',
+        '      <div class="opt-row" style="background:#ededed;"><span class="omr-glyph" style="display:inline-block;width:0.623em;height:0.623em;line-height:0.623em;font-family:Nazrul OMR,serif;font-size:17.66px;font-weight:400;border-radius:50%;background:#fff;color:#000;-webkit-text-stroke:0.35px #000;">ক</span></div>',
+        '      <div class="opt-row"><span class="omr-glyph" style="display:inline-block;width:0.623em;height:0.623em;line-height:0.623em;font-family:Nazrul OMR,serif;font-size:17.66px;font-weight:400;border-radius:50%;background:#fff;color:#000;-webkit-text-stroke:0.35px #000;">খ</span></div>',
+        '      <div class="opt-row" style="background:#ededed;"><span class="omr-glyph" style="display:inline-block;width:0.623em;height:0.623em;line-height:0.623em;font-family:Nazrul OMR,serif;font-size:17.66px;font-weight:400;border-radius:50%;background:#fff;color:#000;-webkit-text-stroke:0.35px #000;">গ</span></div>',
+        '      <div class="opt-row"><span class="omr-glyph" style="display:inline-block;width:0.623em;height:0.623em;line-height:0.623em;font-family:Nazrul OMR,serif;font-size:17.66px;font-weight:400;border-radius:50%;background:#fff;color:#000;-webkit-text-stroke:0.35px #000;">ঘ</span></div>',
         '    </div>', '  </div>', '  <!-- এভাবে ১০টি q-col পাশাপাশি -->', '</div>'
       ].join('\n'),
 
@@ -275,10 +278,10 @@
         '  <div class="q-col" style="border:1.5px solid #000;border-radius:5px;overflow:hidden;display:flex;flex-direction:column;flex:1;min-width:0;background:#fff;">',
         '    <div class="q-number" style="background:#dcdcdc;text-align:center;font-weight:bold;font-size:12px;padding:4px 0;border-bottom:1.5px solid #000;line-height:1.1;">১</div>',
         '    <div class="options" style="display:grid;grid-template-columns:1fr 1fr;padding:4px;row-gap:4px;column-gap:4px;">',
-        '      <div class="opt-row-top" style="display:flex;align-items:center;justify-content:center;padding:4px 0;border-radius:4px;background:#ededed;"><div class="circle" style="width:26px;height:26px;border:1.4px solid #000;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:bold;background:#fff;">ক</div></div>',
-        '      <div class="opt-row-top" style="display:flex;align-items:center;justify-content:center;padding:4px 0;border-radius:4px;background:#ededed;"><div class="circle" style="width:26px;height:26px;border:1.4px solid #000;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:bold;background:#fff;">খ</div></div>',
-        '      <div class="opt-row-bottom" style="display:flex;align-items:center;justify-content:center;padding:4px 0;border-radius:4px;background:#fff;"><div class="circle" style="width:26px;height:26px;border:1.4px solid #000;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:bold;background:#fff;">গ</div></div>',
-        '      <div class="opt-row-bottom" style="display:flex;align-items:center;justify-content:center;padding:4px 0;border-radius:4px;background:#fff;"><div class="circle" style="width:26px;height:26px;border:1.4px solid #000;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:bold;background:#fff;">ঘ</div></div>',
+        '      <div class="opt-row-top" style="display:flex;align-items:center;justify-content:center;padding:4px 0;border-radius:4px;background:#ededed;"><span class="omr-glyph" style="display:inline-block;width:0.623em;height:0.623em;line-height:0.623em;font-family:Nazrul OMR,serif;font-size:41.73px;font-weight:400;border-radius:50%;background:#fff;color:#000;-webkit-text-stroke:0.15px #000;">ক</span></div>',
+        '      <div class="opt-row-top" style="display:flex;align-items:center;justify-content:center;padding:4px 0;border-radius:4px;background:#ededed;"><span class="omr-glyph" style="display:inline-block;width:0.623em;height:0.623em;line-height:0.623em;font-family:Nazrul OMR,serif;font-size:41.73px;font-weight:400;border-radius:50%;background:#fff;color:#000;-webkit-text-stroke:0.15px #000;">খ</span></div>',
+        '      <div class="opt-row-bottom" style="display:flex;align-items:center;justify-content:center;padding:4px 0;border-radius:4px;background:#fff;"><span class="omr-glyph" style="display:inline-block;width:0.623em;height:0.623em;line-height:0.623em;font-family:Nazrul OMR,serif;font-size:41.73px;font-weight:400;border-radius:50%;background:#fff;color:#000;-webkit-text-stroke:0.15px #000;">গ</span></div>',
+        '      <div class="opt-row-bottom" style="display:flex;align-items:center;justify-content:center;padding:4px 0;border-radius:4px;background:#fff;"><span class="omr-glyph" style="display:inline-block;width:0.623em;height:0.623em;line-height:0.623em;font-family:Nazrul OMR,serif;font-size:41.73px;font-weight:400;border-radius:50%;background:#fff;color:#000;-webkit-text-stroke:0.15px #000;">ঘ</span></div>',
         '    </div>', '  </div>',
         '  <!-- এভাবে ১০টি q-col পাশাপাশি, প্রতিটি সারিতে ১০টি প্রশ্ন -->', '</div>',
         '<div class="omr-grid" style="display:flex;gap:5px;justify-content:space-between;width:100%;">',
@@ -293,10 +296,10 @@
         '    <div class="q-row" style="display:flex;align-items:center;justify-content:flex-start;gap:15px;margin-bottom:10px;padding:4px 8px;border-bottom:1px dotted #ccc;">',
         '      <span class="q-number" style="font-weight:bold;font-size:16px;width:32px;text-align:right;">১.</span>',
         '      <div class="options" style="display:flex;gap:10px;">',
-        '        <div class="circle" style="width:26px;height:26px;border:1.5px solid #000;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:bold;">ক</div>',
-        '        <div class="circle" style="width:26px;height:26px;border:1.5px solid #000;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:bold;">খ</div>',
-        '        <div class="circle" style="width:26px;height:26px;border:1.5px solid #000;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:bold;">গ</div>',
-        '        <div class="circle" style="width:26px;height:26px;border:1.5px solid #000;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:bold;">ঘ</div>',
+        '        <span class="omr-glyph" style="display:inline-block;width:0.623em;height:0.623em;line-height:0.623em;font-family:Nazrul OMR,serif;font-size:41.73px;font-weight:400;border-radius:50%;background:#fff;color:#000;-webkit-text-stroke:0.15px #000;">ক</span>',
+        '        <span class="omr-glyph" style="display:inline-block;width:0.623em;height:0.623em;line-height:0.623em;font-family:Nazrul OMR,serif;font-size:41.73px;font-weight:400;border-radius:50%;background:#fff;color:#000;-webkit-text-stroke:0.15px #000;">খ</span>',
+        '        <span class="omr-glyph" style="display:inline-block;width:0.623em;height:0.623em;line-height:0.623em;font-family:Nazrul OMR,serif;font-size:41.73px;font-weight:400;border-radius:50%;background:#fff;color:#000;-webkit-text-stroke:0.15px #000;">গ</span>',
+        '        <span class="omr-glyph" style="display:inline-block;width:0.623em;height:0.623em;line-height:0.623em;font-family:Nazrul OMR,serif;font-size:41.73px;font-weight:400;border-radius:50%;background:#fff;color:#000;-webkit-text-stroke:0.15px #000;">ঘ</span>',
         '      </div>', '    </div>', '    <!-- এভাবে ১০টি q-row -->', '  </div>',
         '  <div class="column" style="width:48%;">', '    <!-- পরের ১০টি একই কাঠামোয় -->', '  </div>',
         '</div>'
@@ -313,6 +316,49 @@
   function toAsciiDigits(s) { return String(s == null ? '' : s).replace(/[০-৯]/g, d => String(BN_DIGITS.indexOf(d))); }
   function fmtNum(n, lang) { const digits = (EXAM_LIBRARY.labels[lang] || EXAM_LIBRARY.labels.en).digits; return String(n).replace(/\d/g, d => digits[+d]); }
   function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+  // ---------- OMR বাবল = ফন্টের একটি অক্ষর (Nazrul OMR) ----------
+  // fonts/NazrulOMR-Regular.ttf এর প্রতিটি অক্ষর/সংখ্যা (ক খ গ ঘ ঙ চ, A–F, ০–৯, 0–9 ...) আগে থেকেই
+  // বৃত্তের ভেতরে আঁকা। তাই এখন বৃত্ত আঁকার জন্য border / border-radius / width-height / flex-centering
+  // লাগে না — শুধু অক্ষরটা এই ফন্টে লিখলেই (ক) হয়ে যায়।
+  // বৃত্তের ব্যাস = ফন্ট-সাইজের 0.623 গুণ; ফন্ট-সাইজ = bubblePx / 0.623, তাই আগের মাপই থাকে।
+  // সব স্টাইল inline (!important) — যেন পেজ-থিম, প্রিন্ট ও এক্সপোর্টে বদলে না যায়।
+  const OMR_FONT_FAMILY = 'Nazrul OMR';
+  const OMR_CIRCLE_EM = 0.623;
+  function omrFontLoaded() {
+    try {
+      return !!(root.document && root.document.fonts &&
+        Array.from(root.document.fonts).some(f => /nazrul\s*omr/i.test(String(f.family).replace(/["']/g, '')) && f.status === 'loaded'));
+    } catch (_) { return false; }
+  }
+  async function ensureOmrFont() {
+    try {
+      if (omrFontLoaded()) return true;
+      if (root.document && root.document.fonts && root.document.fonts.load) {
+        await Promise.race([
+          root.document.fonts.load('20px "' + OMR_FONT_FAMILY + '"', 'কখগঘঙচABCD0১'),
+          new Promise(r => setTimeout(r, 2500))
+        ]);
+      }
+    } catch (_) { /* fall back to the plain CSS circle below */ }
+    return omrFontLoaded();
+  }
+  // opts.fbBorder / opts.fbFontPx = শুধু ফন্ট না পাওয়া গেলে ব্যবহৃত পুরনো CSS-বৃত্তের মাপ (বাবল যেন কখনো ফাঁকা না হয়)
+  function omrBubbleHtml(ch, px, opts) {
+    opts = opts || {};
+    const t = esc(ch);
+    if (!omrFontLoaded()) {
+      return `<div class="circle" style="box-sizing:border-box;width:${px}px;height:${px}px;border:${opts.fbBorder || '1px'} solid #000;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:${(opts.fbFontPx || px * 0.55).toFixed(1)}px;font-weight:bold;background:#fff;line-height:1;">${t}</div>`;
+    }
+    const fs = px / OMR_CIRCLE_EM;
+    const stroke = px < 14 ? 0.35 : 0.15;      // ছোট বৃত্তে রেখা একটু মোটা, যেন স্ক্যানার/প্রিন্টারে স্পষ্ট থাকে
+    return `<span class="omr-glyph" style="display:inline-block !important;flex:none;box-sizing:content-box !important;` +
+      `width:${OMR_CIRCLE_EM}em !important;height:${OMR_CIRCLE_EM}em !important;line-height:${OMR_CIRCLE_EM}em !important;` +
+      `font-family:'${OMR_FONT_FAMILY}',serif !important;font-size:${fs.toFixed(2)}px !important;font-weight:400 !important;font-style:normal !important;font-synthesis:none;` +
+      `letter-spacing:0 !important;text-align:left !important;text-indent:0 !important;white-space:nowrap !important;overflow:visible !important;` +
+      `padding:0 !important;margin:0 !important;border:0 !important;border-radius:50% !important;background:#fff !important;color:#000 !important;` +
+      `-webkit-text-stroke:${stroke}px #000 !important;-webkit-print-color-adjust:exact;print-color-adjust:exact;">${t}</span>`;
+  }
   function hasBengali(s) { return /[\u0980-\u09FF]/.test(String(s || '')); }
   function norm(s) { return String(s || '').replace(/\s+/g, ' ').trim().toLowerCase(); }
   function isCancelled() { try { return typeof isCancellationRequested !== 'undefined' && !!isCancellationRequested; } catch (_) { return false; } }
@@ -719,7 +765,7 @@ IMPORTANT — when suggesting a follow-up action button related to exams, use th
         const optRows = opts.map((ch, oi) => {
           const bg = (oi % 2 === 0) ? O.rowShade : '#fff';
           return `<div class="opt-row" style="display:flex;justify-content:center;background:${bg};">` +
-            `<div class="circle" style="box-sizing:border-box;width:${bubblePx}px;height:${bubblePx}px;border:1px solid #000;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:${(bubblePx * 0.55).toFixed(1)}px;font-weight:bold;background:#fff;line-height:1;">${esc(ch)}</div>` +
+            omrBubbleHtml(ch, bubblePx, { fbBorder: '1px', fbFontPx: bubblePx * 0.55 }) +
             `</div>`;
         }).join('');
         cellHtmls.push(
@@ -751,7 +797,7 @@ IMPORTANT — when suggesting a follow-up action button related to exams, use th
       for (let i = from; i < to; i++) {
         const qn = startNum + i;
         const bubbles = opts.map(ch =>
-          `<div class="circle" style="box-sizing:border-box;width:${bubblePx}px;height:${bubblePx}px;border:1.3px solid #000;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:${(bubblePx * 0.5).toFixed(1)}px;font-weight:bold;background:#fff;line-height:1;">${esc(ch)}</div>`
+          omrBubbleHtml(ch, bubblePx, { fbBorder: '1.3px', fbFontPx: bubblePx * 0.5 })
         ).join('');
         s += `<div class="q-row" style="display:flex;align-items:center;justify-content:flex-start;margin-bottom:${rowGap}px;padding:0 4px;border-bottom:${O.rowBorder};">` +
           `<span class="q-number" style="font-weight:bold;font-size:${numFontPx}px;width:${numWidth}px;text-align:right;margin-right:8px;">${fmtNum(qn, ctx.lang)}.</span>` +
@@ -799,7 +845,7 @@ IMPORTANT — when suggesting a follow-up action button related to exams, use th
           const shaded = oi < topCount;
           const bg = shaded ? G.rowShade : '#fff';
           return `<div class="opt-row-${shaded ? 'top' : 'bottom'}" style="display:flex;align-items:center;justify-content:center;padding:${Math.max(1, Math.round(cellPad * 0.6))}px 0;border-radius:3px;background:${bg};">` +
-            `<div class="circle" style="box-sizing:border-box;width:${bubblePx}px;height:${bubblePx}px;border:1.3px solid #000;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:${bubbleFontPx.toFixed(1)}px;font-weight:bold;background:#fff;line-height:1;">${esc(ch)}</div>` +
+            omrBubbleHtml(ch, bubblePx, { fbBorder: '1.3px', fbFontPx: bubbleFontPx }) +
           `</div>`;
         }).join('');
 
@@ -1107,6 +1153,7 @@ IMPORTANT — when suggesting a follow-up action button related to exams, use th
   // ৮. মূল এন্ট্রি
   // ======================================================================
   async function generateExamPaper(promptText, fileContextString, modelsUsedSet, intentPayload, options) {
+    await ensureOmrFont();   // Nazrul OMR must be ready before the bubbles are written
     const o = options || {};
     const spec = parseExamRequest(promptText, {
       isEmptyCanvas: o.isEmptyCanvas, isReplace: o.isReplace,
@@ -1193,6 +1240,7 @@ IMPORTANT — when suggesting a follow-up action button related to exams, use th
   }
 
   async function generateOmrOnlyPaper(spec, options) {
+    await ensureOmrFont();   // Nazrul OMR must be ready before the bubbles are written
     const labels = EXAM_LIBRARY.labels[spec.lang] || EXAM_LIBRARY.labels.en;
     const ctx = { lang: spec.lang, labels };
     const count = spec.count;
@@ -1268,6 +1316,6 @@ IMPORTANT — when suggesting a follow-up action button related to exams, use th
     omrHtml, omrCompactHtml, omrClassicHtml, omrGridHtml, questionHtml, headerHtml, countOptions,
     fmtNum, parseDifficulty, parseOmrChoice, hasOmr, resolveOmrStyle,
     isOmrOnlyRequest, countOmrOptions, renderOmrOnlyPages, generateOmrOnlyPaper,
-    isGenericExamCreate, parseCreateWhat, computeOmrFit
+    isGenericExamCreate, parseCreateWhat, computeOmrFit, omrBubbleHtml, ensureOmrFont, omrFontLoaded
   };
 })();
