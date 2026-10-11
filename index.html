@@ -301,6 +301,22 @@
       }
     }
   </style>
+  <!-- OMR bubbles are drawn by the font "Nazrul OMR" (fonts/NazrulOMR-Regular.ttf). Load it early and switch the
+       new look on (class omr-font-ready) only when it is really available; otherwise the old CSS circle stays. -->
+  <link rel="preload" href="fonts/NazrulOMR-Regular.ttf" as="font" type="font/ttf" crossorigin>
+  <script>
+    (function () {
+      try {
+        if (!document.fonts || !document.fonts.load) return;
+        document.fonts.load('20px "Nazrul OMR"', 'কখগঘAaBb01১২').then(function (faces) {
+          if (!faces || !faces.length) return;
+          document.documentElement.classList.add('omr-font-ready');
+          if (document.body) document.body.classList.add('omr-font-ready');
+          else document.addEventListener('DOMContentLoaded', function () { document.body.classList.add('omr-font-ready'); });
+        }).catch(function () { /* font missing: keep the old circle */ });
+      } catch (e) { /* ignore */ }
+    })();
+  </script>
 </head>
 <body>
   <!-- PaperLy: sign-in gate -->
