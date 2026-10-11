@@ -1929,6 +1929,63 @@ function _elementXY(position, anchor, s) {
   }
 }
 
+// ----- TEXT ZONES: where each layout puts its text (x, y, w, h in % of the slide) -----
+// A visible element (opacity > 0.3) must not sit on these. Centred hero layouts keep a big central zone;
+// ordinary layouts keep a title strip and a body area, which leaves the margins and corners free.
+const SLIDE_TEXT_ZONES = {
+  title:    [[8, 24, 84, 52]],
+  section:  [[8, 26, 84, 48]],
+  quote:    [[6, 20, 88, 60]],
+  big_stat: [[8, 18, 84, 64]],
+  _default: [[6, 4, 70, 16], [6, 24, 88, 66]]
+};
+const SLIDE_ELEMENT_MAX_TEXT_OVERLAP = 0.1;      // share of the VISIBLE element allowed on text
+const SLIDE_ELEMENT_MIN_SIDE = { primary: 8, secondary: 6, micro: 3.5 };
+const SLIDE_ELEMENT_CLEAR_ORDER = ['top-right', 'bottom-right', 'top-left', 'bottom-left', 'right-edge', 'left-edge'];
+
+function _textZonesFor(layout) { return SLIDE_TEXT_ZONES[layout] || SLIDE_TEXT_ZONES._default; }
+// Share of the element's visible part that lies on the text zones. Element = square of width s% at (x, y).
+function _elementTextOverlap(x, y, s, layout) {
+  const hs = s * 16 / 9;
+  const vx0 = Math.max(0, x), vy0 = Math.max(0, y), vx1 = Math.min(100, x + s), vy1 = Math.min(100, y + hs);
+  const va = Math.max(0, vx1 - vx0) * Math.max(0, vy1 - vy0);
+  if (va <= 0) return 0;
+  let on = 0;
+  _textZonesFor(layout).forEach(z => {
+    const ix = Math.max(0, Math.min(vx1, z[0] + z[2]) - Math.max(vx0, z[0])), iy = Math.max(0, Math.min(vy1, z[1] + z[3]) - Math.max(vy0, z[1]));
+    on += ix * iy;
+  });
+  return Math.min(1, on / va);
+}
+// First position (requested one first), at the largest size that keeps clear of the text; null if none.
+function _placeClearOfText(position, anchor, side, importance, layout) {
+  const min = SLIDE_ELEMENT_MIN_SIDE[importance] || 4;
+  const order = [position].concat(SLIDE_ELEMENT_CLEAR_ORDER.filter(p => p !== position));
+  for (let k = 0; k < order.length; k++) {
+    const pos = order[k];
+    for (let f = 1; f >= 0.5; f -= 0.16) {
+      const sd = Math.round(side * f * 10) / 10;
+      if (sd < min) break;
+      const an = pos === position ? anchor : (/edge$/.test(pos) ? 'edge' : 'corner');
+      const xy = _elementXY(pos, an, sd);
+      if (_elementTextOverlap(xy[0], xy[1], sd, layout) <= SLIDE_ELEMENT_MAX_TEXT_OVERLAP) return { x: xy[0], y: xy[1], side: sd };
+    }
+  }
+  return null;
+}
+// An element that already has x / y / size (AI-placed, or from the old form): move it off the text, or drop it.
+// Faint watermarks (opacity <= 0.3) and full-bleed compositions (size >= 60) are left alone.
+function _clearLegacyElement(e, layout, force) {
+  if (!e || (e.role && !force)) return e;
+  const op = typeof e.opacity === 'number' ? e.opacity : 1;
+  if (op <= 0.3 || !(e.size > 0) || e.size >= 60 || !isFinite(e.x) || !isFinite(e.y)) return e;
+  if (_elementTextOverlap(e.x, e.y, e.size, layout) <= SLIDE_ELEMENT_MAX_TEXT_OVERLAP) return e;
+  const spot = _placeClearOfText('top-right', 'corner', e.size, e.importance || 'secondary', layout);
+  if (!spot) return null;
+  e.x = Math.round(spot.x * 10) / 10; e.y = Math.round(spot.y * 10) / 10; e.size = spot.side;
+  return e;
+}
+
 // Intent -> concrete instance (same shape _sanitizeSlideElement returns), or null.
 function _resolveSemanticElement(e, layout, ctx, seed) {
   const pick = (v, list, d) => { const x = String(v || '').trim().toLowerCase(); return list.indexOf(x) !== -1 ? x : d; };
@@ -1936,21 +1993,27 @@ function _resolveSemanticElement(e, layout, ctx, seed) {
   const importance = pick(e.importance, SLIDE_ELEMENT_IMPORTANCE, 'secondary');
   const hero = SLIDE_HERO_LAYOUTS.indexOf(layout) !== -1;
   let position = pick(e.position, SLIDE_ELEMENT_POSITIONS, 'top-right');
-  if (!hero && position === 'center') position = 'bottom-right';          // never in the middle of content
+  if (position === 'center') position = hero ? 'top-right' : 'bottom-right';   // never in the middle: that is where the text is
   const anchor = pick(e.anchor, SLIDE_ELEMENT_ANCHORS, /edge$/.test(position) ? 'edge' : 'corner');
   let id = String(e.id || '').trim().toLowerCase();
   if (!id || !_elementIdOk(id, ctx)) id = _pickElementId(role, ctx, seed);
   if (!id) return null;
   let side = SLIDE_ELEMENT_SIZE[importance][hero ? 0 : 1] * (role === 'atmospheric' ? 1.8 : 1);
   if (!hero) side = Math.min(side, role === 'atmospheric' ? 30 : 16);
-  const xy = _elementXY(position, anchor, side);
+  const opacity0 = SLIDE_ELEMENT_OPACITY[role][importance][hero ? 0 : 1];
+  let xy, placedSide = side;
+  if (opacity0 > 0.3 && role !== 'atmospheric') {                // a visible element must not touch the text
+    const spot = _placeClearOfText(position, anchor, side, importance, layout);
+    if (!spot) return null;
+    xy = [spot.x, spot.y]; placedSide = spot.side;
+  } else xy = _elementXY(position, anchor, side);
   const pal = (ctx && ctx.palette) || null;
   const color = pal ? (role === 'semantic' && importance === 'micro' ? (pal.secondary || pal.primary) : (role === 'structural' ? (pal.secondary || pal.primary) : pal.primary)) : null;
   const opacity = SLIDE_ELEMENT_OPACITY[role][importance][hero ? 0 : 1];
   return {
     id, svg: null,
-    layer: (hero && role === 'semantic' && importance === 'primary') ? 'front' : 'behind',
-    x: Math.round(xy[0] * 10) / 10, y: Math.round(xy[1] * 10) / 10, size: Math.round(side * 10) / 10,
+    layer: 'behind',                                              // text always paints above elements
+    x: Math.round(xy[0] * 10) / 10, y: Math.round(xy[1] * 10) / 10, size: Math.round(placedSide * 10) / 10,
     rotate: 0, opacity,
     color: (typeof color === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(color)) ? color : null,
     color2: null, color3: null, color4: null, color5: null,
@@ -1967,6 +2030,7 @@ function _slideElementPolicyPass(slides, ctx) {
   slides.forEach((sl, i) => {
     const hero = SLIDE_HERO_LAYOUTS.indexOf(sl.layout) !== -1;
     let els = Array.isArray(sl.elements) ? sl.elements : [];
+    els = els.map(e => _clearLegacyElement(e, sl.layout)).filter(Boolean);   // 0) nothing visible sits on the text
     // 1) auto-elements on title / section slides that came back bare
     if (!els.length && ctx.purposeId && (sl.layout === 'title' || sl.layout === 'section') && ctx.purposeId !== 'report') {
       const restrained = SLIDE_RESTRAINED_PURPOSES.indexOf(ctx.purposeId) !== -1;
@@ -2663,6 +2727,7 @@ function lintSlideDeck(deck, ctx) {
     const longBullet = (s.bullets || []).find(b => typeof b === 'string' && b.length > 200);
     if (longBullet) push(i, 'typography', 'warn', 'A bullet is longer than 200 characters', null);
     const els = (s.elements || []);
+    if (els.some(e => e && (typeof e.opacity === 'number' ? e.opacity : 1) > 0.3 && e.size > 0 && e.size < 60 && isFinite(e.x) && isFinite(e.y) && _elementTextOverlap(e.x, e.y, e.size, s.layout) > SLIDE_ELEMENT_MAX_TEXT_OVERLAP)) push(i, 'element-collision', 'error', 'An element sits on the text', 'relocate');
     const cap = (SLIDE_PURPOSE_ELEMENT_CAP[ctx.purposeId] || 3) + (SLIDE_HERO_LAYOUTS.indexOf(s.layout) !== -1 ? 1 : 0);
     if (els.length > cap + 2) push(i, 'element-count', 'warn', `${els.length} elements on one slide`, 'trim_elements');
     if (m.state !== 'ok' && m.state !== 'sparse' && els.some(e => e && e.role === 'semantic' && e.importance === 'primary')) push(i, 'element-count', 'warn', 'Primary element on a crowded slide', 'trim_elements');
@@ -2769,6 +2834,18 @@ function _mergeTinySlides(slides) {
   return out;
 }
 
+function _repairRelocate(s) {
+  const before = JSON.stringify(s.elements || []);
+  s.elements = (s.elements || []).map(e => _clearLegacyElement(e, s.layout, true)).filter(Boolean);
+  return JSON.stringify(s.elements) !== before;
+}
+// For the UI / existing decks: move every element that sits on text. Returns how many slides changed.
+function fixSlideElementCollisions(deck) {
+  let n = 0;
+  ((deck && deck.slides) || []).forEach(s => { if (_repairRelocate(s)) n++; });
+  return n;
+}
+
 // A free slide's arrangement as a string (row weights / stacks), or '' when it has none.
 function _compositionSignature(slide) {
   if (!slide || slide.layout !== 'free' || !Array.isArray(slide.blocks)) return '';
@@ -2809,7 +2886,7 @@ function repairSlideDeck(deck, ctx) {
   ctx = ctx || {};
   const before = lintSlideDeck(deck, ctx);
   const repaired = [];
-  const fixes = { reflow: _repairReflow, diversify: _repairDiversify, diversify_layout: _repairDiversifyLayout, reweight: _repairReweight, trim_elements: s => _repairTrimElements(s, ctx) };
+  const fixes = { relocate: _repairRelocate, reflow: _repairReflow, diversify: _repairDiversify, diversify_layout: _repairDiversifyLayout, reweight: _repairReweight, trim_elements: s => _repairTrimElements(s, ctx) };
   for (let round = 0; round < 2; round++) {
     const issues = lintSlideDeck(deck, ctx).filter(x => x.fix && x.slide >= 0);
     if (!issues.length) break;
