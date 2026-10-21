@@ -180,6 +180,17 @@ function _aiNetworkHint(url) {
   return '';
 }
 
+// Chrome (v142+) asks the user for "Local network access" when an https website talks to a local server.
+// Annotating the request lets Chrome show that prompt (and skip the mixed-content block). Other browsers ignore it.
+function _aiLocalFetchOpts(url) {
+  try {
+    const h = new URL(url).hostname.toLowerCase();
+    if (h === 'localhost' || h === '[::1]' || /^127\./.test(h)) return { targetAddressSpace: 'loopback' };
+    if (_aiIsLocalHost(h)) return { targetAddressSpace: 'local' };
+  } catch (_) {}
+  return {};
+}
+
 // Tells "server is down" apart from "server is up but the browser blocked the reply (CORS / local-network permission)".
 async function _aiExplainNetworkFailure(url) {
   let u; try { u = new URL(url); } catch (_) { return ''; }
@@ -187,10 +198,10 @@ async function _aiExplainNetworkFailure(url) {
   if (/HTTPS but the URL is http/.test(sync)) return sync;
   try {
     // no-cors: resolves (opaque) when something answers at that address, rejects when nothing does
-    await fetch(u.origin + '/', { mode: 'no-cors', signal: AbortSignal.timeout ? AbortSignal.timeout(4000) : undefined });
+    await fetch(u.origin + '/', Object.assign({ mode: 'no-cors', signal: AbortSignal.timeout ? AbortSignal.timeout(4000) : undefined }, _aiLocalFetchOpts(url)));
     return ' The server IS running, but the browser blocked its reply (CORS or the browser\'s local-network permission). Fix: run  node local-proxy.js ' + u.origin + '  and use http://127.0.0.1:31416 instead; if the browser asks to allow access to local devices, choose Allow.';
   } catch (_) {
-    return _aiIsLocalHost(u.hostname) ? ' Nothing answers at ' + u.origin + ' — is the local server running, and is the port right?' : sync;
+    return _aiIsLocalHost(u.hostname) ? ' No answer from ' + u.origin + '. Either the server is not running / the port is wrong, or this browser denied "Local network access" for this website (Chrome: lock icon next to the address bar > Site settings > Local network access > Allow, then reload). Safari blocks this completely — use Chrome or Edge.' : sync;
   }
 }
 
@@ -351,7 +362,7 @@ async function fetchAIModelList(cfg) {
   const headers = type === 'gemini' ? {} : buildAIRequestHeaders(cfg, type);
   delete headers['Content-Type'];
   let res;
-  try { res = await fetch(listUrl, { headers, signal: AbortSignal.timeout ? AbortSignal.timeout(15000) : undefined }); }
+  try { res = await fetch(listUrl, Object.assign({ headers, signal: AbortSignal.timeout ? AbortSignal.timeout(15000) : undefined }, _aiLocalFetchOpts(listUrl))); }
   catch (e) { throw new Error('Could not reach ' + u.origin + '.' + await _aiExplainNetworkFailure(u.href)); }
   if (!res.ok) throw new Error(`The server answered HTTP ${res.status} for the model list.`);
   const j = await res.json();
@@ -624,7 +635,8 @@ async function _testAIModelConnectionOnce(cfg) {
       method: 'POST',
       headers: req.headers,
       body: JSON.stringify(req.body),
-      signal: AbortSignal.timeout ? AbortSignal.timeout(60000) : undefined
+      signal: AbortSignal.timeout ? AbortSignal.timeout(60000) : undefined,
+      ..._aiLocalFetchOpts(req.url)
     });
     if (!response.ok) {
       let detail = '';
@@ -1550,4 +1562,5 @@ window.fetchAIModelList = fetchAIModelList;
 window.completeAIBareUrl = completeAIBareUrl;
 window.parseModelPasteText = parseModelPasteText;
 window._aiNetworkHint = _aiNetworkHint;
+window._aiLocalFetchOpts = _aiLocalFetchOpts;
 window._aiExplainNetworkFailure = _aiExplainNetworkFailure;
