@@ -261,47 +261,9 @@
       border: 0;
     }
     #pdf-print-stage { display: none; }
-
-    /* Small override for mobile/desktop */
-    .topbar-btn.btn-exporting {
-      cursor: default;
-      opacity: 0.88;
-      pointer-events: none;
-    }
-    .btn-spinner {
-      width: 13px;
-      height: 13px;
-      flex-shrink: 0;
-      border-radius: 50%;
-      border: 2px solid rgba(255, 255, 255, 0.4);
-      border-top-color: #fff;
-      animation: btn-spin 0.65s linear infinite;
-    }
-    @keyframes btn-spin {
-      to { transform: rotate(360deg); }
-    }
   </style>
 
-  <!-- Include any additional style overrides -->
-  <style id="pdf-viewer-full-width-fix">
-    #pdf-view-container {
-      padding-left: 0 !important;
-      padding-right: 0 !important;
-    }
-    @media (max-width: 850px) {
-      #pdf-view-container {
-        padding-top: 6px !important;
-        padding-bottom: max(10px, env(safe-area-inset-bottom, 10px)) !important;
-      }
-    }
-    @media (min-width: 851px) {
-      #pdf-view-container {
-        padding-top: 14px !important;
-        padding-bottom: 14px !important;
-      }
-    }
-  </style>
-  <!-- OMR bubbles are drawn by the font "Nazrul OMR" (fonts/NazrulOMR-Regular.ttf): load it early so it is ready
+    <!-- OMR bubbles are drawn by the font "Nazrul OMR" (fonts/NazrulOMR-Regular.ttf): load it early so it is ready
        when exam-library.js writes the bubbles (exam-library.js also waits for it before building). -->
   <link rel="preload" href="fonts/NazrulOMR-Regular.ttf" as="font" type="font/ttf" crossorigin>
   <script>
@@ -666,7 +628,7 @@
 
       <div id="ai-model-info-panel" class="ai-model-info-panel">
         <div class="ai-model-info-grid">
-          <div class="ai-model-info-row"><span class="ai-model-info-label">Connection</span><span>Any OpenAI-compatible endpoint can be configured. API keys remain in this browser.</span></div>
+          <div class="ai-model-info-row"><span class="ai-model-info-label">Connection</span><span>OpenAI-compatible, Gemini, Anthropic and Ollama endpoints (cloud or local) can be configured; only the URL is required. API keys remain in this browser.</span></div>
           <div class="ai-model-info-row"><span class="ai-model-info-label">Fallback</span><span>Models are tried in the order shown below when an AI request fails.</span></div>
           <div class="ai-model-info-row"><span class="ai-model-info-label">Reorder</span><span>Use the handle at the left of a model card to change its priority.</span></div>
           <div class="ai-model-auto-row">
@@ -707,24 +669,51 @@
 
       <div class="ai-model-add-form" id="ai-model-add-form">
         <h4 class="ai-model-add-title">Add model</h4>
+        <div style="font-size:.8rem;opacity:.75;margin:-4px 0 10px;">Only the <b>API URL</b> is required. Key, Model ID and Name are optional — local servers (FreeLLMAPI, Ollama, LM Studio…) often need neither.</div>
+        <details style="margin-bottom:12px;">
+          <summary style="cursor:pointer;font-size:.88rem;font-weight:600;">⚡ Paste anything (curl, URL, JSON, .env, “url key model”)</summary>
+          <textarea id="ai-model-paste-input" rows="4" placeholder="curl http://localhost:3001/v1/chat/completions -H 'Authorization: Bearer sk-...' -d '{&quot;model&quot;:&quot;auto&quot;}'&#10;or: http://localhost:3001&#10;or: base_url=...  api_key=...  model=..." style="width:100%;box-sizing:border-box;padding:9px 11px;border:1.5px solid var(--border-color);border-radius:var(--radius-sm);background:var(--bg-color);color:var(--text-primary);font-size:.85rem;font-family:monospace;margin-top:8px;"></textarea>
+          <button type="button" class="topbar-btn" style="margin-top:6px;" onclick="handleSmartPasteModel()">Fill the form from this text</button>
+        </details>
         <div class="ai-model-form-grid">
-          <div class="ai-field"><label for="ai-model-name-input">Name</label><input type="text" id="ai-model-name-input" placeholder="e.g. GPT-4o"></div>
-          <div class="ai-field"><label for="ai-model-id-input">Model ID</label><input type="text" id="ai-model-id-input" placeholder="e.g. gpt-4o"></div>
-          <div class="ai-field ai-field-full"><label for="ai-model-url-input">API URL</label><input type="text" id="ai-model-url-input" placeholder="https://api.openai.com/v1/chat/completions"></div>
-          <div class="ai-field ai-field-full"><label for="ai-model-key-input">API Key</label><input type="password" id="ai-model-key-input" placeholder="API key"></div>
-          <div class="ai-field ai-field-full">
+          <div class="ai-field ai-field-full"><label for="ai-model-url-input">API URL <span style="opacity:.6">(required)</span></label><input type="text" id="ai-model-url-input" placeholder="https://api.openai.com/v1/chat/completions  or  http://localhost:3001"></div>
+          <div class="ai-field ai-field-full"><label for="ai-model-key-input">API Key <span style="opacity:.6">(optional — leave blank for local servers)</span></label><input type="password" id="ai-model-key-input" placeholder="API key"></div>
+          <div class="ai-field"><label for="ai-model-id-input">Model ID <span style="opacity:.6">(optional)</span></label><input type="text" id="ai-model-id-input" list="ai-model-id-list" placeholder="blank = server decides"><datalist id="ai-model-id-list"></datalist></div>
+          <div class="ai-field"><label for="ai-model-name-input">Name <span style="opacity:.6">(optional)</span></label><input type="text" id="ai-model-name-input" placeholder="e.g. My local router"></div>
+          <div class="ai-field">
             <label for="ai-model-api-type-select">API Type</label>
             <select id="ai-model-api-type-select">
+              <option value="auto" selected>Auto-detect from URL</option>
               <option value="openai">OpenAI-compatible</option>
               <option value="gemini">Google Gemini</option>
+              <option value="anthropic">Anthropic (Claude)</option>
+              <option value="ollama">Ollama (native)</option>
+            </select>
+          </div>
+          <div class="ai-field">
+            <label for="ai-model-auth-select">Authentication</label>
+            <select id="ai-model-auth-select">
+              <option value="auto" selected>Auto (Bearer key; none if no key)</option>
+              <option value="bearer">Authorization: Bearer</option>
+              <option value="x-api-key">x-api-key header</option>
+              <option value="api-key">api-key header (Azure)</option>
+              <option value="none">No authentication</option>
             </select>
           </div>
         </div>
+        <details style="margin-top:10px;">
+          <summary style="cursor:pointer;font-size:.85rem;">Advanced: extra headers / extra body (JSON)</summary>
+          <label for="ai-model-headers-input" style="display:block;font-size:.78rem;margin:8px 0 4px;">Extra headers</label>
+          <textarea id="ai-model-headers-input" rows="2" placeholder='{"X-Custom-Header": "value"}' style="width:100%;box-sizing:border-box;padding:9px 11px;border:1.5px solid var(--border-color);border-radius:var(--radius-sm);background:var(--bg-color);color:var(--text-primary);font-size:.85rem;font-family:monospace;"></textarea>
+          <label for="ai-model-body-input" style="display:block;font-size:.78rem;margin:8px 0 4px;">Extra body fields <span style="opacity:.6">(a null value removes a field, e.g. {"temperature": null})</span></label>
+          <textarea id="ai-model-body-input" rows="2" placeholder='{"max_tokens": 16000}' style="width:100%;box-sizing:border-box;padding:9px 11px;border:1.5px solid var(--border-color);border-radius:var(--radius-sm);background:var(--bg-color);color:var(--text-primary);font-size:.85rem;font-family:monospace;"></textarea>
+        </details>
         <label class="ai-model-json-label"><input type="checkbox" id="ai-model-json-checkbox" checked> Supports JSON response format</label>
         <label class="ai-model-json-label"><input type="checkbox" id="ai-model-search-checkbox" checked> Enable Google Search grounding (Gemini only)</label>
         <div id="ai-model-add-status" class="ai-model-add-status"></div>
         <div class="ai-model-form-actions">
           <button type="button" class="topbar-btn" onclick="clearAIModelForm()">Clear</button>
+          <button type="button" class="topbar-btn" onclick="handleDetectAIModels()" title="Ask the server which models it offers">Detect models</button>
           <button type="button" class="topbar-btn btn-primary" id="ai-model-add-btn" onclick="handleAddNewAIModel()">Verify &amp; Add</button>
         </div>
       </div>
