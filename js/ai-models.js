@@ -113,6 +113,8 @@ function deleteAIModel(id) {
 //   extraHeaders / extraBody : optional JSON objects (null value in extraBody removes a field)
 // ========================================================================
 const AI_API_TYPES = ['auto', 'openai', 'gemini', 'anthropic', 'ollama'];
+const AI_ADAPTER_VERSION = 'v4-local-network-access';   // type AI_ADAPTER_VERSION in the browser console to confirm the new file is really loaded
+window.AI_ADAPTER_VERSION = AI_ADAPTER_VERSION;
 
 function _aiIsLocalHost(h) {
   h = String(h || '').toLowerCase();
