@@ -1290,7 +1290,7 @@ async function callAIAPIRaw(messages, { forceJson = true, maxTokens, modelConfig
       maxTokens: effectiveMaxTokens,
       fastParams: (useFastOpts && apiType === 'openai') ? _fastReasoningParams(cfg) : null
     });
-    const reqInit = { method: 'POST', headers: req.headers, body: JSON.stringify(req.body), signal: requestController.signal };
+    const reqInit = Object.assign({ method: 'POST', headers: req.headers, body: JSON.stringify(req.body), signal: requestController.signal }, _aiLocalFetchOpts(req.url));
     let response;
     try {
       response = await (bypassThinkingCooldown ? fetch(req.url, reqInit) : guardedFetch(req.url, reqInit));
@@ -1302,7 +1302,7 @@ async function callAIAPIRaw(messages, { forceJson = true, maxTokens, modelConfig
         throw err;
       }
       console.error(`[${cfg.name}] network/CORS error:`, networkError);
-      const err = new Error(`Network/CORS error: could not reach the "${cfg.name}" model's API. Check your internet connection or the API URL.${_aiNetworkHint(cfg.apiUrl)}`);
+      const err = new Error(`Network/CORS error: could not reach the "${cfg.name}" model's API. Check your internet connection or the API URL.${await _aiExplainNetworkFailure(cfg.apiUrl)}`);
       err.kind = 'network';
       throw err;
     }
@@ -6393,7 +6393,7 @@ async function sendChatPromptToAI() {
       if (error.noModelConfigured) {
         userFriendlyMsg = 'No AI model configured. Please click "AI Models" and add a model.';
       } else if (error.kind === 'network') {
-        userFriendlyMsg = 'Network error — please check your internet connection and AI model API URL.';
+        userFriendlyMsg = (error.message && /Hint|server|CORS|Local network/i.test(error.message)) ? error.message : 'Network error — please check your internet connection and AI model API URL.';
       } else if (error.kind === 'empty_response') {
         userFriendlyMsg = 'The AI returned an empty response. Please try again with a clearer request.';
       } else if (error.kind === 'malformed_response') {
