@@ -886,7 +886,21 @@ function _vecMeasurePage(root, fx, opts) {
   // cluster starts, so the PDF can pin every cluster to that exact x. A pre-base vowel sign (ে ৈ ো ৌ ি) is drawn left of its
   // consonant; shaping the whole word in one run let it drift away from the previous letter ("ক রে" instead of "করে").
   const BN_CLUSTER = /(?:[অ-হৎড়-য়](?:্[‌‍]?[ক-হড়-য়])*|[ঀ-৿]|[^ঀ-৿‌‍])[়া-্ৗঁ-ঃ‌‍]*/g;
-  const bnClusters = (node, start, str) => {
+  // SELF-CHECK: the browser's own width for a piece of Bengali text is compared with the width the PDF glyph layout (fontkit)
+  // would give. If they disagree, the PDF layout is NOT the same as what the browser draws (that is exactly what makes a vowel
+  // sign drift away from its letter), so that word is not drawn as vector glyphs: it stays in the raster layer, which is the
+  // browser's own picture of the word (with an invisible text layer on top, so copy / search still work).
+  const bnFits = (str, wpx, fsz) => {
+    try {
+      const sh = fx.bn.shape(str);
+      const exp = sh.adv / fx.bn.upem * fsz;
+      const ok = Math.abs(exp - wpx) <= Math.max(0.9, wpx * 0.03);
+      if (!ok) { const L = (window.__pdfBnMismatch = window.__pdfBnMismatch || []); if (L.length < 80) L.push({ text: str, browserPx: +wpx.toFixed(1), pdfPx: +exp.toFixed(1) }); }
+      return ok;
+    } catch (_) { return true; }
+  };
+  // returns: array of clusters | null (not applicable, draw the word as one run) | false (layout mismatch -> raster)
+  const bnClusters = (node, start, str, fsz) => {
     try {
       if (!BNRE.test(str)) return null;
       const parts = str.match(BN_CLUSTER);
@@ -896,6 +910,7 @@ function _vecMeasurePage(root, fx, opts) {
         rg.setStart(node, start + off); rg.setEnd(node, start + off + p.length);
         const rr = Array.from(rg.getClientRects()).filter((q) => q.width > 0.2 && q.height > 0.4);
         if (rr.length !== 1) return null;                 // wrapped / odd layout: keep whole-word drawing
+        if (/[ঀ-৿]/.test(p) && !bnFits(p, rr[0].width, fsz)) return false;
         res.push({ t: p, x: rr[0].left - base.left });
         off += p.length;
       }
@@ -923,21 +938,31 @@ function _vecMeasurePage(root, fx, opts) {
       const li = parent.closest('li');
       if (li && !firstWordOf.has(li)) firstWordOf.set(li, { rect: rects[0], c, col, op });
       const word = _vecCase(m[0], c.textTransform);
-      const pick = (ownerKept || rects.length > 1 || parent.hasAttribute('data-pdfkeep')) ? null : fx.pick(c, word);
+      let pick = (ownerKept || rects.length > 1 || parent.hasAttribute('data-pdfkeep')) ? null : fx.pick(c, word);
+      let wcl = null;
+      if (pick && pick.bn) {
+        if (!bnFits(pick.t || word, box.w, fs)) pick = null;
+        else if (!pick.t && c.textTransform === 'none') { wcl = bnClusters(n, m.index, m[0], fs); if (wcl === false) { pick = null; wcl = null; } }
+      }
       // a Bengali word glued to punctuation/Latin ("সংজ্ঞা,") is split into runs so each run gets a font that covers it
       if (!pick && rects.length === 1 && !parent.hasAttribute('data-pdfkeep') && BNRE.test(m[0]) && c.textTransform === 'none') {
         const parts = []; const sre = /[\u0980-\u09FF\u0964\u0965\u200C\u200D]+|[^\u0980-\u09FF\u0964\u0965\u200C\u200D]+/g; let sm, ok = true;
         while ((sm = sre.exec(m[0]))) {
           range.setStart(n, m.index + sm.index); range.setEnd(n, m.index + sm.index + sm[0].length);
           const rr = Array.from(range.getClientRects()).filter((q) => q.width > 0.4 && q.height > 0.4);
-          const pk = rr.length === 1 ? fx.pick(c, sm[0]) : null;
+          let pk = rr.length === 1 ? fx.pick(c, sm[0]) : null;
+          let pcl = null;
+          if (pk && pk.bn) {
+            if (!bnFits(pk.t || sm[0], rr[0].width, fs)) pk = null;
+            else if (!pk.t) { pcl = bnClusters(n, m.index + sm.index, sm[0], fs); if (pcl === false) { pk = null; pcl = null; } }
+          }
           if (!pk) { ok = false; break; }
-          parts.push({ orig: sm[0], pk, rect: rr[0], off: sm.index });
+          parts.push({ orig: sm[0], pk, rect: rr[0], off: sm.index, cl: pcl });
         }
         if (ok && parts.length > 1) {
           parts.forEach((pt) => {
             const bx = rel(pt.rect);
-            const cl = (pt.pk.bn && !pt.pk.t && pt.pk.bn !== undefined) ? bnClusters(n, m.index + pt.off, pt.orig) : null;
+            const cl = pt.cl || null;
             out.words.push({ seq: seq++, orig: pt.orig, t: pt.pk.t || pt.orig, x: bx.x, y: bx.y, w: bx.w, h: bx.h, base: baselineOf(pt.rect, c), fs, color: col, a: col.a * op, font: pt.pk, clusters: cl, u: /underline/.test(deco), st: /line-through/.test(deco) });
           });
           continue;
@@ -949,7 +974,6 @@ function _vecMeasurePage(root, fx, opts) {
         out.ghosts.push({ seq: seq++, t: word, x: box.x, y: box.y, w: box.w, h: box.h, base: baselineOf(rects[0], c), fs });
         continue;
       }
-      const wcl = (pick.bn && !pick.t && c.textTransform === 'none') ? bnClusters(n, m.index, m[0]) : null;
       out.words.push({ seq: seq++, orig: word, t: pick.t || word, x: box.x, y: box.y, w: box.w, h: box.h, base: baselineOf(rects[0], c), fs, color: col, a: col.a * op, font: pick, clusters: wcl, u: /underline/.test(deco), st: /line-through/.test(deco) });
     }
   }
