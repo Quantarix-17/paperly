@@ -402,7 +402,15 @@ function _pdfCoverageSource() {
 function _pdfCoverageCheck(source, haystackRaw, label) {
   try {
     const hay = String(haystackRaw || '').replace(/\s+/g, '');
-    const missing = source.filter((s) => !hay.includes(s.probe));
+    // This is only a diagnostic, but it is O(pieces x text length): on a long document it used to cost many seconds.
+    // Sample the pieces so the work stays bounded (~1.2e8 character comparisons at most).
+    let src = source;
+    const budget = 1.2e8, cost = source.length * Math.max(1, hay.length);
+    if (cost > budget) {
+      const step = Math.ceil(cost / budget);
+      src = source.filter((_, i) => i % step === 0);
+    }
+    const missing = src.filter((s) => !hay.includes(s.probe));
     if (missing.length) console.warn('[PDF coverage] ' + missing.length + ' text piece(s) missing — ' + label + ':', missing.slice(0, 30));
     return missing.length;
   } catch (_) { return 0; }
@@ -874,6 +882,26 @@ function _vecMeasurePage(root, fx, opts) {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   const range = document.createRange();
   const firstWordOf = new Map();           // li -> rect of its first word (for markers)
+  // Bengali syllable clusters (base consonant + conjuncts + every vowel sign, e-kar included). The BROWSER measures where each
+  // cluster starts, so the PDF can pin every cluster to that exact x. A pre-base vowel sign (ে ৈ ো ৌ ি) is drawn left of its
+  // consonant; shaping the whole word in one run let it drift away from the previous letter ("ক রে" instead of "করে").
+  const BN_CLUSTER = /(?:[অ-হৎড়-য়](?:্[‌‍]?[ক-হড়-য়])*|[ঀ-৿]|[^ঀ-৿‌‍])[়া-্ৗঁ-ঃ‌‍]*/g;
+  const bnClusters = (node, start, str) => {
+    try {
+      if (!BNRE.test(str)) return null;
+      const parts = str.match(BN_CLUSTER);
+      if (!parts || parts.length < 2 || parts.join('') !== str) return null;
+      const rg = document.createRange(); const res = []; let off = 0;
+      for (const p of parts) {
+        rg.setStart(node, start + off); rg.setEnd(node, start + off + p.length);
+        const rr = Array.from(rg.getClientRects()).filter((q) => q.width > 0.2 && q.height > 0.4);
+        if (rr.length !== 1) return null;                 // wrapped / odd layout: keep whole-word drawing
+        res.push({ t: p, x: rr[0].left - base.left });
+        off += p.length;
+      }
+      return res;
+    } catch (_) { return null; }
+  };
   for (let n = walker.nextNode(); n; n = walker.nextNode()) {
     const parent = n.parentElement;
     if (!parent || parent.closest(SKIP) || isHidden(parent)) continue;
@@ -904,12 +932,13 @@ function _vecMeasurePage(root, fx, opts) {
           const rr = Array.from(range.getClientRects()).filter((q) => q.width > 0.4 && q.height > 0.4);
           const pk = rr.length === 1 ? fx.pick(c, sm[0]) : null;
           if (!pk) { ok = false; break; }
-          parts.push({ orig: sm[0], pk, rect: rr[0] });
+          parts.push({ orig: sm[0], pk, rect: rr[0], off: sm.index });
         }
         if (ok && parts.length > 1) {
           parts.forEach((pt) => {
             const bx = rel(pt.rect);
-            out.words.push({ seq: seq++, orig: pt.orig, t: pt.pk.t || pt.orig, x: bx.x, y: bx.y, w: bx.w, h: bx.h, base: baselineOf(pt.rect, c), fs, color: col, a: col.a * op, font: pt.pk, u: /underline/.test(deco), st: /line-through/.test(deco) });
+            const cl = (pt.pk.bn && !pt.pk.t && pt.pk.bn !== undefined) ? bnClusters(n, m.index + pt.off, pt.orig) : null;
+            out.words.push({ seq: seq++, orig: pt.orig, t: pt.pk.t || pt.orig, x: bx.x, y: bx.y, w: bx.w, h: bx.h, base: baselineOf(pt.rect, c), fs, color: col, a: col.a * op, font: pt.pk, clusters: cl, u: /underline/.test(deco), st: /line-through/.test(deco) });
           });
           continue;
         }
@@ -920,7 +949,8 @@ function _vecMeasurePage(root, fx, opts) {
         out.ghosts.push({ seq: seq++, t: word, x: box.x, y: box.y, w: box.w, h: box.h, base: baselineOf(rects[0], c), fs });
         continue;
       }
-      out.words.push({ seq: seq++, orig: word, t: pick.t || word, x: box.x, y: box.y, w: box.w, h: box.h, base: baselineOf(rects[0], c), fs, color: col, a: col.a * op, font: pick, u: /underline/.test(deco), st: /line-through/.test(deco) });
+      const wcl = (pick.bn && !pick.t && c.textTransform === 'none') ? bnClusters(n, m.index, m[0]) : null;
+      out.words.push({ seq: seq++, orig: word, t: pick.t || word, x: box.x, y: box.y, w: box.w, h: box.h, base: baselineOf(rects[0], c), fs, color: col, a: col.a * op, font: pick, clusters: wcl, u: /underline/.test(deco), st: /line-through/.test(deco) });
     }
   }
   // words the vector fonts cannot draw stay in the raster layer (original look, just not zoom-proof / selectable)
@@ -1023,7 +1053,7 @@ function _vecCreateBnFont(pdfDoc, bytes) {
       page.pushOperators.apply(page, ops);
     },
     async finish() {
-      if (used.size < 2) return;
+      if (!used.size) return;   // a font that was drawn with must always be finished, else its object stays dangling
       const chunks = await new Promise((resolve) => { const c = []; subset.encodeStream().on('data', (d) => c.push(d)).on('end', () => resolve(c)); });
       let total = 0; chunks.forEach((c) => { total += c.length; });
       const fontBytes = new Uint8Array(total); let o = 0; chunks.forEach((c) => { fontBytes.set(c, o); o += c.length; });
@@ -1410,7 +1440,16 @@ function _vecDrawPage(page, data, fx) {
       const joined = (flag) => nx && nx[flag] && Math.abs(nx.base - w.base) < 2 && nx.x > w.x && nx.x - (w.x + w.w) < w.fs;   // same line, same decoration
       const uEnd = joined('u') ? nx.x : w.x + w.w, sEnd = joined('st') ? nx.x : w.x + w.w;
       if (w.font.bn) {   // real shaped Bengali glyph run
-        const bn = fx.bn, sh = bn.shape(w.t);
+        const bn = fx.bn;
+        if (w.clusters && w.clusters.length > 1) {   // every syllable (with its e-kar etc.) is placed at the browser-measured x
+          const csz = w.fs * kx, cby = PH - w.base * ky;
+          withActual((w.orig || w.t) + ' ', () => w.clusters.forEach((cl) => bn.draw(page, bn.shape(cl.t), cl.x * kx, cby, csz, w.color, w.a, !!w.font.bold)));
+          const clw = Math.max(0.4, w.fs * 0.06) * kx;
+          if (w.u) page.drawLine({ start: { x: w.x * kx, y: cby - w.fs * 0.13 * kx }, end: { x: (w.x + w.w) * kx, y: cby - w.fs * 0.13 * kx }, thickness: clw, color: col(w.color), opacity: w.a });
+          if (w.st) page.drawLine({ start: { x: w.x * kx, y: cby + w.fs * 0.26 * kx }, end: { x: (w.x + w.w) * kx, y: cby + w.fs * 0.26 * kx }, thickness: clw, color: col(w.color), opacity: w.a });
+          return;
+        }
+        const sh = bn.shape(w.t);
         let bsize = w.fs * kx;
         const bnat = sh.adv / bn.upem * bsize, btgt = w.w * kx;
         // Measuring and drawing now use the SAME font (Kalpurush), so the ratio is ~1. A 1-2 glyph word (danda "।", "ও") is
@@ -1592,7 +1631,11 @@ async function _exportTruePDFVectorInBrowser(btn) {
     const fx = await _vecMakeFonts(pdfDoc);
 
     const mobile = typeof isMobileDeviceLayout === 'function' && isMobileDeviceLayout();
-    const scale = mobile ? 1.5 : 2;   // 2x = ~190 dpi for the equation/image layer; text is vector anyway
+    // 2x = ~190 dpi for the equation/image layer; text is vector anyway. Long documents get a lighter raster layer:
+    // fewer pixels per page = much faster, and far less memory (huge canvases are what made long exports come out blank).
+    const nPages = pageList.length;
+    const scale = mobile ? (nPages > 25 ? 1.1 : 1.5) : (nPages > 60 ? 1.25 : nPages > 30 ? 1.5 : 2);
+    const cancelledAtStart = typeof isCancellationRequested !== 'undefined' && !!isCancellationRequested;   // a stale "stop" flag must not truncate the export
     const PW = 595.28, PH = 841.89;
     let rasterPages = 0, keptWords = 0, rasterFailedPages = 0;
     const timing = {}, tStart = performance.now();
@@ -1603,10 +1646,13 @@ async function _exportTruePDFVectorInBrowser(btn) {
       if (!res.canvas) return null;
       const cv = res.canvas;
       if (!_vecCanvasHasInk(cv)) { cv.width = 0; cv.height = 0; return null; }
-      return _vecCanvasToJpeg(cv, (res.data && res.data.kept) ? 0.92 : 0.86).then((bts) => { cv.width = 0; cv.height = 0; return bts; });
+      return _vecCanvasToJpeg(cv, (res.data && res.data.kept) ? 0.92 : 0.86)
+        .then((bts) => { cv.width = 0; cv.height = 0; return bts; })
+        .catch(() => { res.imgFail = true; try { cv.width = 0; cv.height = 0; } catch (_) {} return null; });   // never reject: the page is rescued below
     };
     for (let i = 0; i < pageList.length; i++) {
-      if (typeof isCancellationRequested !== 'undefined' && isCancellationRequested) { toast(`Stopped at page ${i} – partial PDF saved.`); break; }
+      if (!cancelledAtStart && typeof isCancellationRequested !== 'undefined' && isCancellationRequested) { toast(`Stopped at page ${i} – partial PDF saved.`); break; }
+      if (i > 0 && i % 3 === 0) await _yieldToBrowser();      // keep the tab responsive (and rAF alive) on long documents
       prog.set(26 + 54 * (i / pageList.length), `Preparing page ${i + 1} of ${pageList.length}`);
       if (!pageList[i].el) throw new Error(`Page ${i + 1} has no renderable DOM.`);
       const res = await renderPage(i, false);
@@ -1642,16 +1688,54 @@ async function _exportTruePDFVectorInBrowser(btn) {
       }
     }
 
+    // ---- blank-page guard ----
+    // A page can come out empty when its raster layer failed (canvas too large / out of memory / tab throttled) or when
+    // nothing could be measured. Such a page is rendered again as one plain full-page picture (text becomes pixels, but
+    // the page is never blank). The export is never allowed to silently deliver an empty page.
+    if (!items.length) throw new Error('No pages were rendered.');
+    let rescuedPages = 0;
+    for (const it of items) {
+      it.jpgBytes = it.jpgJob ? await it.jpgJob : null;
+      const d = it.res.data || {};
+      const srcEl = pageList[it.i].el;
+      const hasSrc = !!srcEl && (((srcEl.textContent || '').replace(/\s+/g, '').length > 1) || !!srcEl.querySelector('img, svg, canvas, table'));
+      const drawn = (d.words && d.words.length) || (d.ghosts && d.ghosts.length) || (d.markers && d.markers.length) || (d.sprites && d.sprites.length) || (d.boxes && d.boxes.length);
+      const broken = (!drawn && !it.jpgBytes) || it.res.rasterFailed || it.res.imgFail;
+      if (!hasSrc || !broken) continue;
+      prog.set(88, `Repairing page ${it.i + 1} of ${pageList.length}`);
+      try {
+        const cv = await _renderImagePDFPage(srcEl, renderHost, it.i + 1, Math.min(scale, 1.4));
+        const bts = await _vecCanvasToJpeg(cv, 0.86);
+        cv.width = 0; cv.height = 0;
+        it.rescued = bts; rescuedPages++;
+      } catch (e) { console.warn('Page ' + (it.i + 1) + ' could not be repaired:', e); }
+      renderHost.innerHTML = '';
+    }
+    if (rescuedPages) timing.rescuedPages = rescuedPages;
+
     prog.set(90, 'Assembling pages');
     const drawnText = items.map((it) => { const d = it.res.data; return [].concat(d.words.map((w) => w.orig || w.t), (d.ghosts || []).map((g) => g.t), d.markers.map((m) => m.text || '')).join(' '); }).join(' ');
     const lostInPdf = _pdfCoverageCheck(covSource, drawnText, 'not written to the PDF text layer');
     const pngCache = new Map();
     for (const it of items) {
       const { page, res } = it, d = res.data;
-      if (it.jpgJob) {
-        const img = await pdfDoc.embedJpg(await it.jpgJob);
+      if (it.rescued) {                       // repaired page: one full-page picture already contains everything
+        const img = await pdfDoc.embedJpg(it.rescued);
         page.drawImage(img, { x: 0, y: 0, width: PW, height: PH });
         rasterPages++;
+        try {
+          const label = (it.i + 1) + '/' + pageList.length;
+          const size = 9, w = fx.plain.widthOfTextAtSize(label, size);
+          page.drawText(label, { x: (PW - w) / 2, y: 22, size, font: fx.plain, color: window.PDFLib.rgb(0.32, 0.36, 0.42) });
+        } catch (_) { /* never block the export */ }
+        (d.sprites || []).forEach((sp) => { sp.node = null; });
+        continue;
+      }
+      if (it.jpgBytes) {
+        const img = await pdfDoc.embedJpg(it.jpgBytes);
+        page.drawImage(img, { x: 0, y: 0, width: PW, height: PH });
+        rasterPages++;
+        it.jpgBytes = null;
       }
       for (const sp of (d.sprites || [])) {
         const u = uniq.get(sp.key);
