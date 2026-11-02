@@ -129,6 +129,101 @@
     return BENGALI_FONT;
   }
 
+  // ---- embed the Kalpurush font INSIDE the .docx -------------------------
+  // The file only *names* the font (w:cs="Kalpurush"). Kalpurush is not shipped
+  // with Windows / Word, so on any computer that does not have it installed
+  // Word silently substitutes its default Bengali font (Nirmala UI). To make
+  // the file look the same everywhere, the font's .ttf is packed into the
+  // .docx (word/fonts/*.odttf) and registered in fontTable.xml (docx.js does
+  // the obfuscation). Word (Windows, Mac 2019+) then loads it from the file.
+  //
+  // Where the .ttf comes from, in order:
+  //   1. window.WORD_EXPORT_KALPURUSH_URL  (set it if the file lives elsewhere)
+  //   2. every @font-face { font-family: Kalpurush } url() in the page CSS
+  //   3. fonts/Kalpurush.ttf and a few common spellings, next to index.html
+  // It must be a TrueType (.ttf) file: WOFF/WOFF2/CFF-OpenType cannot be embedded.
+  const KALPURUSH_URL_GUESSES = ['fonts/Kalpurush.ttf', 'fonts/kalpurush.ttf', 'fonts/Kalpurush-Regular.ttf',
+    'fonts/kalpurush-regular.ttf', 'fonts/Kalpurush.TTF'];
+  let _fontPromise = null;
+
+  // TrueType check + licence check (OS/2 fsType: 2 = restricted, 4 = preview/print only;
+  // both would make Word ignore the font or open the file read-only).
+  function checkEmbeddableFont(bytes) {
+    if (!bytes || bytes.length < 64) return { ok: false, reason: 'file too small / empty' };
+    const tag = String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3]);
+    const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    if (!(dv.getUint32(0) === 0x00010000 || tag === 'true')) {
+      return { ok: false, reason: tag === 'OTTO' ? 'CFF OpenType font (Word can only embed TrueType)' :
+        (tag === 'wOFF' || tag === 'wOF2') ? 'WOFF file (the original .ttf is needed)' : 'not a TrueType file' };
+    }
+    const n = dv.getUint16(4);
+    for (let i = 0; i < n; i++) {
+      const o = 12 + i * 16;
+      if (o + 16 > bytes.length) break;
+      if (String.fromCharCode(bytes[o], bytes[o + 1], bytes[o + 2], bytes[o + 3]) === 'OS/2') {
+        const off = dv.getUint32(o + 8);
+        if (off + 10 <= bytes.length) {
+          const lvl = dv.getUint16(off + 8) & 0x000F;
+          if (lvl === 2 || lvl === 4) return { ok: false, reason: 'the font licence does not allow embedding (fsType=' + lvl + ')' };
+        }
+        break;
+      }
+    }
+    return { ok: true };
+  }
+
+  function kalpurushUrlCandidates() {
+    const out = [];
+    const add = (u) => { if (u && !out.includes(u)) out.push(u); };
+    const abs = (u, base) => { try { return new URL(u, base || location.href).href; } catch (_) { return null; } };
+    add(window.WORD_EXPORT_KALPURUSH_URL && abs(window.WORD_EXPORT_KALPURUSH_URL));
+    const walk = (rules, base) => {
+      for (const r of Array.from(rules || [])) {
+        if (r.type === 5 && r.style && /kalpurush/i.test(r.style.getPropertyValue('font-family'))) {   // 5 = @font-face
+          const src = r.style.getPropertyValue('src') || '';
+          const re = /url\(\s*(['"]?)(.*?)\1\s*\)/gi;
+          let m;
+          while ((m = re.exec(src))) {
+            const u = abs(m[2], base);
+            if (!u) continue;
+            if (!/^data:/i.test(u) && /\.(woff2?|otf)(\?.*)?$/i.test(u)) add(u.replace(/\.(woff2?|otf)(\?.*)?$/i, '.ttf'));   // sibling .ttf
+            add(u);
+          }
+        } else if (r.cssRules) walk(r.cssRules, base);   // @media / @supports blocks
+      }
+    };
+    try {
+      for (const sheet of Array.from(document.styleSheets)) {
+        let rules = null;
+        try { rules = sheet.cssRules; } catch (_) { continue; }   // cross-origin stylesheet: not readable
+        walk(rules, sheet.href || location.href);
+      }
+    } catch (_) { /* ignore */ }
+    KALPURUSH_URL_GUESSES.forEach(u => add(abs(u)));
+    return out;
+  }
+
+  // Resolves to a Uint8Array with the .ttf, or null (export then continues without embedding).
+  function loadKalpurushFont() {
+    if (_fontPromise) return _fontPromise;
+    _fontPromise = (async () => {
+      let why = 'no Kalpurush .ttf found (put it at fonts/Kalpurush.ttf)';
+      for (const url of kalpurushUrlCandidates()) {
+        try {
+          const res = await withTimeout(fetch(url, { cache: 'force-cache' }), 6000, 'font download');
+          if (!res.ok) continue;
+          const bytes = new Uint8Array(await withTimeout(res.arrayBuffer(), 15000, 'font read'));
+          const chk = checkEmbeddableFont(bytes);
+          if (chk.ok) return bytes;
+          why = chk.reason + ' [' + url.slice(0, 80) + ']';
+        } catch (_) { /* try the next candidate */ }
+      }
+      console.warn('[WordExport] Kalpurush not embedded in the .docx:', why);
+      return null;
+    })().then(r => { if (!r) _fontPromise = null; return r; });   // only a success is cached
+    return _fontPromise;
+  }
+
   // ---- misc DOM helpers -------------------------------------------------
   const SKIP_TAGS = new Set(['script', 'style', 'noscript', 'template', 'link', 'meta', 'title', 'head',
     'button', 'input', 'textarea', 'select', 'option', 'iframe', 'object', 'embed', 'audio', 'video']);
@@ -205,7 +300,10 @@
     if (f.bold) { opts.bold = true; opts.boldComplexScript = true; }
     if (f.italics) { opts.italics = true; opts.italicsComplexScript = true; }
     if (f.color !== B.color) opts.color = f.color;
-    if (f.font !== B.font) opts.font = { ascii: f.font, hAnsi: f.font, eastAsia: f.font, cs: BENGALI_RE.test(t) ? f.csFont : f.font };
+    // Bengali text: name Kalpurush on the run itself in EVERY font slot (+ hint=cs). Relying only
+    // on the document default made Word fall back to Nirmala UI for the Bengali characters.
+    if (f.bnForce) opts.font = { ascii: BENGALI_FONT, hAnsi: BENGALI_FONT, eastAsia: BENGALI_FONT, cs: BENGALI_FONT, hint: 'cs' };
+    else if (f.font !== B.font) opts.font = { ascii: f.font, hAnsi: f.font, eastAsia: f.font, cs: BENGALI_RE.test(t) ? f.csFont : f.font };
     if (f.underline) opts.underline = { type: D.UnderlineType.SINGLE, color: f.color };
     if (f.strike) opts.strike = true;
     if (f.transform === 'uppercase') opts.allCaps = true;
@@ -213,6 +311,19 @@
     if (f.sub) opts.subScript = true;
     if (f.bg) opts.shading = { type: D.ShadingType.CLEAR, fill: f.bg, color: 'auto' };
     return new D.TextRun(Object.assign(opts, extra || {}));
+  }
+
+  // Splits text into Bengali / non-Bengali parts so Bengali gets Kalpurush and English stays Times New Roman.
+  const BN_SEG_RE = /[\u0980-\u09FF\u0964\u0965\u200C\u200D]+(?:[ \u00A0]+[\u0980-\u09FF\u0964\u0965\u200C\u200D]+)*/g;
+  function makeTextRuns(text, f, extra) {
+    if (!BENGALI_RE.test(text)) return [makeTextRun(text, f, extra)];
+    const out = [];
+    const push = (seg, bn) => { if (seg) out.push(makeTextRun(seg, bn ? Object.assign({}, f, { bnForce: true }) : f, extra)); };
+    let last = 0, m;
+    BN_SEG_RE.lastIndex = 0;
+    while ((m = BN_SEG_RE.exec(text))) { push(text.slice(last, m.index), false); push(m[0], true); last = m.index + m[0].length; }
+    push(text.slice(last), false);
+    return out;
   }
 
   // ---- equations: KaTeX MathML -> native Word equations (OMML) ---------
@@ -552,7 +663,7 @@
     const D = window.docx;
     const runs = [];
     for (const p of pieces) {
-      if (p.t === 'text') { if (p.text) runs.push(makeTextRun(p.text, p.f)); }
+      if (p.t === 'text') { if (p.text) runs.push(...makeTextRuns(p.text, p.f)); }
       else if (p.t === 'br') runs.push(new D.TextRun({ break: 1 }));
       else if (p.t === 'math') { st.maths.push(p.xml); runs.push(new D.TextRun({ text: `[[WORDMATH:${st.maths.length}]]` })); }
       else if (p.t === 'img') { const r = imageRun(p.el, st, maxWidthPx); if (r) runs.push(r); }
@@ -2467,6 +2578,19 @@
       ctx.doc = replaceMarkers(ctx.doc, 'WORDBUBBLE', map);
     }
 
+    if (st.fontEmbedded) {
+      // tell Word the file carries embedded fonts (keeps them when the user re-saves in Word)
+      const sf = zip.file('word/settings.xml');
+      if (sf) {
+        let sx = await sf.async('string');
+        if (!/embedTrueTypeFonts/.test(sx)) {
+          if (/<w:displayBackgroundShape\s*\/>/.test(sx)) sx = sx.replace(/<w:displayBackgroundShape\s*\/>/, (m0) => m0 + '<w:embedTrueTypeFonts/>');
+          else if (/<w:evenAndOddHeaders/.test(sx)) sx = sx.replace(/<w:evenAndOddHeaders/, '<w:embedTrueTypeFonts/><w:evenAndOddHeaders');
+          zip.file('word/settings.xml', sx);
+        }
+      }
+    }
+
     let n = 100;
     ctx.doc = ctx.doc.replace(/<wp:docPr id="\d+"/g, () => `<wp:docPr id="${n++}"`);
     ctx.doc = ctx.doc.replace(/<pic:cNvPr id="\d+"/g, () => `<pic:cNvPr id="${n++}"`);
@@ -2524,6 +2648,7 @@
     busy(btn, true);
     const _t0 = performance.now(), _lap = (label) => console.log(`[WordExport] ${label}: ${Math.round(performance.now() - _t0)} ms`);
     const jszipReady = ensureJSZip();   // start downloading now; runs in parallel with everything below
+    const fontReady = loadKalpurushFont();   // Kalpurush .ttf for embedding; also parallel, never fatal
     _csCache = new WeakMap(); _mathPicCache.clear();
     let stage = null, failed = null;
     try {
@@ -2545,6 +2670,8 @@
       BASE = runFormat(stage);
       toast('⏳ Preparing Word export…');
       await jszipReady;   // already loading in parallel; needed for native charts/equations; non-fatal
+      const kalpurushBytes = await withTimeout(fontReady, 25000, 'font', null).catch(() => null);
+      st.fontEmbedded = !!kalpurushBytes;
       const uneditableCount = await withTimeout(prepareMedia(stage, st.media), MEDIA_TOTAL_TIMEOUT + 15000, 'media preparation', 0);  // equations, charts, images -> sharp embedded media
 
       _lap('media prepared (images/equations/charts)');
@@ -2579,6 +2706,7 @@
             size: BASE.size, sizeComplexScript: BASE.size, color: BASE.color
           } } }, neutralStyles()) },
           numbering: { config: st.numbering },
+          ...(kalpurushBytes ? { fonts: [{ name: BENGALI_FONT, data: kalpurushBytes, characterSet: D.CharacterSet.DEFAULT }] } : {}),
           sections: [{
             properties: {
               page: {
@@ -2605,9 +2733,10 @@
       }
       _lap('finalized — total');
       downloadBlob(blob, name + '.docx');
+      const fontNote = kalpurushBytes ? '' : ' (Kalpurush font was not embedded: add fonts/Kalpurush.ttf)';
       toast(uneditableCount
-        ? `⚠️ Saved. ${uneditableCount} chart/figure(s) were exported as pictures, so their text is not editable.`
-        : '✅ Word Document Saved');
+        ? `⚠️ Saved. ${uneditableCount} chart/figure(s) were exported as pictures, so their text is not editable.${fontNote}`
+        : '✅ Word Document Saved' + fontNote);
     } catch (e) {
       failed = e;
       console.error('[WordExport] native .docx build failed:', e);
