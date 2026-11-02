@@ -957,6 +957,7 @@ async function _paginateDocumentHTMLCore(rawHtml, triggerSave = true) {
     }
   }
 
+  _wfPostPaginate();
   normalizeAllEditorPagesToA4();
   _removeEmptyEditorPages();
   docContainer.scrollTop = savedScrollPos;
@@ -994,6 +995,185 @@ async function _paginateDocumentHTMLCore(rawHtml, triggerSave = true) {
   const _pdfViewAfterPaginate = document.getElementById('pdf-view-container');
   if (_isPdfViewVisible() && typeof generateLivePDFIframePreview === 'function') {
     generateLivePDFIframePreview();
+  }
+}
+
+
+// ========================================================================
+// WORD-LIKE FLOW
+// ------------------------------------------------------------------------
+// A page is only a CONTAINER of fixed height; content flows through the pages like water:
+//  - every page is filled to the bottom: paragraphs, list items, table rows and boxed callouts
+//    break across pages instead of jumping to the next page as a whole block (no dead gaps)
+//  - a heading is never left alone at the bottom of a page (Word "keep with next")
+//  - when content is deleted / shortened, the content of the next page moves back UP into the room
+//  - a table / list / box that was split keeps one identity: header row repeated on each part,
+//    numbering of a split <ol> continues, and the parts are re-joined before every re-pagination
+// Switch a piece off with  WORD_FLOW.<name> = false
+// ========================================================================
+const WORD_FLOW = {
+  SPLIT_DESIGNED_BOXES: true,      // tinted/bordered callout boxes may break across pages (like a Word table cell)
+  KEEP_HEADING_WITH_NEXT: true,
+  PULL_UP: true
+};
+// Small / visual units that stay in one piece (like an inline picture in Word).
+const _WF_ALWAYS_WHOLE = ['figure-pro', 'figure-frame', 'fc-wrapper', 'omr-sheet-page',
+  'quiz-item', 'cq-item', 'math-final-answer', 'sol-label'];
+function _wfIsAlwaysWhole(node) {
+  return !!(node && node.classList && _WF_ALWAYS_WHOLE.some(c => node.classList.contains(c)));
+}
+function _wfIsHeading(n) { return !!(n && n.nodeType === 1 && /^H[1-6]$/.test(n.tagName)); }
+function _wfFooter(page) { return page.querySelector(':scope > .page-footer-number'); }
+function _wfContent(page) {
+  return Array.from(page.childNodes).filter(n => n.nodeType === 1
+    ? !n.classList.contains('page-footer-number')
+    : n.textContent.trim().length > 0);
+}
+function _wfFits(page) {
+  const z = parseFloat(page.style.zoom) || 1;
+  return (page.scrollHeight / z) <= EDITOR_A4_HEIGHT + 1;
+}
+function _wfCleanClass(el) { if (el && !el.getAttribute('class')) el.removeAttribute('class'); }
+
+// Heading alone at the bottom of a page -> move it to the top of the next page.
+function _wfKeepWithNext(page) {
+  if (!WORD_FLOW.KEEP_HEADING_WITH_NEXT) return false;
+  const c = _wfContent(page);
+  if (c.length < 2) return false;                 // a page that holds only the heading: nothing better to do
+  const last = c[c.length - 1];
+  if (!_wfIsHeading(last)) return false;
+  let next = _nextEditorPage(page);
+  if (!next) return false;                        // last page of the document: nothing follows
+  next.insertBefore(last, next.firstChild);
+  return true;
+}
+
+// Try to move ONE more piece from the start of the next page onto the free room of `page`.
+// Returns 'moved' | 'partial' (part moved, page is now full) | 'blocked' | 'none'.
+function _wfPullUp(page) {
+  const next = _nextEditorPage(page);
+  if (!next) return 'none';
+  const nc = _wfContent(next);
+  if (!nc.length) {
+    if (document.activeElement !== next) { next.remove(); return 'moved'; }
+    return 'none';
+  }
+  const first = nc[0];
+  const cur = _wfContent(page);
+  const last = cur[cur.length - 1] || null;
+  const footer = _wfFooter(page);
+  const putBack = (n) => next.insertBefore(n, next.firstChild);
+  const place = (n) => page.insertBefore(n, footer || null);
+
+  // a heading is only pulled up when the block after it can (at least partly) follow it
+  if (_wfIsHeading(first) && WORD_FLOW.KEEP_HEADING_WITH_NEXT) {
+    place(first);
+    if (!_wfFits(page)) { putBack(first); return 'blocked'; }
+    const r = _wfPullUp(page);
+    if (r === 'blocked' || r === 'none') { putBack(first); return 'blocked'; }
+    return r;
+  }
+
+  // 1) the two halves of a paragraph that was split earlier: join them again
+  if (first.nodeType === 1 && first.classList.contains('split-tail') && last && last.nodeType === 1 &&
+      last.classList.contains('split-head') && last.tagName === first.tagName) {
+    while (first.firstChild) last.appendChild(first.firstChild);
+    first.remove();
+    last.classList.remove('split-head'); _wfCleanClass(last);
+    if (_wfFits(page)) return 'moved';
+    page.removeChild(last);
+    return _wfSplitInto(page, next, last);
+  }
+
+  // 2) continuation of a table / list / box split earlier: pull its rows up one by one
+  if (first.nodeType === 1 && first.hasAttribute('data-split-cont') && last && last.nodeType === 1 &&
+      last.tagName === first.tagName) {
+    const isTable = first.tagName === 'TABLE';
+    const dst = isTable ? last.querySelector(':scope > tbody:last-of-type') : last;
+    const src = isTable ? first.querySelector(':scope > tbody') : first;
+    if (dst && src) {
+      let moved = 0;
+      while (src.firstElementChild) {
+        const row = src.firstElementChild;
+        dst.appendChild(row);
+        if (!_wfFits(page)) { src.insertBefore(row, src.firstChild); break; }
+        moved++;
+      }
+      if (first.tagName === 'OL' && moved && first.hasAttribute('start')) {
+        first.setAttribute('start', String((parseInt(first.getAttribute('start'), 10) || 1) + moved));
+      }
+      if (!src.firstElementChild) { first.remove(); return 'moved'; }
+      return moved ? 'partial' : 'blocked';
+    }
+  }
+
+  // 3) a whole block that fits
+  place(first);
+  if (_wfFits(page)) return 'moved';
+  page.removeChild(first);
+  putBack(first);
+
+  // 4) a paragraph: take as many lines as fit (>= 2 lines each side)
+  if (first.nodeType === 1 && _isTextSplittableBlock(first)) {
+    next.removeChild(first);
+    return _wfSplitInto(page, next, first);
+  }
+  return 'blocked';
+}
+
+// Split `node` (detached) so its head fills `page` and its tail starts `next`.
+function _wfSplitInto(page, next, node) {
+  const footer = _wfFooter(page);
+  const probe = (head) => {
+    page.insertBefore(head, footer || null);
+    const fits = _wfFits(page);
+    let h = 0, lh = 0;
+    if (fits) {
+      h = head.offsetHeight;
+      const cs = getComputedStyle(head);
+      lh = parseFloat(cs.lineHeight);
+      if (!(lh > 0)) lh = (parseFloat(cs.fontSize) || 16) * 1.4;
+    }
+    page.removeChild(head);
+    return { fits, h, lh };
+  };
+  const split = _isTextSplittableBlock(node) ? _chooseParagraphSplit(node, probe, _wfContent(page).length > 0) : null;
+  if (!split) { next.insertBefore(node, next.firstChild); return 'blocked'; }
+  page.insertBefore(split.head, footer || null);
+  next.insertBefore(split.tail, next.firstChild);
+  return 'partial';
+}
+
+// Fill the free room at the bottom of `page` from the following pages.
+function _wfFillFromNext(page) {
+  if (!WORD_FLOW.PULL_UP) return false;
+  let guard = 0, r, any = false;
+  while (guard++ < 400) {
+    r = _wfPullUp(page);
+    if (r === 'moved') { any = true; continue; }
+    if (r === 'partial') any = true;
+    break;
+  }
+  return any;
+}
+
+// After a fresh pagination: fix headings stranded at the bottom of a page.
+function _wfPostPaginate() {
+  if (!docContainer || !WORD_FLOW.KEEP_HEADING_WITH_NEXT) return;
+  let page = docContainer.querySelector('.doc-page-canvas');
+  let guard = 0;
+  while (page && guard++ < 5000) {
+    if (_wfKeepWithNext(page)) {
+      const nxt = _nextEditorPage(page);
+      let g2 = 0;
+      while (nxt && g2++ < 40 && !_wfFits(nxt)) {
+        const ov = getOverflowNodes(nxt);
+        if (!ov.length) break;
+        _splitFirstOverflowParagraph(nxt, ov);
+        _moveOverflowToNextPage(nxt, ov);
+      }
+    }
+    page = _nextEditorPage(page);
   }
 }
 
@@ -1065,7 +1245,7 @@ function _getSplittableChildrenForOverflow(node) {
     return items.length > 1 ? items : null;
   }
   if (tag === 'DIV' || tag === 'BLOCKQUOTE') {
-    if (_isDesignedBoxBlock(node)) return null;
+    if (_isDesignedBoxBlock(node) && !(WORD_FLOW.SPLIT_DESIGNED_BOXES && !_wfIsAlwaysWhole(node))) return null;
     const children = Array.from(node.childNodes).filter(c =>
       c.nodeType === Node.ELEMENT_NODE || (c.nodeType === Node.TEXT_NODE && c.textContent.trim().length > 0));
     return children.length > 1 ? children : null;
@@ -1105,10 +1285,17 @@ function _appendPossiblyOversizedNode(node, currentPageElement, createdPages, co
   const bodyRows = headerRows.length ? splitChildren.filter(r => !headerRows.includes(r)) : splitChildren;
 
   let firstWrapper = true;
+  const isOl = (node.tagName || '').toUpperCase() === 'OL';
+  const olBase = isOl ? (parseInt(node.getAttribute('start'), 10) || 1) : 1;
+  let placedItems = 0;
   function startWrapperOnCurrentPage() {
     const isFirst = firstWrapper;
     firstWrapper = false;
     const w = node.cloneNode(false); // tag + attributes only
+    if (!isFirst) {
+      w.setAttribute('data-split-cont', '1');            // re-joined with the previous part before re-pagination
+      if (isOl) w.setAttribute('start', String(olBase + placedItems));   // numbering continues
+    }
     currentPageElement.appendChild(w);
     let host = w;
     if (isTable) {
@@ -1117,6 +1304,7 @@ function _appendPossiblyOversizedNode(node, currentPageElement, createdPages, co
       });
       if (headerRows.length) {
         const thead = document.createElement('thead');
+        if (!isFirst) thead.setAttribute('data-split-repeat', '1');
         w.appendChild(thead);
         headerRows.forEach(hr => {
           const hClone = hr.cloneNode(true);
@@ -1158,6 +1346,7 @@ function _appendPossiblyOversizedNode(node, currentPageElement, createdPages, co
       }
     }
     wrapperHasChild = true;
+    if (isOl) placedItems++;
   });
 
   return currentPageElement;
@@ -1168,7 +1357,7 @@ function _appendPossiblyOversizedNode(node, currentPageElement, createdPages, co
 // whole empty page was appended anyway and its lower part was silently clipped by the page's
 // overflow:hidden. Now such blocks are split at a word boundary: the part that fits stays, the rest
 // continues on the next page(s). Orphan/widow control keeps at least 2 lines on each side.
-const _TEXT_SPLIT_MIN_CHARS = 80;
+const _TEXT_SPLIT_MIN_CHARS = 30;   // Word lets any multi-line paragraph break across pages (2-line widow/orphan control is in _chooseParagraphSplit)
 const _BLOCK_CHILD_TAGS = new Set(['P', 'DIV', 'UL', 'OL', 'LI', 'TABLE', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
   'PRE', 'BLOCKQUOTE', 'FIGURE', 'SECTION', 'ARTICLE', 'HR', 'SVG', 'CANVAS', 'DL', 'FORM']);
 
@@ -1341,6 +1530,20 @@ function _mergeSplitBlocks(root) {
     el.classList.remove('split-head', 'split-tail');
     if (!el.getAttribute('class')) el.removeAttribute('class');
   });
+  Array.from(root.querySelectorAll('[data-split-cont]')).forEach(el => {   // table / list / box parts
+    el.removeAttribute('data-split-cont');
+    const prev = el.previousElementSibling;
+    if (!prev || prev.tagName !== el.tagName) return;
+    if (el.tagName === 'TABLE') {
+      const dst = prev.querySelector(':scope > tbody:last-of-type') || prev;
+      const src = el.querySelector(':scope > tbody');
+      if (src) while (src.firstChild) dst.appendChild(src.firstChild);
+    } else {
+      while (el.firstChild) prev.appendChild(el.firstChild);
+    }
+    el.remove();
+  });
+  Array.from(root.querySelectorAll('[data-split-repeat]')).forEach(el => el.removeAttribute('data-split-repeat'));
   Array.from(root.querySelectorAll('.split-tail')).forEach(el => {   // orphaned tails (head was edited away)
     el.classList.remove('split-tail');
     if (!el.getAttribute('class')) el.removeAttribute('class');
@@ -1403,7 +1606,7 @@ function _processPaginationNode(node, currentPageElement, createdPages, contentF
     // genuinely oversized table is still never clipped/lost).
     const tag = (node.tagName || '').toUpperCase();
     const isTable = tag === 'TABLE';
-    const splitChildren = isTable ? null : _getSplittableChildrenForOverflow(node);
+    const splitChildren = _getSplittableChildrenForOverflow(node);
     if (splitChildren) {
       currentPageElement = _appendPossiblyOversizedNode(node, currentPageElement, createdPages, contentFits, createNewPageElement);
       return { currentPageElement, createdPages, handled: true };
@@ -1578,6 +1781,7 @@ async function _paginateDocumentCanvasAsyncCoreImpl(rawHtml, triggerSave, scratc
   docContainer.removeEventListener('touchmove', _markUserScrollIntent);
   docContainer.removeEventListener('keydown', _markUserScrollIntent);
 
+  _wfPostPaginate();
   normalizeAllEditorPagesToA4();
   if (!userScrolledDuringPagination) {
     docContainer.scrollTop = savedScrollPos;
@@ -1740,6 +1944,12 @@ function reflowDocument(dirtyList) {
         continue;   // re-check this page, then the page that received the overflow
       }
     }
+    // Word behaviour: free room at the bottom of the page is refilled from the next page(s).
+    if (_wfFits(page)) _wfFillFromNext(page);
+    if (_wfKeepWithNext(page)) {
+      const nxt = _nextEditorPage(page);
+      if (nxt && !_wfFits(nxt)) { page = nxt; continue; }   // the heading may overflow the next page
+    }
     page = _nextEditorPage(page);
   }
   normalizeAllEditorPagesToA4();
@@ -1779,6 +1989,18 @@ function _reflowDirtyPagesOnly(dirtyList) {
       if (!hadNext) createdAny = true;
       touched.add(target);
       if (!queue.includes(target)) queue.push(target);   // the receiving page is checked too
+    }
+    // Word behaviour: refill free room from the next page; the page that gave content is checked next.
+    if (page.isConnected && _wfFits(page)) {
+      const nxt0 = _nextEditorPage(page);
+      if (_wfFillFromNext(page) && nxt0 && nxt0.isConnected) {
+        touched.add(nxt0);
+        if (!queue.includes(nxt0)) queue.push(nxt0);
+      }
+      if (_wfKeepWithNext(page)) {
+        const nxt1 = _nextEditorPage(page);
+        if (nxt1) { touched.add(nxt1); if (!queue.includes(nxt1)) queue.push(nxt1); }
+      }
     }
   }
   touched.forEach(p => {
