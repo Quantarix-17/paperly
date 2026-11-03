@@ -1777,10 +1777,16 @@ function buildSharedRules(isMonochromeMode, outputLanguage, options) {
     ${superFigureRules}
     ${jsonEscapeRule}
 
-    === UNIVERSAL MATH DELIMITER RULE (CRITICAL) ===
-    Every equation, no matter how short, must be wrapped in $...$ (inline) or $$...$$ (block) with NO exceptions.
-    Inline variables like x, y, z used in a math sense also count — they must be wrapped: $x$, $y$, $z$.
-    Never leave raw backslash commands outside delimiters.
+    === UNIVERSAL MATH DELIMITER AND LAYOUT RULE (CRITICAL) ===
+    Every mathematical item, no matter how short, must be wrapped in delimiters. Never leave raw backslash commands outside them.
+    INLINE ($...$): variables, symbols and short expressions that belong to a sentence, e.g. $X$, $x=2$, $\\omega \\in S$, $P(X \\le 2)$, $X: S \\to \\mathbb{R}$. They stay INSIDE the sentence. A lone symbol or fragment must NEVER be placed on its own line, and a sentence must never be split around a symbol.
+    DISPLAY ($$...$$, centered, on its own line): standalone important equations, definitions and formulas, tall expressions (fractions, sums, integrals, limits), calculation steps, and ALL piecewise functions. Introduce it with a normal sentence ("Then", "Hence", "Therefore"), put the closing comma or full stop INSIDE the block, and continue the next sentence in a new paragraph.
+    Piecewise functions (\\begin{cases}...\\end{cases}) and any equation with a sum, integral or limit that DEFINES something (a PMF, CDF, PDF or stated formula) must ALWAYS be a $$ block. Never place them inside a paragraph, even if the source runs them into the sentence.
+    Group related equations into ONE $$ block (\\begin{aligned}...\\end{aligned} with aligned "=" for multi-step work; short parallel facts on one line separated by \\quad). Sums, integrals and limits always show their bounds (\\sum_{x=1}^{4}, \\int_{0}^{2}, \\lim_{x \\to \\infty}). Fractions use \\frac{a}{b}, never a/b or stacked plain text. Use \\le, \\ge, \\ne, \\in, \\infty, \\mathbb{R}, \\Omega, \\{ \\} and \\text{...} for words inside math. Never use Unicode pseudo-math or plain-text math like x^2/4.
+    No $$ block may contain a normal sentence, and no block may contain only a single letter or symbol. Keep the same notation for the same quantity throughout.
+    Source text extracted from a PDF may have a formula or sentence broken across several lines: rebuild it as one correct sentence/equation. Never copy the broken line structure.
+    A bare number stuck to the start of an equation or paragraph (e.g. "4 $F_X(x)=...$") is a PDF page number: delete it, never output it.
+    Headings, sub-headings and figure captions ("Figure 2.", "Checking and Constructing a PMF", "Example: ...") are always their own separate paragraphs. Never merge them into the previous paragraph.
 
     === ABSOLUTE BAN ON DIAGRAMS, INCLUDING FLOWCHARTS ===
     Diagrams are permanently disabled in this document (see section 0 above) — this includes coding/algorithmic flowcharts and any "Sequential Step-by-Step Process Flow" diagram. Represent any process or flow as a numbered list of steps instead.
@@ -3994,7 +4000,7 @@ async function handleCopyStyleCommand(inputField, opts = {}) {
       `=== ABSOLUTE RULES FOR THIS "COPY" TASK ===\n` +
       `1. Every sentence, word, number, fact, name, and value from the source MUST appear in your output — nothing added, nothing removed, nothing summarized.\n` +
       `2. Do NOT add your own commentary, introduction, conclusion, or explanation that wasn't in the source.\n` +
-      `3. Do NOT fix, correct, or change the source's actual wording/content — only apply visual structure (headings, paragraphs, lists, tables, callout boxes, bold) and, where the source clearly contains a mathematical expression, wrap it as LaTeX using $$...$$.\n` +
+      `3. Do NOT fix, correct, or change the source's actual wording/content — only apply visual structure (headings, paragraphs, lists, tables, callout boxes, bold) and, where the source contains a mathematical expression, convert it to correct LaTeX: short expressions and symbols that sit inside a sentence become inline $...$ in that same sentence; only standalone formulas, piecewise functions, sums, integrals and calculation steps become centered $$...$$ blocks. If a formula or sentence is broken across several lines in the source (PDF extraction), rejoin it into one sentence/equation. Never create a separate line for a single symbol or variable. Drop stray page numbers glued to equations. Keep headings and figure captions as their own paragraphs.\n` +
       `4. Reorganize ONLY the visual presentation, never the substance or order of ideas — unless the source text is clearly out of order due to OCR/page-scan artifacts, in which case restore natural reading order.\n` +
       `5. Ignore page numbers, running headers/footers, and OCR control markers — those are not content to copy.\n` +
       `6. Return ONLY the raw HTML body content (no <html>/<head>/<body> tags, no markdown fences, no JSON wrapper, no commentary about what you did).\n` +
