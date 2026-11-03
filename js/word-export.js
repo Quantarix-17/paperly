@@ -337,11 +337,32 @@
   const mEsc = (v) => String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   const mEls = (el) => Array.from(el.childNodes).filter(isEl);
 
-  function mRun(text, plain, style) {
-    const sty = style ? `<m:rPr><m:sty m:val="${style}"/></m:rPr>` : (plain ? '<m:rPr><m:sty m:val="p"/></m:rPr>' : '');
+  // KaTeX writes \mathbb{R}, \mathcal{F}, \mathfrak{g}, \mathsf, \mathtt as <mi mathvariant="double-struck|script|...">.
+  // That attribute used to be ignored, so a blackboard-bold R (the real numbers) came out as a plain italic R.
+  const DOUBLE_STRUCK_EXC = { C: '\u2102', H: '\u210D', N: '\u2115', P: '\u2119', Q: '\u211A', R: '\u211D', Z: '\u2124' };
+  function toDoubleStruck(text) {
+    return Array.from(String(text)).map(ch => {
+      if (DOUBLE_STRUCK_EXC[ch]) return DOUBLE_STRUCK_EXC[ch];
+      const c = ch.charCodeAt(0);
+      if (c >= 65 && c <= 90) return String.fromCodePoint(0x1D538 + c - 65);
+      if (c >= 97 && c <= 122) return String.fromCodePoint(0x1D552 + c - 97);
+      if (c >= 48 && c <= 57) return String.fromCodePoint(0x1D7D8 + c - 48);
+      return ch;
+    }).join('');
+  }
+  const MATH_SCRIPT = { 'double-struck': 'double-struck', script: 'script', 'bold-script': 'script', fraktur: 'fraktur',
+    'bold-fraktur': 'fraktur', 'sans-serif': 'sans-serif', 'bold-sans-serif': 'sans-serif', 'sans-serif-italic': 'sans-serif', monospace: 'monospace' };
+  function mRun(text, plain, style, scr) {
+    if (scr === 'double-struck') text = toDoubleStruck(text);   // real U+211D etc.: survives Word, LibreOffice and Google Docs
+    const sty = scr ? `<m:rPr><m:scr m:val="${scr}"/><m:sty m:val="${style || 'p'}"/></m:rPr>`   // schema order: scr before sty
+      : style ? `<m:rPr><m:sty m:val="${style}"/></m:rPr>` : (plain ? '<m:rPr><m:sty m:val="p"/></m:rPr>' : '');
     return `<m:r>${sty}<w:rPr><w:rFonts w:ascii="Cambria Math" w:hAnsi="Cambria Math"/></w:rPr><m:t xml:space="preserve">${mEsc(text)}</m:t></m:r>`;
   }
   const mArg = (el) => (el ? mmlNode(el) : '');
+  // code points KaTeX uses for "bar / overline / underline", and the combining marks Word really understands
+  const BAR_CHARS = /^[\u00AF\u02C9\u203E\u0304\u0305\u2015\u2017\u0332\u005F]$/;
+  const ACCENT_MAP = { '^': '\u0302', '\u02C6': '\u0302', '~': '\u0303', '\u02DC': '\u0303', '\u02D9': '\u0307', '\u00A8': '\u0308',
+    '\u20D7': '\u20D7', '\u2192': '\u20D7', '\u02C7': '\u030C', '\u00B4': '\u0301', '`': '\u0300', '\u02D8': '\u0306', '\u02DA': '\u030A', '\u00B0': '\u030A' };
 
   // Stretchy fences (brackets, bars, braces) must be Word delimiters (m:d) so
   // Word grows them to the height of their content. A plain <mo> stays the
@@ -382,7 +403,13 @@
       const base = ks[0];
       // stretchy fence: emit an auto-sizing Word delimiter
       if (t === 'mo') {
-        const ch = fch(k), stretchy = k.getAttribute('stretchy') === 'true';
+        // KaTeX marks \left...\right (and \begin{cases}, matrices, ...) fences with fence="true" ONLY - it
+        // does not add stretchy="true". Treat a fence as stretchy unless it is explicitly stretchy="false"
+        // (that is what plain ( ) [ ] written without \left/\right look like). Without this, the lone "{"
+        // of a piecewise function stayed a tiny text character in Word.
+        const ch = fch(k);
+        const stretchy = k.getAttribute('stretchy') === 'true' ||
+          (k.getAttribute('fence') === 'true' && k.getAttribute('stretchy') !== 'false');
         if (FENCE_PAIR[ch]) {
           const close = findClose(kids, i);
           if (close > i) {
@@ -462,7 +489,7 @@
         const style = ({ bold: 'b', italic: 'i', 'bold-italic': 'bi' })[mv] || '';
         const plain = mv === 'normal' ||
           (t === 'mi' && /^[A-Za-z]{2,}$/.test(text));
-        return mRun(text, plain, style);
+        return mRun(text, plain, style, MATH_SCRIPT[mv] || '');
       }
       case 'mfrac': {
         const noBar = el.getAttribute('linethickness') === '0';
@@ -479,12 +506,23 @@
       case 'msubsup':
         return `<m:sSubSup><m:e>${mArg(ks[0])}</m:e><m:sub>${mArg(ks[1])}</m:sub><m:sup>${mArg(ks[2])}</m:sup></m:sSubSup>`;
       case 'mover': {
+        const accTxt = ((ks[1] || {}).textContent || '').trim();
+        // \bar{x}, \overline{AB}: a bar over the base. Word has no accent for KaTeX's look-alike code points
+        // (U+02C9, U+203E, U+00AF ...) and silently falls back to its DEFAULT accent, the hat ^  (x-bar became x-hat).
+        if (BAR_CHARS.test(accTxt)) {
+          const b = ks[0], single = b && /^(mi|mn)$/.test(tagOf(b)) && Array.from(b.textContent.trim()).length === 1;
+          if (single) return `<m:acc><m:accPr><m:chr m:val="\u0305"/></m:accPr><m:e>${mArg(b)}</m:e></m:acc>`;
+          return `<m:bar><m:barPr><m:pos m:val="top"/></m:barPr><m:e>${mArg(b)}</m:e></m:bar>`;
+        }
         if (el.getAttribute('accent') === 'true') {
-          return `<m:acc><m:accPr><m:chr m:val="${mEsc((ks[1] || {}).textContent || '')}"/></m:accPr><m:e>${mArg(ks[0])}</m:e></m:acc>`;
+          return `<m:acc><m:accPr><m:chr m:val="${mEsc(ACCENT_MAP[accTxt] || accTxt)}"/></m:accPr><m:e>${mArg(ks[0])}</m:e></m:acc>`;
         }
         return `<m:limUpp><m:e>${mArg(ks[0])}</m:e><m:lim>${mArg(ks[1])}</m:lim></m:limUpp>`;
       }
       case 'munder':
+        if (BAR_CHARS.test(((ks[1] || {}).textContent || '').trim())) {   // \underline{x}
+          return `<m:bar><m:barPr><m:pos m:val="bot"/></m:barPr><m:e>${mArg(ks[0])}</m:e></m:bar>`;
+        }
         return `<m:limLow><m:e>${mArg(ks[0])}</m:e><m:lim>${mArg(ks[1])}</m:lim></m:limLow>`;
       case 'munderover':
         return `<m:limUpp><m:e><m:limLow><m:e>${mArg(ks[0])}</m:e><m:lim>${mArg(ks[1])}</m:lim></m:limLow></m:e><m:lim>${mArg(ks[2])}</m:lim></m:limUpp>`;
@@ -2715,7 +2753,6 @@
               }
             },
             children,
-            headers: { default: new D.Header({ children: [new D.Paragraph({ alignment: D.AlignmentType.RIGHT, children: [new D.TextRun({ text: name, size: 16, color: isMono() ? '000000' : '888888' })] })] }) },
             footers: { default: new D.Footer({ children: [new D.Paragraph({ alignment: D.AlignmentType.CENTER, children: [new D.TextRun({ children: [D.PageNumber.CURRENT, ' / ', D.PageNumber.TOTAL_PAGES], size: 16, color: isMono() ? '000000' : '888888' })] })] }) }
           }]
         });
