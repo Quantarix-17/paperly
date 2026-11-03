@@ -1022,6 +1022,35 @@ function _vecMeasurePage(root, fx, opts) {
   return out;
 }
 
+// ---- Bengali syllable segmentation + split-vowel helpers (pure functions, no font needed) ----
+// WHY SYLLABLES: Indic shaping is defined per syllable (HarfBuzz = the engine Chrome uses on screen, and Uniscribe, both cut the text
+// into syllables first and reorder / substitute inside each one). fontkit does NOT confine its GSUB lookups to a syllable, so when a
+// whole word is handed over in one run, contextual lookups can leak across a syllable border and a pre-base vowel sign (e-kar ে,
+// ai-kar ৈ, i-kar ি) lands in the wrong place or glued to the wrong letter. Every syllable is therefore shaped on its own and the
+// glyph runs are concatenated.
+const _BN_C = '[\\u0995-\\u09B9\\u09CE\\u09DC-\\u09DF\\u09F0\\u09F1]';                                   // consonants (incl. ৎ  য় ড় ঢ় ৰ ৱ)
+const _BN_SIGN = '[\\u0981-\\u0983\\u09BC\\u09BE-\\u09C4\\u09C7\\u09C8\\u09CB\\u09CC\\u09D7\\u09E2\\u09E3\\u200C\\u200D]';  // ঁ ং ঃ nukta, vowel signs, ZWNJ/ZWJ
+const _BN_SYLLABLE_RE = new RegExp(
+  '(?:' + _BN_C + '|[\\u0985-\\u0994])\\u09BC?[\\u200C\\u200D]?(?:\\u09CD[\\u200C\\u200D]?' + _BN_C + '\\u09BC?[\\u200C\\u200D]?)*(?:\\u09CD[\\u200C\\u200D]?)?' + _BN_SIGN + '*' +   // consonant OR independent vowel (অ্যা = অ + ্য + া !), then conjunct chain (ZWJ allowed: র‍্য), then its signs
+  '|[^\\u0980-\\u09FF\\u200C\\u200D]+' +                                                                                           // Latin, digits, punctuation, danda
+  '|[\\u0980-\\u09FF\\u200C\\u200D]', 'g');                                                                                        // any other lone Bengali-block code point
+const _VEC_BN_PRE = new Set([0x09BF, 0x09C7, 0x09C8]);   // vowel signs that are DRAWN LEFT of their consonant: ি ে ৈ
+function _vecBnIsCons(cp) { return (cp >= 0x0995 && cp <= 0x09B9) || cp === 0x09CE || (cp >= 0x09DC && cp <= 0x09DF) || cp === 0x09F0 || cp === 0x09F1; }
+// self-test material: [text, the pre-base vowel sign that must come out BEFORE the consonant glyph(s)]
+const _VEC_BN_PRE_TESTS = [
+  ['কে', 0x09C7],                 // কে
+  ['কো', 0x09C7],                 // কো   (o-kar: ে goes left, া stays right)
+  ['কৌ', 0x09C7],                 // কৌ   (au-kar)
+  ['কৈ', 0x09C8],                 // কৈ
+  ['কি', 0x09BF],                 // কি
+  ['ক্ষে', 0x09C7],     // ক্ষে  (the sign must precede the WHOLE conjunct)
+  ['স্ট্রো', 0x09C7]   // স্ট্রো
+];
+const _VEC_BN_CONJ_TESTS = ['ক্ষ', 'ক্র', 'র্ক'];   // ক্ষ  ক্র  র্ক  (must NOT stay a plain letter+hasant sequence)
+// OpenType script argument for fontkit's layout(): tried in this order, the first best-scoring one wins.
+// 'beng' stays first = what the exporter always forced, so a font that already works keeps its exact current output.
+const _VEC_BN_SCRIPT_CANDIDATES = [['beng', 'beng'], ['bng2+beng', ['bng2', 'beng']], ['bng2', 'bng2'], ['auto', undefined]];
+
 // ---- fonts for the vector text ----
 // ---- real shaped Bengali text for pdf-lib (GSUB+GPOS via fontkit, per-glyph placement, ToUnicode) ----
 function _vecCreateBnFont(pdfDoc, bytes) {
@@ -1033,29 +1062,132 @@ function _vecCreateBnFont(pdfDoc, bytes) {
   const ctx = pdfDoc.context, ref = ctx.nextRef(), key = 'FBn' + ref.objectNumber;
   const gsCache = new Map();
   const isZW = (cp) => cp === 0x200B || cp === 0x200C || cp === 0x200D;
+  const hasCp = (cp) => { try { return font.hasGlyphForCodePoint(cp); } catch (_) { return false; } };
+
+  // o-kar ো (U+09CB) and au-kar ৌ (U+09CC) are TWO glyphs in Bengali: ে goes LEFT of the consonant, া / ৗ stays RIGHT of it.
+  // Written out as ে + া / ে + ৗ (their canonical decomposition) every shaper reorders them correctly. Left as one code point, a
+  // shaper that does not run the Indic rules draws the whole two-sided glyph after the consonant: the "detached o-kar".
+  const prep = (s) => String(s).replace(/[োৌ]/g, (ch) => {
+    const b = ch === 'ো' ? 0x09BE : 0x09D7;
+    return (hasCp(0x09C7) && hasCp(b)) ? String.fromCharCode(0x09C7, b) : ch;
+  });
+
+  // ---- SELF-TEST: pick the OpenType script that really makes fontkit run the Bengali rules for THIS font ----
+  // (the old code forced 'beng'; for a font whose Bengali lookups sit under 'bng2' that silently switched shaping OFF, and the
+  //  "did shaping activate?" check compared the argument with itself, so it could never fail.)
+  const rawLayout = (str, sc) => font.layout(str, undefined, sc);
+  const cpsOf = (run) => run.glyphs.map((g) => (g.codePoints && g.codePoints.length) ? g.codePoints : []);
+  const nominalIds = (str) => Array.from(str).map((ch) => font.glyphForCodePoint(ch.codePointAt(0)).id);
+  const evalCandidate = (label, sc) => {
+    const r = { label, sc, pre: 0, preFailed: [], conj: 0, error: '' };
+    _VEC_BN_PRE_TESTS.forEach(([s, pre]) => {
+      try {
+        const cps = cpsOf(rawLayout(prep(s), sc));
+        const pi = cps.findIndex((c) => c.indexOf(pre) >= 0);          // glyph that carries the vowel sign
+        const bi = cps.findIndex((c) => c.some(_vecBnIsCons));         // first glyph that carries a consonant
+        if (pi < 0 || bi < 0 || pi <= bi) r.pre++; else r.preFailed.push(s);   // pi === bi: fused into one glyph = fine
+      } catch (e) { r.preFailed.push(s); r.error = String(e && e.message || e); }
+    });
+    _VEC_BN_CONJ_TESTS.forEach((s) => {
+      try {
+        const str = prep(s), ids = rawLayout(str, sc).glyphs.map((g) => g.id), nom = nominalIds(str);
+        if (!(ids.length === nom.length && ids.every((v, i) => v === nom[i]))) r.conj++;   // anything but the raw letter + hasant glyphs = shaped
+      } catch (e) { r.error = String(e && e.message || e); }
+    });
+    r.score = r.pre + r.conj;
+    return r;
+  };
+  let best = null;
+  const tried = _VEC_BN_SCRIPT_CANDIDATES.map(([label, sc]) => {
+    const r = evalCandidate(label, sc);
+    if (!best || r.score > best.score) best = r;                       // strict '>': on a tie the earlier candidate stays
+    return label + ':' + r.score;
+  });
+  const scriptArg = best.sc;
+  const diag = {
+    script: best.label, tried, preOK: best.pre + '/' + _VEC_BN_PRE_TESTS.length, preFailed: best.preFailed,
+    conjOK: best.conj + '/' + _VEC_BN_CONJ_TESTS.length, shaped: best.conj >= 2, netFixes: 0, error: best.error, font: window.__pdfBengaliFont || '?'
+  };
+
+  // ---- shape ONE syllable (cached). Safety net: a pre-base vowel sign that came out AFTER its consonant is moved to the front ----
+  // Full-font embedding (default for TrueType-outline fonts such as Kalpurush.ttf): fontkit's subsetter rewrites glyph data, and
+  // alternate / composite glyphs appended at the end of the font (Kalpurush's pre-base e-kar is glyph 433, ai-kar 434) can come out
+  // shrunken or detached. Embedding the original font file keeps every glyph byte-exact. window.PDF_BN_SUBSET = true restores subsetting.
+  const sig = bytes && bytes.length > 4 ? String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3]) : '';
+  const fullEmbed = window.PDF_BN_SUBSET !== true && (sig === '\u0000\u0001\u0000\u0000' || sig === 'true');
+  diag.fullEmbed = fullEmbed;
+  try { const eg = font.glyphForCodePoint(0x09C7); const sg = font.layout('\u09B0\u09C7', undefined, scriptArg).glyphs[0]; diag.eKarGlyph = { nominal: eg.id, shaped: sg.id, shapedComposite: (sg._decode && sg._decode() && sg._decode().numberOfContours < 0) || false }; } catch (_) { /* diagnostic only */ }
+  const chunkCache = new Map();
+  const shapeChunk = (str) => {
+    let r = chunkCache.get(str);
+    if (r) return r;
+    let items;
+    try {
+      const run = rawLayout(str, scriptArg);
+      items = run.glyphs.map((g, i) => ({ g, cps: g.codePoints || [], xa: run.positions[i].xAdvance || 0, xo: run.positions[i].xOffset || 0, yo: run.positions[i].yOffset || 0 }));
+    } catch (e) {          // the layout engine refused this piece: draw nominal glyphs, so the word is never silently dropped
+      items = Array.from(str).map((ch) => { const cp = ch.codePointAt(0), g = font.glyphForCodePoint(cp); return { g, cps: [cp], xa: g.advanceWidth || 0, xo: 0, yo: 0 }; });
+    }
+    // অ্যা / এ্যা / আ্যা ...: fontkit's Indic shaper does not treat an independent VOWEL as a base, so the hasant + য after it stay
+    // as separate full-width glyphs (the word comes out ~0.7em too wide and its neighbours overlap). Browsers (HarfBuzz) do form it.
+    // The syllable is shaped with a consonant (ক) standing in for the vowel - that makes the font run its ya-phala / ra-phala
+    // rules - and the stand-in glyph is then swapped for the real vowel glyph. Only done when ক came out as a plain, unfused glyph.
+    if (/^[\u0985-\u0994]\u09CD/.test(str)) {
+      try {
+        const sr = rawLayout('\u0995' + str.slice(1), scriptArg);
+        const g0 = sr.glyphs[0];
+        if (g0 && g0.codePoints && g0.codePoints.length === 1 && g0.codePoints[0] === 0x0995 && sr.glyphs.length > 1) {
+          const vg = font.glyphForCodePoint(str.codePointAt(0));
+          items = sr.glyphs.map((g, i) => ({ g: i === 0 ? vg : g, cps: i === 0 ? [str.codePointAt(0)] : (g.codePoints || []), xa: i === 0 ? (vg.advanceWidth || 0) : (sr.positions[i].xAdvance || 0), xo: sr.positions[i].xOffset || 0, yo: sr.positions[i].yOffset || 0 }));
+          diag.vowelConj = (diag.vowelConj || 0) + 1;
+        }
+      } catch (_) { /* keep the plain layout */ }
+    }
+    if (/[ঀ-৿]/.test(str)) {
+      for (let i = 1; i < items.length; i++) {
+        const c = items[i].cps;
+        if (c.length === 1 && _VEC_BN_PRE.has(c[0]) && items.slice(0, i).some((it) => it.cps.some(_vecBnIsCons))) {
+          items.unshift(items.splice(i, 1)[0]);       // ে ৈ ি belong in FRONT of the syllable's consonant(s)
+          diag.netFixes++;
+        }
+      }
+    }
+    // Kalpurush: fontkit swaps the pre-base e-kar (glyph 105, 426 wide) for a narrower alternate (glyph 433, 303 wide) that the browser
+    // does not use, so every ে / ো came out small and cut off from its consonant. The regular glyph is kept (as the browser draws it).
+    // window.PDF_BN_E_ALTERNATE = true gives the old behaviour back.
+    if (window.PDF_BN_E_ALTERNATE !== true) {
+      items.forEach((it) => {
+        if (it.cps.length === 1 && it.cps[0] === 0x09C7) {
+          const ng = font.glyphForCodePoint(0x09C7);
+          if (ng && ng.id !== it.g.id) { it.g = ng; it.xa = ng.advanceWidth || it.xa; diag.eNominal = (diag.eNominal || 0) + 1; }
+        }
+      });
+    }
+    let pen = 0; const gl = [];
+    items.forEach((it) => {
+      const gid = fullEmbed ? it.g.id : subset.includeGlyph(it.g);   // full embed: real glyph ids, no subsetting
+      if (!used.has(gid)) used.set(gid, { w: it.g.advanceWidth, uni: (it.cps && it.cps.length) ? String.fromCodePoint.apply(null, it.cps) : '' });
+      gl.push({ gid, x: pen + it.xo, y: it.yo });
+      pen += it.xa;
+    });
+    r = { glyphs: gl, adv: pen };
+    chunkCache.set(str, r);
+    return r;
+  };
+
   const api = {
-    key, upem,
+    key, upem, diag,
     covers(text) {
-      for (const ch of text) { const cp = ch.codePointAt(0); if (isZW(cp)) continue; if (!font.hasGlyphForCodePoint(cp)) return false; }
+      for (const ch of prep(text)) { const cp = ch.codePointAt(0); if (isZW(cp)) continue; if (!font.hasGlyphForCodePoint(cp)) return false; }
       return true;
     },
     has(cp) { return font.hasGlyphForCodePoint(cp); },
     shape(text) {
-      // IMPORTANT: Do not let Fontkit auto-detect the script for Bengali runs.
-      // Auto-detection can choose the default script system, which skips the
-      // Indic reordering/substitution/positioning needed by pre-base vowel
-      // signs (ে, ৈ, ো, ৌ) and conjuncts. Force the Bengali OpenType shaper.
-      // The third argument is the OpenType script tag; language is left to the
-      // font's default Bengali LangSys for maximum compatibility with fonts.
-      const run = font.layout(text, undefined, 'beng'), glyphs = []; let pen = 0;
-      if (run && run.script && String(run.script).toLowerCase() !== 'beng') {
-        throw new Error('Fontkit did not activate Bengali shaping (script=' + run.script + ').');
-      }
-      run.glyphs.forEach((g, i) => {
-        const pos = run.positions[i], gid = subset.includeGlyph(g);
-        if (!used.has(gid)) used.set(gid, { w: g.advanceWidth, uni: (g.codePoints && g.codePoints.length) ? String.fromCodePoint.apply(null, g.codePoints) : '' });
-        glyphs.push({ gid, x: pen + (pos.xOffset || 0), y: pos.yOffset || 0 });
-        pen += pos.xAdvance || 0;
+      const glyphs = []; let pen = 0;
+      (prep(text).match(_BN_SYLLABLE_RE) || []).forEach((ch) => {
+        const r = shapeChunk(ch);
+        r.glyphs.forEach((g) => glyphs.push({ gid: g.gid, x: pen + g.x, y: g.y }));
+        pen += r.adv;
       });
       return { glyphs, adv: pen };
     },
@@ -1092,9 +1224,13 @@ function _vecCreateBnFont(pdfDoc, bytes) {
     },
     async finish() {
       if (!used.size) return;   // a font that was drawn with must always be finished, else its object stays dangling
-      const chunks = await new Promise((resolve) => { const c = []; subset.encodeStream().on('data', (d) => c.push(d)).on('end', () => resolve(c)); });
-      let total = 0; chunks.forEach((c) => { total += c.length; });
-      const fontBytes = new Uint8Array(total); let o = 0; chunks.forEach((c) => { fontBytes.set(c, o); o += c.length; });
+      let fontBytes;
+      if (fullEmbed) fontBytes = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+      else {
+        const chunks = await new Promise((resolve) => { const c = []; subset.encodeStream().on('data', (d) => c.push(d)).on('end', () => resolve(c)); });
+        let total = 0; chunks.forEach((c) => { total += c.length; });
+        fontBytes = new Uint8Array(total); let o = 0; chunks.forEach((c) => { fontBytes.set(c, o); o += c.length; });
+      }
       const name = 'AAAAAA+BnText';
       const ff = ctx.register(ctx.flateStream(fontBytes, { Length1: fontBytes.length }));
       const bb = font.bbox || { minX: 0, minY: -300, maxX: 1000, maxY: 900 };
@@ -1149,7 +1285,17 @@ async function _vecMakeFonts(pdfDoc) {
   if (window.fontkit && window.PDF_BENGALI_VECTOR !== false) {
     const bytes = await _vecLoadKalpurushBytes();
     if (bytes) {
-      try { bn = _vecCreateBnFont(pdfDoc, bytes); bn.shape('ক্ষি'); bn.shape('করে, খোঁজে'); } // Bengali-script shaping self-test
+      try {
+        bn = _vecCreateBnFont(pdfDoc, bytes);
+        const d = window.__pdfBnDiag = bn.diag;          // inspect in the console:  __pdfBnDiag
+        console.info('[PDF] Bengali shaping check:', d);
+        // Vector Bengali is used ONLY when the font really shaped the conjuncts (ক্ষ ক্র র্ক). If it did not, fontkit is not running the
+        // Indic rules for this font and every vowel sign / conjunct would be drawn detached: those words stay in the raster layer.
+        // (window.PDF_BENGALI_FORCE_VECTOR = true skips this guard.)
+        if (!d.shaped && window.PDF_BENGALI_FORCE_VECTOR !== true) throw new Error('fontkit does not form Bengali conjuncts for this font (script tried: ' + d.tried.join(', ') + ')');
+        if (d.preFailed.length) console.warn('[PDF] fontkit left the vowel sign in logical order for: ' + d.preFailed.join(' ') + ' (script "' + d.script + '"); the exporter moves it in front of the consonant itself.');
+        bn.shape('ক্ষি'); bn.shape('করে, খোঁজে'); bn.shape('কোথায়, বৌদ্ধ, ক্ষেত্রে');   // smoke test (must not throw)
+      }
       catch (e) { console.warn('Bengali shaping is unavailable; Bengali keeps raster pixels + invisible text layer:', e); bn = null; }
     }
   }
@@ -1339,6 +1485,31 @@ function _pdfNativizeSimpleMath(root) {
       host.parentNode.replaceChild(wrap, host);
     });
   } catch (e) { console.warn('Simple-equation text conversion failed (equations left as images):', e); }
+}
+
+// ===== INLINE EQUATIONS MUST STAY INLINE =====
+// The page is cloned into the export host, outside the editor, so the editor's own rules for an equation that sits inside a sentence
+// ("... হাইড্রোজেন আয়ন (H⁺) উৎপন্ন করে") are gone and the equation wrapper falls back to display:block / width:100%. The sentence is then
+// cut in two and the equation gets a line of its own. Any equation wrapper that has text around it (and is not a real display
+// equation) is put back to inline-block before the layout is measured.
+function _pdfKeepInlineEquationsInline(root) {
+  try {
+    if (!root || !root.querySelectorAll) return 0;
+    let n = 0;
+    root.querySelectorAll('.katex-eq').forEach((eq) => {
+      if (eq.querySelector('.katex-display') || eq.closest('.katex-display')) return;     // real display equation: leave alone
+      const par = eq.parentElement;
+      if (!par) return;
+      let around = '';
+      par.childNodes.forEach((c) => { if (c !== eq) around += (c.textContent || ''); });
+      if (!around.replace(/\s+/g, '')) return;                                            // equation alone in its block: leave alone
+      const cs = getComputedStyle(eq);
+      if (cs.display === 'inline-block' || cs.display === 'inline') return;
+      ['display:inline-block', 'width:auto', 'max-width:100%', 'float:none', 'clear:none', 'margin-left:0', 'margin-right:0', 'vertical-align:baseline'].forEach((d) => { const [k, v] = d.split(':'); eq.style.setProperty(k, v, 'important'); });
+      n++;
+    });
+    return n;
+  } catch (e) { console.warn('Inline equation fix failed (left as is):', e); return 0; }
 }
 
 // ===== DEVANAGARI SIGNS INSIDE BENGALI WORDS (broken e-kar / o-kar / i-kar) =====
@@ -1612,7 +1783,9 @@ function _vecDrawPage(page, data, fx) {
       const lw = Math.max(0.4, w.fs * 0.06) * kx;
       if (w.u) page.drawLine({ start: { x, y: y - w.fs * 0.13 * kx }, end: { x: uEnd * kx, y: y - w.fs * 0.13 * kx }, thickness: lw, color, opacity: w.a });
       if (w.st) page.drawLine({ start: { x, y: y + w.fs * 0.26 * kx }, end: { x: sEnd * kx, y: y + w.fs * 0.26 * kx }, thickness: lw, color, opacity: w.a });
-    } catch (e) { /* a glyph the font rejects must never break the export */ }
+    } catch (e) {   // a glyph the font rejects must never break the export - but a word that silently vanishes must be traceable
+      try { const L = (window.__pdfWordDrawErrors = window.__pdfWordDrawErrors || []); if (L.length < 40) { L.push({ word: w && (w.orig || w.t), error: String(e && e.message || e) }); if (L.length === 1) console.warn('[PDF] a word could not be drawn (see window.__pdfWordDrawErrors):', L[0]); } } catch (_) { /* diagnostic only */ }
+    }
   };
 
   const drawGhost = (g) => {
@@ -2112,7 +2285,8 @@ async function _renderImagePDFPage(sourcePage, host, pageNumber, requestedScale,
     prepare(el);
     host.innerHTML = '';
     host.appendChild(el);
-    _pdfFixForeignBengaliSigns(el);                                   // Devanagari ি/ে/ো inside Bengali words -> Bengali signs, BEFORE layout is measured
+    _pdfFixForeignBengaliSigns(el);
+    _pdfKeepInlineEquationsInline(el);                                // (H⁺) inside a sentence must not get a line of its own                                   // Devanagari ি/ে/ো inside Bengali words -> Bengali signs, BEFORE layout is measured
     const T = vec && vec.timing, now = () => performance.now();
     let t0 = now();
     if (typeof waitForPDFLayoutStable === 'function') await waitForPDFLayoutStable(el);
