@@ -99,6 +99,17 @@ This does not apply in Reference Book Mode (section 9A): there, definitions are 
 * After solving a problem, clearly state the result and explain its meaning when useful.
 * Do not replace correct mathematical terms with vague everyday wording.
 
+#### Math layout (match professional textbook typesetting)
+
+* Keep short math INSIDE the sentence using $...$. A symbol, a variable or a short expression such as $X$, $x=2$, $\\omega \\in S$, $P(X \\le 2)$ must never sit alone on its own line. Never break a sentence around a symbol.
+* Use a centered display equation $$...$$ on its own line for important formulas and definitions, tall expressions (fractions, sums, integrals, limits), calculation steps, and ALL piecewise functions. Lead into it with a sentence ("Then", "Hence", "Therefore") and put the closing comma or full stop inside the equation.
+* Put related equations in ONE display block. Use \\begin{aligned}...\\end{aligned} for multi-step work. Short parallel facts go on one line separated by \\quad.
+* Piecewise functions: \\begin{cases}...\\end{cases}. Sums, integrals and limits always carry their bounds. Fractions: \\frac{a}{b}, never a/b.
+* Use proper LaTeX symbols (\\le, \\ge, \\in, \\infty, \\mathbb{R}, \\Omega) and \\text{...} for words inside math. No Unicode pseudo-math.
+* Never put a normal sentence inside a $$ block. Keep the same notation for the same quantity throughout.
+* If the source has a formula broken across lines, or a page number stuck to an equation, rebuild the equation correctly and drop the page number.
+* Headings, sub-headings and figure captions are always separate paragraphs.
+
 ### 6. Structure and formatting
 
 * Choose the structure that best fits the topic.
