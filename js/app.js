@@ -1490,7 +1490,7 @@ function buildSharedRules(isMonochromeMode, outputLanguage, options) {
        - math problems, numericals, worked solutions, step-by-step calculations, exercises, MCQs, Q&A and any similar problem-solving content — never attach a Bengali explanation to these;
        - a term that was already explained in Bengali earlier in this document (never repeat).
        When a part is clearly easy, leave it out. When it is borderline (a beginner might or might not follow it), lean towards adding a short explanation. Still, the explanations must stay selective and meaningful: never put one under every section, and never explain something just to fill space. Aim for a gentle, steady presence of explanations across the document wherever a real concept appears, rather than just a few isolated ones.
-    3. HOW TO WRITE EACH EXPLANATION — use <div class="block-accent block-accent-blue"><b>বাংলায় সহজ ব্যাখ্যা:</b> ...</div>, placed right after the English concept it explains. Make it detailed and genuinely clear (not a thin 1–2 line gloss), in simple spoken-style Bengali, as if teaching a beginner, covering as needed:
+    3. HOW TO WRITE EACH EXPLANATION — use <div class="block-accent block-accent-blue"><b>বাংলা ব্যাখ্যা:</b> ...</div>, placed right after the English concept it explains. Make it detailed and genuinely clear (not a thin 1–2 line gloss), in simple spoken-style Bengali, as if teaching a beginner, covering as needed:
        - what the concept actually means, in plain words;
        - why it exists / why it matters / how it works, step by step if it is a process;
        - one small everyday example or analogy that makes the idea click;
