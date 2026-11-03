@@ -365,6 +365,168 @@ async function _ocrRecognizeOnce(slot, canvas, psm, timeoutMs) {
   };
 }
 
+// ===== TALL MATH DELIMITER DETECTION =====
+// Tesseract reads a text LINE at a time and has no concept of a big { [ ( that spans several lines
+// (piecewise functions / "cases", matrices, systems of equations, big sums & integrals). It drops the
+// bracket and splits the stacked fractions into separate lines, so the structure is lost. This finds such
+// tall, curved glyphs on the original picture so the page can be sent to AI vision (which writes
+// \begin{cases}...\end{cases}) instead of trusting Tesseract.
+// APP_CONFIG.OCR_COMPLEX_MATH_POLICY (old name OCR_TALL_BRACKET_POLICY also works):
+//   'vision-then-image' (default) | 'vision' | 'off'
+function _ocrTallPolicy() {
+  const v = String(_figCfg('OCR_COMPLEX_MATH_POLICY', _figCfg('OCR_TALL_BRACKET_POLICY', 'vision-then-image')));
+  return (v === 'off' || v === 'vision') ? v : 'vision-then-image';
+}
+
+function _ocrDetectTallDelimiter(source) {
+  try {
+    const sw = source.naturalWidth || source.width || 0, sh = source.naturalHeight || source.height || 0;
+    if (!sw || !sh) return null;
+    const k = Math.min(1, 1400 / Math.max(sw, sh));
+    const w = Math.max(1, Math.round(sw * k)), h = Math.max(1, Math.round(sh * k));
+    if (w < 24 || h < 24) return null;
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(source, 0, 0, w, h);
+    const d = ctx.getImageData(0, 0, w, h).data;
+    _ocrFreeCanvas(c);
+
+    const n = w * h;
+    const gray = new Uint8Array(n), hist = new Uint32Array(256);
+    for (let p = 0, j = 0; j < n; p += 4, j++) {
+      const g = (77 * d[p] + 150 * d[p + 1] + 29 * d[p + 2]) >> 8;
+      gray[j] = g; hist[g]++;
+    }
+    const t = _ocrOtsu(hist, n);
+    let dark = 0;
+    for (let i = 0; i <= t; i++) dark += hist[i];
+    const inkIsDark = dark <= n * 0.5;                    // ink is the minority colour (handles dark-mode screenshots)
+    const ink = new Uint8Array(n);
+    for (let j = 0; j < n; j++) ink[j] = (inkIsDark ? gray[j] <= t : gray[j] > t) ? 1 : 0;
+
+    // connected components; a pixel also joins ink up to 2 rows away so a brace broken by thresholding stays in one piece
+    const label = new Int32Array(n);
+    const comps = [];                                     // {x0,y0,x1,y1,area}
+    const stack = new Int32Array(n);
+    for (let start = 0; start < n; start++) {
+      if (!ink[start] || label[start]) continue;
+      const id = comps.length + 1;
+      const cp = { x0: w, y0: h, x1: 0, y1: 0, area: 0, id };
+      let sp = 0; stack[sp++] = start; label[start] = id;
+      while (sp) {
+        const p = stack[--sp];
+        const y = (p / w) | 0, x = p - y * w;
+        cp.area++;
+        if (x < cp.x0) cp.x0 = x; if (x > cp.x1) cp.x1 = x;
+        if (y < cp.y0) cp.y0 = y; if (y > cp.y1) cp.y1 = y;
+        for (let dy = -2; dy <= 2; dy++) {
+          const yy = y + dy; if (yy < 0 || yy >= h) continue;
+          for (let dx = -1; dx <= 1; dx++) {
+            const xx = x + dx; if (xx < 0 || xx >= w) continue;
+            const q = yy * w + xx;
+            if (ink[q] && !label[q]) { label[q] = id; stack[sp++] = q; }
+          }
+        }
+      }
+      comps.push(cp);
+      if (comps.length > 20000) return null;              // noise / photo: not a clean text picture
+    }
+    const hs = comps.filter(c => c.area >= 6 && (c.y1 - c.y0 + 1) >= 4).map(c => c.y1 - c.y0 + 1).sort((a, b) => a - b);
+    if (hs.length < 4) return null;
+    const med = Math.max(6, hs[hs.length >> 1]);          // typical glyph height
+    const minH = Math.max(3 * med, Math.round(0.03 * Math.max(w, h)), 24);
+
+    let tall = null;
+    for (const cp of comps) {
+      const cw = cp.x1 - cp.x0 + 1, ch = cp.y1 - cp.y0 + 1;
+      if (ch < minH || cw < 4) continue;
+      const aspect = cw / ch;
+      if (aspect < 0.05 || aspect > 0.5) continue;        // not a thin, tall glyph
+      if (cp.area / (cw * ch) > 0.55) continue;           // solid blob
+      // a bracket CURVES: the ink's mean x moves along the height. A straight rule / table border does not.
+      let lo = Infinity, hi = -Infinity;
+      for (let y = cp.y0; y <= cp.y1; y++) {
+        let sum = 0, cnt = 0;
+        for (let x = cp.x0; x <= cp.x1; x++) if (label[y * w + x] === cp.id) { sum += x; cnt++; }
+        if (!cnt) continue;
+        const m = sum / cnt;
+        if (m < lo) lo = m; if (m > hi) hi = m;
+      }
+      if (hi - lo >= 0.25 * cw) { tall = { x: cp.x0 / w, y: cp.y0 / h, w: cw / w, h: ch / h, heightRatio: ch / med }; break; }
+    }
+
+    // glyph-sized components (for the two checks below)
+    const glyphs = comps.filter(c => c.area >= 6 && (c.y1 - c.y0 + 1) >= Math.max(3, 0.3 * med));
+    const overlapX = (a, b) => Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0) + 1;
+
+    // FRACTION BAR: a thin horizontal stroke with ink hugging it from above AND below (numerator / denominator).
+    // The gap must be small (KaTeX/Word fractions sit ~0.2 glyph-heights away), which separates it from a
+    // hyphen between two text lines. Neighbours on the same row (=, +) are normal in an equation, so allowed.
+    let fractionBars = 0;
+    for (const cp of comps) {
+      const cw = cp.x1 - cp.x0 + 1, ch = cp.y1 - cp.y0 + 1;
+      if (cw < Math.max(0.7 * med, 8) || cw > 10 * med || ch > Math.max(3, 0.25 * med) || cw / ch < 5 || cp.area < cw * 0.5) continue;
+      let above = false, below = false;
+      for (const g of glyphs) {
+        if (g === cp) continue;
+        const gw = g.x1 - g.x0 + 1;
+        if (overlapX(cp, g) < 0.5 * Math.min(cw, gw)) continue;
+        const gap1 = cp.y0 - g.y1, gap2 = g.y0 - cp.y1;
+        if (gap1 >= -1 && gap1 <= 0.5 * med) above = true;
+        if (gap2 >= -1 && gap2 <= 0.5 * med) below = true;
+        if (above && below) break;
+      }
+      if (above && below) fractionBars++;
+    }
+
+    // ACCENT over a letter (x-bar, x-hat, x-tilde): a small, wide-ish mark sitting right on top of a letter-sized
+    // glyph. Dots (i, j, :) are not wide; minus / "=" have no letter-sized glyph directly under them.
+    let barAccents = 0;
+    for (const cp of comps) {
+      const cw = cp.x1 - cp.x0 + 1, ch = cp.y1 - cp.y0 + 1;
+      if (ch > Math.max(3, 0.4 * med) || cw < 0.4 * med || cw > 1.6 * med || cw / ch < 1.4) continue;
+      for (const g of glyphs) {
+        if (g === cp) continue;
+        const gh = g.y1 - g.y0 + 1, gap = g.y0 - cp.y1;
+        if (gap < 0 || gap > 0.5 * med || gh < 0.5 * med || gh > 1.6 * med) continue;
+        if (overlapX(cp, g) >= 0.6 * Math.min(cw, g.x1 - g.x0 + 1)) { barAccents++; break; }
+      }
+    }
+
+    const reasons = [];
+    if (tall) reasons.push('tall-bracket');
+    if (fractionBars) reasons.push('fraction-bar');
+    if (barAccents) reasons.push('accent-mark');
+    return reasons.length ? { reasons, tall, fractionBars, barAccents } : null;
+  } catch (e) {
+    console.warn('Math layout detection skipped:', e);
+    return null;
+  }
+}
+const _ocrDetectMathLayout = _ocrDetectTallDelimiter;   // same function, clearer name: it now finds more than tall brackets
+
+// TEXT-level suspicion: things Tesseract tends to get wrong or silently simplify. Plain arithmetic
+// ("12 + 7 = 19") is NOT flagged and stays on Tesseract; anything with math structure is.
+function _ocrTextLooksComplexMath(text) {
+  const t = String(text || '');
+  const reasons = [];
+  if (!t.trim()) return { complex: false, reasons };
+  const lines = t.split(/\n+/).map(x => x.trim()).filter(Boolean);
+  if (/[∑∏∫∮√∞≤≥≠≈±∓→←⇒⇔↦∈∉⊂⊆⊃⊇∪∩∅∂∇∀∃ℝℕℤℚℂ]/.test(t)) reasons.push('math-symbol');
+  if (/[\u0370-\u03FF]/.test(t)) reasons.push('greek');
+  if (/[\u0300-\u036F\u00AF\u02C9\u203E\u20D7]/.test(t)) reasons.push('accent');
+  if (/\^|\\[A-Za-z]+|_\{?[A-Za-z0-9]/.test(t)) reasons.push('script-marks');
+  if (lines.some(l => /^[{\[(|]\s*\S?$/.test(l) || /^[{\[|]\s*[\dA-Za-z]/.test(l))) reasons.push('bracket-line');
+  for (let i = 0; i < lines.length - 1; i++) {                 // stacked fraction: lone "1" above "4, x = 0"
+    if (/^\d{1,2}$/.test(lines[i]) && /^\d{1,2}(\s|[,;.]|$)/.test(lines[i + 1])) { reasons.push('stacked-fraction'); break; }
+  }
+  if (lines.filter(l => /[,;]\s*[A-Za-z]\s*[=<>≤≥]\s*-?\d/.test(l)).length >= 2 || /\botherwise\b/i.test(t)) reasons.push('piecewise');
+  if (lines.some(l => /=/.test(l) && /\b[A-Za-z]\d{1,2}\b/.test(l))) reasons.push('sub-superscript?');   // x2, a1 next to "="
+  return { complex: reasons.length > 0, reasons };
+}
+
 // ===== OCR LINE NORMALIZATION =====
 function normalizeOcrLineText(text) {
   return String(text || '')
@@ -537,7 +699,12 @@ async function recognizeImageWithOcr(imageSource, opts = {}) {
 const GEMINI_VISION_OCR_PROMPT =
   'You are an OCR engine. Transcribe every piece of readable text in this image exactly ' +
   'as written, preserving line breaks, bullet points, and reading order. Write any ' +
-  'mathematical expressions using LaTeX wrapped in $$...$$. Do not add commentary, ' +
+  'mathematical expressions using LaTeX wrapped in $$...$$. A large brace { that groups several ' +
+  'lines (piecewise function / system of equations) MUST be written as ONE $$...$$ block using ' +
+  '\\begin{cases} ... \\end{cases} (rows separated by \\\\, condition after &), never as separate lines. ' +
+  'A bar/overline over a letter (sample mean) must be \\bar{x} and a caret/hat (estimate) must be \\hat{x} - never swap them. ' +
+  'Blackboard-bold (double-struck) letters such as the real numbers must be written \\mathbb{R}, \\mathbb{N}, \\mathbb{Z}, \\mathbb{Q}, \\mathbb{C} (never a plain R), and an arrow as \\to. ' +
+  'Stacked fractions must be \\frac{a}{b}; matrices must use \\begin{pmatrix}/\\begin{bmatrix}. Do not add commentary, ' +
   'headers, or explanations of your own — output only the transcribed content. If the ' +
   'image genuinely has no readable text, respond with exactly: [NO_TEXT_FOUND]';
 
@@ -732,6 +899,22 @@ async function runOcrOnImageFile(file) {
       image.src = objUrl;
     });
 
+    // A big { [ ( spanning several lines (piecewise function, matrix, system): Tesseract cannot read that
+    // structure, so ask AI vision for \begin{cases}..\end{cases} first. Without vision, keep the picture.
+    const tallPolicy = _ocrTallPolicy();
+    if (tallPolicy !== 'off' && !_ocrCancelled() && _ocrDetectMathLayout(img)) {
+      const tallUrl = await getDataUrl();
+      const tallText = await runGeminiVisionOCRFromDataUrl(tallUrl, file.name);
+      if (tallText) {
+        return { text: tallText, confidence: 70, passes: 0, lineCount: getOcrLineCount(tallText), skipped: false, source: 'gemini-vision', tallDelimiter: true };
+      }
+      if (tallPolicy === 'vision-then-image') {
+        const tallTok = await _keepImageFileAsImage(tallUrl);
+        if (tallTok) return { text: tallTok, confidence: 0, skipped: false, keptAsImage: true, figureTokens: [tallTok], tallDelimiter: true };
+      }
+      // 'vision' policy and vision unavailable: continue with plain Tesseract below
+    }
+
     const longEdge = Math.max(img.naturalWidth || 1, img.naturalHeight || 1);
     const targetLongEdge = _ocrNum('OCR_TARGET_LONG_EDGE', 4200);
     const scale = Math.min(3.2, Math.max(1, targetLongEdge / Math.max(1, longEdge)));
@@ -746,10 +929,14 @@ async function runOcrOnImageFile(file) {
     };
     const hasText = (r) => !!String(r && r.text || '').trim();
 
-    if (hasText(result) && !isWeakOcrResult(result)) return result;
+    // Tesseract is trusted only for text it can read reliably. If its output shows math structure
+    // (symbols, accents, scripts, stacked fractions, piecewise lines ...), AI vision re-reads the picture.
+    const textSuspect = tallPolicy !== 'off' ? _ocrTextLooksComplexMath(result && result.text) : { complex: false, reasons: [] };
+    if (textSuspect.complex) console.info('OCR: complex math suspected (' + textSuspect.reasons.join(', ') + ') -> AI vision');
+    if (hasText(result) && !isWeakOcrResult(result) && !textSuspect.complex) return result;
 
     // weak (but non-empty) result: one retry on the un-preprocessed picture
-    if (hasText(result) && !_ocrCancelled()) {
+    if (hasText(result) && !_ocrCancelled() && !textSuspect.complex) {
       try {
         cleanCanvas = document.createElement('canvas');
         cleanCanvas.width = canvas.width;
@@ -920,11 +1107,30 @@ async function extractTextFromImageFilesWithOCR(files, options = {}) {
 function normalizeOcrMathLine(line) {
   let t = String(line || '').trim();
   if (!t) return '';
+  // Accents over a letter. A BAR (x̄ = mean, \bar{x}) and a CAP / HAT (x̂ = estimate, \hat{x}) are different things:
+  // keep each as its own command so they can never be mixed up later. Must run before "−" is turned into "-".
+  const ACC = { '\u0304': 'bar', '\u0305': 'bar', '\u00AF': 'bar', '\u02C9': 'bar', '\u203E': 'bar', '\u0302': 'hat', '\u02C6': 'hat',
+    '\u0303': 'tilde', '\u02DC': 'tilde', '\u20D7': 'vec', '\u0307': 'dot', '\u02D9': 'dot', '\u0308': 'ddot' };
+  t = t.replace(/([A-Za-z])([\u0304\u0305\u00AF\u02C9\u203E\u0302\u02C6\u0303\u02DC\u20D7\u0307\u02D9\u0308])/g, (m, L, a) => `\\${ACC[a]}{${L}}`);
+  // OCR often writes the bar as a superscript minus / macron: "x^-", "x^¯", "x ¯"  (but not x^-1, x^-n, x^{-1})
+  t = t.replace(/([A-Za-z])\s*\^?\s*[\u00AF\u02C9\u203E\u2015]/g, '\\bar{$1}');
+  t = t.replace(/\b([A-Za-z])\s*\^\s*[-\u2212\u2013](?![0-9A-Za-z{(\\])/g, '\\bar{$1}');
   t = t.replace(/[−–—]/g, '-').replace(/×/g, '\\times ').replace(/÷/g, '\\div ')
     .replace(/≤/g, '\\le ').replace(/≥/g, '\\ge ').replace(/≠/g, '\\ne ')
     .replace(/≈/g, '\\approx ').replace(/∞/g, '\\infty ')
     .replace(/π/g, '\\pi ').replace(/√/g, '\\sqrt ')
+    .replace(/[→⟶]/g, '\\to ').replace(/∈/g, '\\in ')
     .replace(/\s+/g, ' ').trim();
+
+  // number sets: blackboard-bold letters keep their look (Unicode ℝ or the \mathbb form)
+  const SETS = { 'ℝ': 'R', 'ℕ': 'N', 'ℤ': 'Z', 'ℚ': 'Q', 'ℂ': 'C' };
+  t = t.replace(/[ℝℕℤℚℂ]/g, ch => `\\mathbb{${SETS[ch]}}`);
+  if (_figCfg('OCR_NUMBER_SET_GUESS', true) !== false) {
+    // Tesseract cannot tell ℝ from R. In "f: A -> R", "x in R", "R^n" the letter is the number set, and
+    // OCR also reads the double stem as "IR" / "lR" / "|R".
+    t = t.replace(/(\\to|\\in|->|\\subset(?:eq)?)\s*[Il|]?([RNZQC])(?![A-Za-z0-9_{])(\s*\^\s*(?:\{[^{}]*\}|[A-Za-z0-9]))?/g,
+      (m, op, L, pw) => `${op} \\mathbb{${L}}${pw ? pw.replace(/\s+/g, '') : ''}`);
+  }
 
   if (/[=<>]|\\times|\\div|\\sqrt|\^/.test(t)) {
     // x1 -> x_1 only for a lone variable letter glued to 1-2 digits (not "Page 12", "H2O", "\pi2")
@@ -942,12 +1148,12 @@ function looksLikeOcrEquation(line) {
   if (!t || t.length > 180) return false;
   if (/^[-•*\d]+\s*(steps?|example|definition|important)/i.test(t)) return false;
   if (/https?:\/\/|www\.|\S+@\S+\.\S+/i.test(t)) return false;                 // URLs / e-mail addresses
-  if (/(?![\p{Script=Latin}\p{Script=Greek}])\p{L}/u.test(t)) return false;      // Bengali etc. is prose, not an equation
+  if (/(?![\p{Script=Latin}\p{Script=Greek}\u2102\u210D\u2115\u2119\u211A\u211D\u2124\u{1D538}-\u{1D56B}])\p{L}/u.test(t)) return false;      // Bengali etc. is prose, not an equation
   // prose guard: after removing function names, an equation has no real words ("Total = 5 apples" is text)
   const stripped = t.replace(/\\[A-Za-z]+/g, ' ')
     .replace(/\b(sin|cos|tan|cot|sec|csc|log|ln|exp|lim|sqrt|min|max|det|mod|frac)\b/gi, ' ');
   if ((stripped.match(/[A-Za-z]{4,}/g) || []).length > 0) return false;
-  const mathSignals = (t.match(/(?:=|\\times|\\div|\\sqrt|\\frac|\^|≤|≥|≠|≈|∑|∫|π|θ|[×÷√±]|\bcos\b|\bsin\b|\btan\b)/g) || []).length;
+  const mathSignals = (t.match(/(?:=|\\times|\\div|\\sqrt|\\frac|\\to|\\in|\^|≤|≥|≠|≈|∑|∫|π|θ|[×÷√±→⟶∈ℝℕℤℚℂ]|\bcos\b|\bsin\b|\btan\b)/g) || []).length;
   const digits = (t.match(/\d/g) || []).length;
   const letters = (t.match(/[A-Za-z]/g) || []).length;
   return mathSignals >= 1 && (digits >= 1 || letters >= 2);
@@ -959,9 +1165,19 @@ function postProcessOCRTextForMath(text) {
   if (!raw) return '';
   const lines = raw.split(/\r?\n/);
   const out = [];
+  // A multi-line equation (\begin{cases} ... \end{cases}, $$ ... $$, \[ ... \]) must pass through untouched.
+  // Wrapping each inner row (\frac{1}{4}, & x=0 \\) in its own $$..$$ used to destroy it.
+  let ddOpen = false, brOpen = false, envDepth = 0;
+  const countOf = (str, re) => (str.match(re) || []).length;
   for (const line of lines) {
     const trimmed = line.trim();
     if (!trimmed) { out.push(''); continue; }
+    const wasInside = ddOpen || brOpen || envDepth > 0;
+    if (countOf(trimmed, /\$\$/g) % 2 === 1) ddOpen = !ddOpen;
+    if (/\\\[/.test(trimmed) && !/\\\]/.test(trimmed)) brOpen = true;
+    else if (/\\\]/.test(trimmed) && !/\\\[/.test(trimmed)) brOpen = false;
+    envDepth = Math.max(0, envDepth + countOf(trimmed, /\\begin\s*\{/g) - countOf(trimmed, /\\end\s*\{/g));
+    if (wasInside || ddOpen || brOpen || envDepth > 0 || /\\begin\s*\{|\\end\s*\{/.test(trimmed)) { out.push(line); continue; }
     if (/^\s*(\$\$|\\\[|\\\()/.test(trimmed)) { out.push(trimmed); continue; }
     if (looksLikeOcrEquation(trimmed)) {
       const math = normalizeOcrMathLine(trimmed);
@@ -1629,13 +1845,30 @@ async function extractTextFromPDFWithOCRFallback(file, startPage, endPage, prelo
           // 3. light preprocessing, then the full OCR pipeline
           await _ocrTick();
           preprocessCanvasForOcr(canvas);
+
+          // big multi-line bracket on the page (cases / matrix): Tesseract loses it -> AI vision, else keep page picture
+          const _tallPolicy = _ocrTallPolicy();
+          if (_tallPolicy !== 'off' && _ocrDetectMathLayout(canvas)) {
+            const cleanTall = _figCfg('VISION_FALLBACK_ENABLED', true) === false ? null
+              : await _renderPageDataUrl(page, _ocrNum('VISION_PAGE_LONG_EDGE', 2400), 0.9);
+            const tallText = cleanTall ? await runGeminiVisionOCRFromDataUrl(cleanTall.dataUrl, `page ${pageNum}`) : '';
+            if (tallText) {
+              return { idx, pageNum, text: tallText, confidence: 70, skipped: false, skipReason: '', passes: 0, lineCount: getOcrLineCount(tallText), source: 'gemini-vision' };
+            }
+            if (_tallPolicy === 'vision-then-image') {
+              const tallTok = await keepPageAsImage(page, pageNum);
+              if (tallTok) return { idx, pageNum, text: tallTok, confidence: 0, skipped: false, skipReason: '', keptAsImage: true };
+            }
+          }
+
           const result = await recognizeImageWithOcr(canvas);
           _ocrFreeCanvas(canvas); canvas = null;   // free the big canvas before any slow fallback
 
           const resultText = String(result?.text || '').trim();
           const resultLines = Number(result?.lineCount) || getOcrLineCount(resultText);
           const resultIsWeak = !resultText || ((Number(result?.confidence) || 0) < 50 && resultLines < 2);
-          if (resultText && !resultIsWeak) {
+          const _suspect = _ocrTallPolicy() !== 'off' ? _ocrTextLooksComplexMath(resultText) : { complex: false, reasons: [] };
+          if (resultText && !resultIsWeak && !_suspect.complex) {
             return {
               idx, pageNum,
               text: result.text || '',
@@ -1662,6 +1895,15 @@ async function extractTextFromPDFWithOCRFallback(file, startPage, endPage, prelo
               passes: result.passes,
               lineCount: getOcrLineCount(visionText),
               source: 'gemini-vision'
+            };
+          }
+          // Tesseract read it fine but it looked like complex math, and vision is unavailable: keep Tesseract's
+          // text and remember the clean picture so it can still be sent to AI vision later.
+          if (_suspect.complex && resultText && !resultIsWeak) {
+            return {
+              idx, pageNum, text: result.text || '', confidence: result.confidence || 0,
+              skipped: false, skipReason: '', passes: result.passes || 0, lineCount: result.lineCount,
+              needsVision: !!visionDataUrl, visionDataUrl
             };
           }
           // OCR and AI vision both failed -> keep the original page as a picture
