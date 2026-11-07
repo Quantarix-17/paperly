@@ -529,7 +529,7 @@ async function _buildTruePDFPrintHTML() {
   if (!pageChunks.length && typeof computeTruePDFPageChunks === 'function') {
     pageChunks = _normalizePDFPageChunks(await computeTruePDFPageChunks({ signature, allowCache: true }));
   }
-  const isDark = document.body.classList.contains('dark');
+  const isDark = false;   // a downloaded PDF is always a light (print) document, whatever the app theme is
   const isMonochrome = document.body.classList.contains('photocopy-mode');
   let html = buildUnifiedPDFPreviewDocument(pageChunks, isMonochrome, isDark);
   if (!html) throw new Error('Print document is empty.');
