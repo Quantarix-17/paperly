@@ -6962,3 +6962,28 @@ body.omr-font-ready .doc-page-canvas .omr-bubble.omr-bubble.omr-bubble.omr-bubbl
 .omr-font-ready .omr-row, html.omr-font-ready .omr-row { align-items: center; }
 .photocopy-mode.omr-font-ready .omr-bubble, .omr-font-ready.photocopy-mode .omr-bubble,
 .omr-font-ready .photocopy-mode .omr-bubble { color: var(--mono-ink, #000) !important; }
+
+
+/* ========================================================================
+   PDF EXPORT PAGES ALWAYS USE THE LIGHT THEME
+   Export pages (.pdf-export-measure-page) are rendered inside <body class="dark">
+   when the app is in dark mode. Anything that reads the theme variables
+   (e.g. `.katex-eq .katex { color: var(--text-primary) }`) would turn light on
+   the white PDF page. Re-declare the light-theme values for these pages only.
+   ======================================================================== */
+.doc-page-canvas.pdf-export-measure-page {
+  --text-primary: #141a2d;
+  --text-secondary: #5f6785;
+  --border-color: rgba(128, 135, 170, 0.22);
+  --surface-color: rgba(255, 255, 255, 0.82);
+  --surface-strong: #ffffff;
+  --sheet-color: #ffffff;
+  --primary-color: #5751e8;
+  --primary-light: rgba(87, 81, 232, 0.11);
+  --accent-color: #8b5cf6;
+  color-scheme: light !important;
+}
+.doc-page-canvas.pdf-export-measure-page .katex-eq .katex,
+.doc-page-canvas.pdf-export-measure-page .katex-eq .katex .katex-html {
+  color: #111827;
+}
