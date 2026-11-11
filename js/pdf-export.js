@@ -149,6 +149,28 @@ function _collectRenderableEditorPages() {
   });
 }
 
+// ===== ACTIVE DOCUMENT THEME (visual format) FOR THE EXPORT =====
+// The themes picked in the command menu live on the editor pages as a `pdf-format-<id>` class. The export pages are
+// rebuilt from scratch (className reset, background forced white), so the class has to be re-applied explicitly or
+// every download silently comes out in the default theme. Returns '' for the default theme or monochrome mode.
+function _pdfActiveFormatClass() {
+  try {
+    if (document.body.classList.contains('photocopy-mode')) return '';   // monochrome (photocopy) mode always wins
+    let id = null;
+    if (typeof getActivePDFVisualFormat === 'function') {
+      try { id = getActivePDFVisualFormat(); } catch (_) { id = null; }
+    }
+    id = id == null ? '' : String(id).trim().replace(/^pdf-format-/, '');
+    if (!id) {   // no getter / empty answer: read what the live editor pages are actually showing
+      const live = document.querySelector('#document-view-container .doc-page-canvas[class*="pdf-format-"]') ||
+                   document.querySelector('.doc-page-canvas[class*="pdf-format-"]');
+      const m = live && /(?:^|\s)pdf-format-([\w-]+)/.exec(live.className);
+      if (m) id = m[1];
+    }
+    return (id && id !== 'default' && /^[\w-]+$/.test(id)) ? 'pdf-format-' + id : '';
+  } catch (_) { return ''; }
+}
+
 // Serialize an editor page for the print document. innerHTML drops a <canvas>'s pixels
 // (the re-parsed canvas is blank), so charts drawn on canvas vanished from True PDF.
 // Snapshot each canvas to an <img> first (canvas is raster by nature; it has no text layer).
@@ -798,6 +820,11 @@ function _vecMeasurePage(root, fx, opts) {
       if (m.classList && m.classList.contains('katex') && !(m.parentElement && m.parentElement.closest('.katex'))) m.style.setProperty('color', CS(m).color, 'important');
     }
   });
+  {   // the page element itself is not part of `all`: a theme paints a gradient / grid / tint on it
+    const rc = CS(root), rbg = _vecParseColor(rc.backgroundColor);
+    const tinted = !!(rbg && rbg.a > 0 && !(rbg.r > 0.99 && rbg.g > 0.99 && rbg.b > 0.99));
+    if ((rc.backgroundImage && rc.backgroundImage !== 'none') || tinted) need('page-theme-bg', root);
+  }
   all.forEach((el) => {
     if (inSvgOrMath(el) || isHidden(el)) return;
     const c = CS(el);
@@ -2267,7 +2294,8 @@ async function _renderImagePDFPage(sourcePage, host, pageNumber, requestedScale,
     el.style.setProperty('overflow', 'hidden', 'important');
     el.style.setProperty('margin', '0', 'important');
     el.style.setProperty('position', 'relative', 'important');
-    el.style.setProperty('background', '#fff', 'important');
+    if (/(?:^|\s)pdf-format-/.test(el.className)) el.style.removeProperty('background');   // themed page: the theme paints it
+    else el.style.setProperty('background', '#fff', 'important');
     // The live page element (.doc-page-canvas) carries a subtle on-screen
     // border/rounded corner as a UI affordance — html2canvas is well known
     // for mis-rendering a low-alpha rgba() border combined with
@@ -2372,6 +2400,8 @@ async function _renderImagePDFPage(sourcePage, host, pageNumber, requestedScale,
     const clone = sourcePage.cloneNode(true);
     clone.querySelectorAll('.page-footer-number').forEach(f => f.remove());
     clone.className = 'doc-page-canvas pdf-export-measure-page';
+    const themeCls = _pdfActiveFormatClass();
+    if (themeCls) clone.classList.add(themeCls);                        // keep the selected theme in the exported page
     if (document.body.classList.contains('photocopy-mode')) {
       clone.classList.add('photocopy-mode');
       if (typeof enforceDiagramVisualStyles === 'function') enforceDiagramVisualStyles(clone);
@@ -3211,10 +3241,8 @@ function _collectHostStylesheetLinksHTML() {
 function _getActivePDFFormatClasses(isMonochromeMode, isDark) {
   const classes = [];
   if (!isMonochromeMode) {
-    try {
-      const formatId = typeof getActivePDFVisualFormat === 'function' ? getActivePDFVisualFormat() : 'default';
-      if (formatId && formatId !== 'default') classes.push('pdf-format-' + formatId);
-    } catch (_) {}
+    const fmt = _pdfActiveFormatClass();
+    if (fmt) classes.push(fmt);
   }
   if (isMonochromeMode) classes.push('monochrome-document', 'photocopy-mode');
   if (isDark) classes.push('dark');
@@ -3630,7 +3658,9 @@ function createPDFMeasurePage(offscreen) {
   page.style.setProperty('overflow', 'hidden', 'important');
   page.style.setProperty('margin', '0', 'important');
   page.style.setProperty('position', 'relative', 'important');
-  page.style.setProperty('background', '#fff', 'important');
+  const _fmt = _pdfActiveFormatClass();
+  if (_fmt) page.classList.add(_fmt);                                   // theme decides the page background
+  else page.style.setProperty('background', '#fff', 'important');
 
   const wrapper = document.createElement('div');
   wrapper.className = 'pdf-fit-wrapper';
