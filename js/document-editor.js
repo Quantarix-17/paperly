@@ -168,6 +168,17 @@ window.__setEditorVirtualRender = function(on) {
     #document-view-container .doc-page-canvas::before,
     #document-view-container .doc-page-canvas::after {
       border-radius: 0 !important;
+    }
+    /* The hidden measuring pages must have the same box as the visible pages (no border). */
+    .doc-page-canvas.pdf-export-measure-page {
+      border: 0 !important;
+      border-radius: 0 !important;
+    }
+    /* An oversized page is shown in full (older styles.css clipped it with a fixed height + overflow:hidden). */
+    #document-view-container .doc-page-canvas[data-oversized="true"] {
+      height: auto !important;
+      max-height: none !important;
+      overflow: visible !important;
     }`;
   document.head.appendChild(st);
 })();
