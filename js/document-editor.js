@@ -8,6 +8,10 @@
 //  4. oversized pages               - are shown in full instead of being clipped by overflow:hidden
 //  5. handlePageKeydown()           - Up/Down/Right/Delete cross the page border like one document
 //  6. scheduleReflow()              - faster reflow on small docs, paused during IME composition
+//  7. FIX "page grows like a modal instead of splitting": getOverflowNodes() now measures the REAL page
+//     (not a hidden copy without the page's format classes), loose text in an empty page is wrapped
+//     so it can split, IME guard can no longer block reflow forever, and pages are re-checked after a
+//     visual/text format change.
 // ========================================================================
 
 // ===== DOM REFS =====
@@ -63,7 +67,14 @@ pageSnapshot.className = 'doc-page-canvas pdf-export-measure-page';
 pageSnapshot.style.cssText = measurePage.style.cssText;
 if (document.body) document.body.appendChild(pageSnapshot);
 
+function _mirrorPageFormatClasses(snapEl, pageEl) {
+  // the measuring copy must use the same fonts / sizes as the real page (pdf-format-*, text-format-*)
+  const extra = Array.from(pageEl.classList).filter(c => /^(pdf-format-|text-format-)/.test(c));
+  snapEl.className = 'doc-page-canvas pdf-export-measure-page' + (extra.length ? ' ' + extra.join(' ') : '');
+}
+
 function syncSnapshotFromPage(pageEl) {
+  _mirrorPageFormatClasses(pageSnapshot, pageEl);
   pageSnapshot.innerHTML = '';
   const fragment = document.createDocumentFragment();
   Array.from(pageEl.childNodes).forEach(child => {
@@ -385,6 +396,27 @@ function _settleOverflowingPages() {
     page = _nextEditorPage(page);
   }
   return moves;
+}
+
+// Visual / text format classes change fonts and sizes AFTER the pages were measured. Re-check every
+// page so text that no longer fits moves on to the next page instead of stretching the page.
+function _reflowAfterStyleChange() {
+  if (!docContainer) return;
+  const marker = saveCaretPosition();
+  try {
+    _settleOverflowingPages();
+    normalizeAllEditorPagesToA4();
+    _removeTrailingEmptyPages();
+    _syncVirtualRender();
+  } finally { restoreCaretPosition(marker); }
+}
+let _styleReflowTimer = null;
+function _scheduleStyleReflow() {
+  clearTimeout(_styleReflowTimer);
+  _styleReflowTimer = setTimeout(() => {
+    if (_slicingDepth > 0 || _renderInFlight > 0) { _scheduleStyleReflow(); return; }
+    try { _reflowAfterStyleChange(); } catch (err) { console.warn('[style reflow]', err); }
+  }, 120);
 }
 
 // Pagination loop shared by both pagination paths. Pages appear one after another while it runs.
@@ -1024,8 +1056,10 @@ function debouncedAutoSaveAndPaginate() {
 // WORD-NATIVE: never move nodes between pages while an IME (Bengali / Avro / phonetic keyboards) is
 // in the middle of a composition - moving the node under the composition cancels it.
 let _imeComposing = false;
+let _imeLastActivity = 0;   // a composition that never reports its end must not block the reflow forever
 if (docContainer) {
-  docContainer.addEventListener('compositionstart', () => { _imeComposing = true; }, true);
+  docContainer.addEventListener('compositionstart', () => { _imeComposing = true; _imeLastActivity = Date.now(); }, true);
+  docContainer.addEventListener('compositionupdate', () => { _imeLastActivity = Date.now(); }, true);
   docContainer.addEventListener('compositionend', () => { _imeComposing = false; scheduleReflow(); }, true);
 }
 
@@ -1036,7 +1070,8 @@ function scheduleReflow() {
   const _pageCount = docContainer ? docContainer.querySelectorAll('.doc-page-canvas').length : 0;
   const _delay = _pageCount <= PERF.LOCAL_REFLOW_MIN_PAGES ? 90 : 300;
   paginationDebounceTimer = setTimeout(() => {
-    if (_imeComposing) { scheduleReflow(); return; }                                 // wait for the composition to end
+    if (_imeComposing && Date.now() - _imeLastActivity < 1500) { scheduleReflow(); return; }   // wait for the composition to end (but never forever)
+    _imeComposing = false;
     if (_slicingDepth > 0 || _renderInFlight > 0) { scheduleReflow(); return; }   // wait until pagination is done
     reflowDocument(_takeDirtyPages());
   }, _delay);
@@ -1274,6 +1309,7 @@ async function _paginateDocumentHTMLCore(rawHtml, triggerSave = true) {
   if (typeof scheduleEquationRecovery === 'function') scheduleEquationRecovery(180);
   if (!(await _perfPostProcessPages(runId))) return;
   if (typeof applyPDFVisualFormat === 'function') applyPDFVisualFormat(typeof getActivePDFVisualFormat === 'function' ? getActivePDFVisualFormat() : 'default');
+  try { _reflowAfterStyleChange(); } catch (err) { console.warn('[style reflow]', err); }   // new fonts may need more room
   if (typeof fitEditorPagesToScreen === 'function') fitEditorPagesToScreen();
   if (triggerSave) HISTORY.saveState();
   if (typeof TAB_MANAGER !== 'undefined' && TAB_MANAGER.activeId) {
@@ -2032,6 +2068,7 @@ async function _paginateDocumentCanvasAsyncCoreImpl(rawHtml, triggerSave, scratc
   scratch.els.push(pageSnapshot);
 
   function syncSnapshotFromPage(pageEl) {
+    _mirrorPageFormatClasses(pageSnapshot, pageEl);
     pageSnapshot.innerHTML = '';
     const fragment = document.createDocumentFragment();
     Array.from(pageEl.childNodes).forEach(child => {
@@ -2089,6 +2126,7 @@ async function _paginateDocumentCanvasAsyncCoreImpl(rawHtml, triggerSave, scratc
   if (typeof scheduleEquationRecovery === 'function') scheduleEquationRecovery(180);
   if (!(await _perfPostProcessPages(runId))) return;
   if (typeof applyPDFVisualFormat === 'function') applyPDFVisualFormat(typeof getActivePDFVisualFormat === 'function' ? getActivePDFVisualFormat() : 'default');
+  try { _reflowAfterStyleChange(); } catch (err) { console.warn('[style reflow]', err); }   // new fonts may need more room
   if (typeof fitEditorPagesToScreen === 'function') fitEditorPagesToScreen();
   if (triggerSave) HISTORY.saveState();
   if (typeof TAB_MANAGER !== 'undefined' && TAB_MANAGER.activeId) {
@@ -2460,43 +2498,55 @@ function _reflowDirtyPagesOnly(dirtyList) {
   });
 }
 
-function getOverflowNodes(page) {
-  const maxHeight = EDITOR_A4_HEIGHT + 1;   // same tolerance as contentFits()
-  const footer = page.querySelector('.page-footer-number');
-  const children = Array.from(page.childNodes).filter(c => c !== footer);
+// Loose text / inline nodes sitting directly inside a page (typed into a brand-new empty page, or
+// pasted) cannot be split by the paginator, so a long run of them used to make the page grow taller
+// instead of flowing to the next page. Wrap each such run into one <div> block first.
+const _LOOSE_INLINE_TAGS = new Set(['SPAN', 'B', 'STRONG', 'I', 'EM', 'U', 'A', 'SMALL', 'SUB', 'SUP', 'CODE', 'BR', 'FONT', 'MARK', 'S', 'STRIKE']);
+function _wrapLooseInlineRuns(page) {
+  if (!page) return;
+  const isLoose = (n) => n.nodeType === 3 || (n.nodeType === 1 && _LOOSE_INLINE_TAGS.has(n.tagName));
+  const isMarker = (n) => n.nodeType === 1 && typeof n.id === 'string' && n.id.indexOf('caret-marker-') === 0;
+  const meaningful = (run) => run.some(n => n.nodeType === 3 ? n.nodeValue.trim().length > 0 : !isMarker(n));
+  const flush = (run) => {
+    if (!run.length || !meaningful(run)) return;
+    const wrap = document.createElement('div');
+    page.insertBefore(wrap, run[0]);
+    run.forEach(n => wrap.appendChild(n));
+  };
+  let run = [];
+  Array.from(page.childNodes).forEach(n => {
+    if (isLoose(n)) run.push(n);
+    else { flush(run); run = []; }
+  });
+  flush(run);
+}
 
+// Takes the blocks that do not fit off the END of the page and returns them (already detached).
+// IMPORTANT: it measures the REAL page, not the hidden measuring copy. The copy does not carry the
+// page's own classes (pdf-format-* fonts, text-format-* sizes) so it could "fit" while the real page
+// did not; nothing was moved, and the page then grew taller than A4 instead of splitting.
+function getOverflowNodes(page) {
+  const zoom = parseFloat(page.style.zoom) || 1;
+  const fits = () => (page.scrollHeight / zoom) <= EDITOR_A4_HEIGHT + 1;   // same tolerance as contentFits()
+  if (fits()) return [];
+
+  _wrapLooseInlineRuns(page);
+  const footer = page.querySelector(':scope > .page-footer-number');
+  const children = Array.from(page.childNodes).filter(c => c !== footer);
   if (!children.length) return [];
 
-  syncSnapshotFromPage(page);
-
-  // Remove one complete top-level node from the snapshot at a time until it fits again.
   const overflow = [];
-  while (pageSnapshot.scrollHeight > maxHeight && pageSnapshot.childNodes.length > 0) {
-    const lastSnapshotNode = pageSnapshot.lastChild;
-    if (!lastSnapshotNode) break;
-
-    const childIndex = pageSnapshot.childNodes.length - 1;
-    const realNode = children[childIndex];
-    if (!realNode) break;
-
-    pageSnapshot.removeChild(lastSnapshotNode);
-    overflow.unshift(realNode);
+  for (let i = children.length - 1; i >= 0 && !fits(); i--) {
+    page.removeChild(children[i]);
+    overflow.unshift(children[i]);
   }
 
   // If even the first block alone is too tall and cannot be split, leave it where it is (moving it
   // would only leave an empty page behind and push the same problem onto the next page).
   if (overflow.length > 0 && overflow.length === children.length && !_canSplitBlock(overflow[0])) {
-    overflow.shift();
+    page.insertBefore(overflow.shift(), page.firstChild);
   }
-
-  if (overflow.length > 0) {
-    overflow.forEach(node => {
-      if (node && node.parentNode) node.parentNode.removeChild(node);
-    });
-    return overflow;
-  }
-
-  return [];
+  return overflow;
 }
 
 // ===== A4 PAGE SAFETY =====
@@ -4699,6 +4749,7 @@ function applyPDFTextFormat(formatId) {
 
 function choosePDFVisualFormat(formatId) {
   applyPDFVisualFormat(formatId);
+  _scheduleStyleReflow();
   if (typeof invalidatePDFPreviewCache === 'function') invalidatePDFPreviewCache();
   _refreshPdfPreviewIfVisible();
   if (typeof TAB_MANAGER !== 'undefined' && TAB_MANAGER._persist) TAB_MANAGER._persist();
@@ -4708,6 +4759,7 @@ function choosePDFVisualFormat(formatId) {
 
 function choosePDFTextFormat(formatId) {
   applyPDFTextFormat(formatId);
+  _scheduleStyleReflow();
   if (typeof invalidatePDFPreviewCache === 'function') invalidatePDFPreviewCache();
   _refreshPdfPreviewIfVisible();
   if (typeof TAB_MANAGER !== 'undefined' && TAB_MANAGER._persist) TAB_MANAGER._persist();
