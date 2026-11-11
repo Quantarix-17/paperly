@@ -9,9 +9,13 @@
 //  5. handlePageKeydown()           - Up/Down/Right/Delete cross the page border like one document
 //  6. scheduleReflow()              - faster reflow on small docs, paused during IME composition
 //  7. FIX "page grows like a modal instead of splitting": getOverflowNodes() now measures the REAL page
-//     (not a hidden copy without the page's format classes), loose text in an empty page is wrapped
-//     so it can split, IME guard can no longer block reflow forever, and pages are re-checked after a
-//     visual/text format change.
+//  8. BOUNCE-FIX:                    - see the "PAGE-BOUNCE FIX" markers below
+//     (a) single consolidated layout pass at the end of pagination (no more redundant reflow pass)
+//     (b) hysteresis on oversized pages (no A4 <-> auto-height flip-flop)
+//     (c) stable fit signature via scrollbar-gutter + getBoundingClientRect
+//     (d) font loadingdone debounce 250 ms -> 800 ms
+//     (e) MutationObserver only watches page add/remove (not subtree)
+//     (f) toast throttled so "🧹 Removed N empty page(s)" fires once
 // ========================================================================
 
 // ===== DOM REFS =====
@@ -20,13 +24,6 @@ const chatHistoryArea = document.getElementById('chat-history');
 
 // ============================================================
 // CARET / MOUSE-CURSOR THEME REPAINT FIX
-// The native text (I-beam) pointer's black-vs-white rendering is drawn
-// by the browser from the element's `color-scheme`, but Chromium only
-// re-evaluates that on the *next* mousemove — so toggling light/dark
-// left the pointer showing the old color for a moment until the mouse
-// moved again, even though color-scheme had already updated. Forcing a
-// synchronous `cursor` property flip on every open page repaints the
-// pointer immediately instead of waiting on the user's mouse.
 // ============================================================
 function forceCursorRepaint() {
   if (!docContainer) return;
@@ -34,9 +31,6 @@ function forceCursorRepaint() {
   pages.forEach(page => {
     const _prevCursor = page.style.cursor;
     page.style.cursor = 'default';
-    // Reading layout here forces the browser to flush/paint the change
-    // above before the line below runs, so the two writes can't get
-    // batched into a single frame (which would skip the repaint).
     void page.offsetHeight;
     page.style.cursor = _prevCursor;
   });
@@ -68,7 +62,6 @@ pageSnapshot.style.cssText = measurePage.style.cssText;
 if (document.body) document.body.appendChild(pageSnapshot);
 
 function _mirrorPageFormatClasses(snapEl, pageEl) {
-  // the measuring copy must use the same fonts / sizes as the real page (pdf-format-*, text-format-*)
   const extra = Array.from(pageEl.classList).filter(c => /^(pdf-format-|text-format-)/.test(c));
   snapEl.className = 'doc-page-canvas pdf-export-measure-page' + (extra.length ? ' ' + extra.join(' ') : '');
 }
@@ -87,25 +80,17 @@ function syncSnapshotFromPage(pageEl) {
 
 // ============================================================
 // PERFORMANCE LAYER (big documents)
-// ------------------------------------------------------------
-// 1. Pagination is sliced into ~12ms pieces with a yield between them, so the page never freezes.
-// 2. The "does the next block still fit on this page?" measurement is incremental (the measuring
-//    page is kept and only the new block is added) instead of re-cloning the whole page every time.
-// 3. getAllCanvasHTML() is cached PER PAGE and only re-reads pages that really changed.
-// 4. Typing re-flows only the page being edited (not every page of the document).
-// 5. Off-screen pages are not laid out / painted (CSS content-visibility), so scrolling stays smooth.
-// To switch a piece off: PERF.INCREMENTAL_MEASURE = false, or run  __setEditorVirtualRender(false).
 // ============================================================
 const PERF = {
-  SLICE_MS: 12,              // max milliseconds of work before giving the browser a turn
-  BIG_DOC_NODES: 25,         // slicing / per-node rendering starts above this many top-level blocks (pages then appear one by one)
-  BIG_DOC_PAGES: 30,         // per-page post-processing starts above this many pages
-  LOCAL_REFLOW_MIN_PAGES: 8, // typing re-flows only the edited page when the document is bigger than this
-  RESYNC_EVERY: 12,          // rebuild the measuring page from the real page every N appended blocks
+  SLICE_MS: 12,
+  BIG_DOC_NODES: 25,
+  BIG_DOC_PAGES: 30,
+  LOCAL_REFLOW_MIN_PAGES: 8,
+  RESYNC_EVERY: 12,
   INCREMENTAL_MEASURE: true
 };
 
-let _paginateRunId = 0; // a newer pagination run cancels an older one that is paused between slices
+let _paginateRunId = 0;
 
 function _perfYield() {
   return new Promise(resolve => {
@@ -134,13 +119,11 @@ function _perfProgress(done, total) {
   } catch (_) { /* cosmetic only */ }
 }
 
-// ---- CSS: off-screen pages are skipped by layout & paint ----
+// ---- CSS: off-screen pages skipped by layout & paint ----
 (function injectPerfStyles() {
   if (document.getElementById('perf-boost-styles')) return;
   const st = document.createElement('style');
   st.id = 'perf-boost-styles';
-  // content-visibility is switched on (class perf-cv-on) only for big documents (40+ pages) and only
-  // AFTER pagination finished: off-screen pages report a wrong scrollHeight, which hid overflow.
   st.textContent = `
     html.perf-cv-on #document-view-container > .doc-page-canvas {
       content-visibility: auto;
@@ -156,16 +139,17 @@ window.__setEditorVirtualRender = function(on) {
 };
 
 // ---- WORD-NATIVE: square, flat editing pages ----
-// MS Word shows a plain rectangular sheet: no rounded corners, no border, only a very light edge
-// shadow. The page CSS lives in styles.css (not part of this file), so the look is enforced here
-// with a scoped override that only touches the EDITING canvas (#document-view-container). The
-// PDF/print iframe and the export code are not affected. The pdf-format-* "skins" keep their
-// colours but lose their rounded/bordered/shadowed card look while editing.
+// PAGE-BOUNCE FIX (c): scrollbar-gutter:stable on the container so a vertical scrollbar appearing
+// does not shrink clientWidth. Without it, fitEditorPagesToScreen() would re-scale, which then
+// changed page height and could hide/show the scrollbar again (visible wobble).
 (function injectWordNativePageStyles() {
   if (document.getElementById('word-native-page-styles')) return;
   const st = document.createElement('style');
   st.id = 'word-native-page-styles';
   st.textContent = `
+    #document-view-container {
+      scrollbar-gutter: stable;   /* PAGE-BOUNCE FIX (c) */
+    }
     #document-view-container .doc-page-canvas,
     #document-view-container .doc-page-canvas[class*="pdf-format-"] {
       border-radius: 0 !important;
@@ -180,12 +164,10 @@ window.__setEditorVirtualRender = function(on) {
     #document-view-container .doc-page-canvas::after {
       border-radius: 0 !important;
     }
-    /* The hidden measuring pages must have the same box as the visible pages (no border). */
     .doc-page-canvas.pdf-export-measure-page {
       border: 0 !important;
       border-radius: 0 !important;
     }
-    /* An oversized page is shown in full (older styles.css clipped it with a fixed height + overflow:hidden). */
     #document-view-container .doc-page-canvas[data-oversized="true"] {
       height: auto !important;
       max-height: none !important;
@@ -194,12 +176,12 @@ window.__setEditorVirtualRender = function(on) {
   document.head.appendChild(st);
 })();
 
-// ---- Incremental "does it fit" measurer (shared by both pagination paths) ----
+// ---- Incremental "does it fit" measurer ----
 function _makeContentFits(snapEl, syncFn) {
-  let snapPage = null;   // real page the mirror (snapEl) currently represents
-  let snapCount = 0;     // number of real child nodes mirrored
-  let pending = null;    // block clone kept at the end of the mirror after a successful fit
-  let pendingBase = -1;  // child count of the real page before that block
+  let snapPage = null;
+  let snapCount = 0;
+  let pending = null;
+  let pendingBase = -1;
   let sinceSync = 0;
 
   const fullSync = (page) => {
@@ -219,8 +201,6 @@ function _makeContentFits(snapEl, syncFn) {
       if (extraNode && snapEl.lastChild) snapEl.removeChild(snapEl.lastChild);
       return ok;
     }
-    // A check on the page as it is (no extra block) is only used while a block is being split
-    // across pages: measure it from scratch and forget the mirror.
     if (!extraNode) {
       syncFn(pageElement);
       snapPage = null; pending = null;
@@ -229,10 +209,10 @@ function _makeContentFits(snapEl, syncFn) {
     }
     const n = pageElement.childNodes.length;
     if (snapPage === pageElement && pending && n === pendingBase + 1 && sinceSync < PERF.RESYNC_EVERY) {
-      pending = null; snapCount = n; sinceSync++;            // the last block was really appended: mirror already has it
+      pending = null; snapCount = n; sinceSync++;
     } else if (snapPage === pageElement && pending && n === pendingBase) {
       try { snapEl.removeChild(pending); } catch (_) { fullSync(pageElement); }
-      pending = null; snapCount = n;                          // that block was NOT appended: drop it from the mirror
+      pending = null; snapCount = n;
     } else if (snapPage === pageElement && !pending && n === snapCount && sinceSync < PERF.RESYNC_EVERY) {
       /* mirror is still exact */
     } else {
@@ -272,7 +252,7 @@ async function _perfPreRenderMath(tempSource, runId) {
   return true;
 }
 
-// ---- Diagram fix-ups after pagination, page by page, in slices ----
+// ---- Diagram fix-ups after pagination ----
 async function _perfPostProcessPages(runId) {
   const pages = Array.from(docContainer.querySelectorAll('.doc-page-canvas'));
   const hasEnforce = typeof enforceDiagramVisualStyles === 'function';
@@ -298,10 +278,9 @@ async function _perfPostProcessPages(runId) {
 
 // ---- Shared safety / DOM helpers ----
 const _pageSnapCache = new WeakMap();
-let _htmlSetToken = 0;     // a newer render (or typing) cancels older delayed retries
-let _renderInFlight = 0;   // >0 while the editor is being rebuilt (it is briefly blank)
+let _htmlSetToken = 0;
+let _renderInFlight = 0;
 
-// Minimal inert sanitizer, used only when the app's sanitizeHTML() is not available.
 function _basicSanitize(html) {
   const doc = new DOMParser().parseFromString('<!doctype html><body>' + String(html || ''), 'text/html');
   doc.querySelectorAll('script,iframe,object,embed,link,meta,base,form').forEach(n => n.remove());
@@ -341,11 +320,8 @@ function _pageIsActive(page) {
 // ============================================================
 // PAGINATION STABILITY HELPERS
 // ============================================================
-let _slicingDepth = 0; // >0 while a pagination loop is running (typing-reflow / history-save wait)
+let _slicingDepth = 0;
 
-// Loads the fonts the document really uses BEFORE any block is measured.
-// (document.fonts.ready alone resolves immediately when no text has been laid out yet, so the first
-//  measurement used a fallback font; the real font arrived later, text grew and was clipped.)
 async function _warmFonts(tempSource) {
   if (!document.fonts || !document.fonts.ready) return;
   const probe = document.createElement('div');
@@ -354,34 +330,36 @@ async function _warmFonts(tempSource) {
   probe.style.height = 'auto';
   probe.style.maxHeight = 'none';
   probe.style.overflow = 'visible';
-  probe.style.visibility = 'visible';   // hidden text may be skipped by some engines when loading fonts
+  probe.style.visibility = 'visible';
   probe.style.opacity = '0';
   try {
-    // sample blocks spread over the whole document so every font family is touched
     const kids = Array.from(tempSource.children);
     const step = Math.max(1, Math.floor(kids.length / 60));
     for (let i = 0; i < kids.length; i += step) probe.appendChild(kids[i].cloneNode(true));
     document.body.appendChild(probe);
-    void probe.offsetHeight;                 // layout here makes the browser start loading the needed fonts
+    void probe.offsetHeight;
     await Promise.race([document.fonts.ready, new Promise(r => setTimeout(r, 5000))]);
     void probe.offsetHeight;
   } catch (_) { /* best effort */ }
   finally { try { probe.remove(); } catch (_) {} }
 }
 
-// Pages whose content was clipped (measured with a wrong font / stale layout) get their overflow moved
-// to the next page, exactly like the Paginate button used to do by hand.
 function _settleOverflowingPages() {
   if (!docContainer) return;
-  document.documentElement.classList.remove('perf-cv-on');   // exact heights needed
+  document.documentElement.classList.remove('perf-cv-on');
   const pages = Array.from(docContainer.querySelectorAll('.doc-page-canvas'));
+  // PAGE-BOUNCE FIX (b): resetPageToA4 now itself applies the oversized state when the page can't
+  // fit; calling it here is idempotent and lets a page that stopped overflowing (content shrunk)
+  // come back to A4 while a page that's still too tall keeps its oversized state instead of
+  // flip-flopping A4 <-> auto on every pass.
   pages.forEach(resetPageToA4);
   let page = pages[0], moves = 0, guard = 0;
   while (page && moves < 3000 && guard++ < 30000) {
+    // An oversized page (single block taller than A4) is shown in full; nothing to split here.
+    if (page.dataset.oversized === 'true') { page = _nextEditorPage(page); continue; }
     if (!_wfFits(page)) {
       const overflow = getOverflowNodes(page);
       if (overflow.length) {
-        // a table / list / box that is split-aware is handled by the main paginator, never loop on it here
         if (overflow.length === 1 && _getSplittableChildrenForOverflow(overflow[0])) {
           _putBackBeforeFooter(page, overflow[0]);
           page = _nextEditorPage(page);
@@ -390,7 +368,7 @@ function _settleOverflowingPages() {
         _splitFirstOverflowParagraph(page, overflow);
         _moveOverflowToNextPage(page, overflow);
         moves++;
-        continue;     // re-check this page, then the page that received the overflow
+        continue;
       }
     }
     page = _nextEditorPage(page);
@@ -398,8 +376,6 @@ function _settleOverflowingPages() {
   return moves;
 }
 
-// Visual / text format classes change fonts and sizes AFTER the pages were measured. Re-check every
-// page so text that no longer fits moves on to the next page instead of stretching the page.
 function _reflowAfterStyleChange() {
   if (!docContainer) return;
   const marker = saveCaretPosition();
@@ -419,7 +395,7 @@ function _scheduleStyleReflow() {
   }, 120);
 }
 
-// Pagination loop shared by both pagination paths. Pages appear one after another while it runs.
+// Pagination loop shared by both pagination paths
 async function _paginateNodesSliced(nodes, firstPage, createdPages, contentFits, createPage, runId, slicing) {
   let cur = firstPage;
   let t = performance.now();
@@ -434,7 +410,7 @@ async function _paginateNodesSliced(nodes, firstPage, createdPages, contentFits,
           lastFit = performance.now();
           try { if (typeof fitEditorPagesToScreen === 'function') fitEditorPagesToScreen(); } catch (_) {}
         }
-        await _perfYield();                       // the browser paints the new pages here
+        await _perfYield();
         if (runId !== _paginateRunId) return false;
         t = performance.now();
       }
@@ -449,7 +425,9 @@ function _syncVirtualRender() {
     n > 40 && !document.documentElement.classList.contains('perf-no-cv'));
 }
 
-// When a font finishes loading later, fix pages that were measured with the old font.
+// PAGE-BOUNCE FIX (d): many KaTeX @font-face files load in batches; 'loadingdone' fires per batch.
+// The old 250 ms debounce re-ran _settleOverflowingPages every batch (a visible re-layout each time).
+// 800 ms batches the font stream into one settle.
 if (document.fonts && document.fonts.addEventListener && !window.__fontSettleBound) {
   window.__fontSettleBound = true;
   let _fontSettleTimer = null;
@@ -459,7 +437,6 @@ if (document.fonts && document.fonts.addEventListener && !window.__fontSettleBou
       try {
         if (!docContainer || _slicingDepth > 0 || _renderInFlight > 0) return;
         const pages = Array.from(docContainer.querySelectorAll('.doc-page-canvas'));
-        // only act when some page really looks clipped / squeezed
         const bad = pages.some(p => p.hasAttribute('data-tight') || p.dataset.oversized || !_wfFits(p));
         if (!bad) return;
         const marker = saveCaretPosition();
@@ -469,25 +446,20 @@ if (document.fonts && document.fonts.addEventListener && !window.__fontSettleBou
         _syncVirtualRender();
         restoreCaretPosition(marker);
       } catch (err) { console.warn('[font settle]', err); }
-    }, 250);
+    }, 800);
   });
 }
 
 // ============================================================
 // FIGURE LAYOUT
-//  - one small figure that has text after it  -> floats RIGHT, the text wraps beside it
-//  - medium / large figure                    -> centered
-//  - size: MEDIUM unless the figure really needs to be large (many labels) or is tiny
-// Written as inline styles (data-fig-auto) so it survives save, re-pagination and PDF export.
-// Opt out for one figure: data-fig-layout="manual".  Force a size: data-fig-size="small|medium|large".
 // ============================================================
 const FIG = {
   ENABLED: true,
-  SMALL_PCT: 34,         // width of a floated small figure (% of the text width)
+  SMALL_PCT: 34,
   MEDIUM_PCT: 62,
   LARGE_PCT: 90,
-  SMALL_MAX_PX: 340,     // natural width up to this (and few labels) = "small"
-  LARGE_MIN_TEXTS: 22,   // this many labels or more = needs room = "large"
+  SMALL_MAX_PX: 340,
+  LARGE_MIN_TEXTS: 22,
   LARGE_MIN_PX: 1000
 };
 const _FIG_AUTO_PROPS = ['float', 'width', 'max-width', 'margin', 'display', 'clear', 'box-sizing'];
@@ -520,12 +492,11 @@ function _figInfo(fig) {
 function _figSizeClass(fig, info) {
   const hint = (fig.getAttribute('data-fig-size') || '').toLowerCase();
   if (hint === 'small' || hint === 'medium' || hint === 'large') return hint;
-  if (info.media > 1) return 'large';                                   // several pictures in one figure
+  if (info.media > 1) return 'large';
   if (info.texts >= FIG.LARGE_MIN_TEXTS || info.w >= FIG.LARGE_MIN_PX) return 'large';
   if (info.w > 0 && info.w <= FIG.SMALL_MAX_PX && info.texts <= 8) return 'small';
   return 'medium';
 }
-// characters of plain paragraph / list text right after the figure (headings, tables, boxes stop it)
 function _figTextAfter(fig) {
   let n = fig.nextElementSibling, total = 0, count = 0;
   while (n && count < 3 && total < 2000) {
@@ -540,7 +511,7 @@ function _figTextAfter(fig) {
 function _applyOneFigureLayout(fig, contentW) {
   if (fig.getAttribute('data-fig-layout') === 'manual') return;
   const wasAuto = fig.hasAttribute('data-fig-auto');
-  if (!wasAuto && /^(left|right)$/.test(fig.style.float || '')) return;   // author already floated it
+  if (!wasAuto && /^(left|right)$/.test(fig.style.float || '')) return;
   if (wasAuto) {
     _FIG_AUTO_PROPS.forEach(p => fig.style.removeProperty(p));
     fig.removeAttribute('data-fig-auto');
@@ -559,7 +530,7 @@ function _applyOneFigureLayout(fig, contentW) {
     const wantPct = info.w > 0 ? Math.min(FIG.SMALL_PCT, Math.max(22, (info.w / contentW) * 100)) : FIG.SMALL_PCT;
     const figW = contentW * wantPct / 100;
     const ratio = info.w > 0 && info.h > 0 ? info.h / info.w : 0.75;
-    const figH = figW * ratio + 28;                                // + caption
+    const figH = figW * ratio + 28;
     const needChars = Math.ceil(figH / 26) * ((contentW - figW - 20) / 8.5) * 0.7;
     if (_figTextAfter(fig) >= needChars) { kind = 'float'; pct = Math.round(wantPct); }
   }
@@ -597,13 +568,11 @@ function _applyFigureLayout(root) {
 }
 window.applyFigureLayout = _applyFigureLayout;
 window.FIG_LAYOUT_CONFIG = FIG;
-// Lossless copy of one page (no emoji stripping, footer removed).
 function _pageSnapshotHTML(page) {
   const clone = page.cloneNode(true);
   clone.querySelectorAll('.page-footer-number').forEach(f => f.remove());
   return clone.innerHTML;
 }
-// Font size of an SVG <text> in px. Attributes such as "1.1em" or "90%" must not be parsed as pixels.
 function _svgFontPx(el) {
   let v = NaN;
   try { v = parseFloat(getComputedStyle(el).fontSize); } catch (_) { /* ignore */ }
@@ -622,9 +591,7 @@ function _getEmojiRe() {
   return re;
 }
 
-// ---- Caret save/restore that survives a full rebuild of the pages ----
-// (A marker element cannot: docContainer.innerHTML = '' destroys it.) The caret is stored as a
-// character offset into the document text, ignoring footers and rendered math.
+// ---- Caret save/restore that survives a full rebuild ----
 function _caretTextWalker(root) {
   return document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(n) {
@@ -682,10 +649,10 @@ function _perfInvalidateFromRecords(records) {
     if (!t || t === docContainer) continue;
     const el = t.nodeType === 1 ? t : t.parentElement;
     if (!el || !el.closest) continue;
-    if (el.closest('.page-footer-number')) continue;   // footer numbers are never exported
+    if (el.closest('.page-footer-number')) continue;
     const page = el.closest('.doc-page-canvas');
     if (!page) continue;
-    if (r.type === 'attributes' && el === page) continue; // the page's own style (zoom/transform) is not part of its innerHTML
+    if (r.type === 'attributes' && el === page) continue;
     _pageHtmlCache.delete(page);
     _pageSnapCache.delete(page);
   }
@@ -705,23 +672,16 @@ function _takeDirtyPages() {
 }
 
 // ============================================================
-// PAGE CONTENT VALIDATION (FIXED: ignores whitespace-only nodes
-// and empty canvas elements that have no visible ink)
+// PAGE CONTENT VALIDATION
 // ============================================================
-
-// Check whether a <canvas> element actually has visible ink
-// (not just that it exists in the DOM).  This prevents pages that
-// contain empty / zero-ink canvases from being treated as content,
-// which previously caused extra blank pages in the exported PDF.
 let _inkScratch = null;
 function _canvasHasInk(canvas) {
   try {
     if (!canvas.width || !canvas.height) return false;
     if (!_inkScratch) _inkScratch = document.createElement('canvas');
-    // Look at the WHOLE canvas (scaled down), not just its top-left corner.
     const W = Math.min(canvas.width, 320);
     const H = Math.max(1, Math.min(480, Math.round(canvas.height * (W / canvas.width))));
-    _inkScratch.width = W;   // also clears the bitmap and any taint from a previous canvas
+    _inkScratch.width = W;
     _inkScratch.height = H;
     const ctx = _inkScratch.getContext('2d', { willReadFrequently: true });
     ctx.fillStyle = '#fff';
@@ -735,7 +695,6 @@ function _canvasHasInk(canvas) {
     }
     return false;
   } catch (_) {
-    // Unreadable (tainted / unsupported) canvas: assume it has content rather than delete the page.
     return true;
   }
 }
@@ -756,7 +715,6 @@ const DEFAULT_COVER_LINES = [
   'Session:2025-2026',
   'Islamic University,Kushtia'
 ];
-// Override with APP_CONFIG.BLANK_COVER_LINES (array of strings) to change or empty the placeholder.
 function _getCoverLines() {
   try {
     if (typeof APP_CONFIG !== 'undefined' && APP_CONFIG && Array.isArray(APP_CONFIG.BLANK_COVER_LINES)) return APP_CONFIG.BLANK_COVER_LINES;
@@ -767,9 +725,7 @@ const _squashText = (str) => String(str || '').replace(/[\s\u00a0]+/g, '').toLow
 
 function pageHasContent(page) {
   if (!page) return false;
-  // An intentionally blank page (see getCanvasSnapshotHTML) counts as content.
   if (page.querySelector('.blank-page-spacer')) return true;
-  // Read the text straight from the live page (no clone). The page-number footer is skipped.
   let rawText = '';
   for (const child of page.childNodes) {
     if (child.nodeType === 1 && child.classList && child.classList.contains('page-footer-number')) continue;
@@ -779,12 +735,6 @@ function pageHasContent(page) {
   const text = rawText.replace(/[\s\u00a0]+/g, ' ').trim();
   const normalized = text.toLowerCase();
 
-  // The dummy / placeholder document must never count as real content (so the first, auto-created
-  // document is ignored by saves, commands, pagination and beautify). Three ways to be a placeholder:
-  //  1. the text is nothing but placeholder phrases (any punctuation/spacing between them);
-  //  2. SHORT text that contains a placeholder phrase (a dummy page may carry a few extra words);
-  //  3. the blank-document cover (original or lightly edited).
-  // A long page that merely mentions a phrase is real content and is NOT dropped.
   const promptPhrases = [
     'start typing here',
     'or ask ai on the left to generate notes',
@@ -794,7 +744,7 @@ function pageHasContent(page) {
   const placeholders = promptPhrases.concat([coverJoined]).map(_squashText).filter(Boolean);
   let rest = _squashText(text);
   placeholders.forEach(p => { rest = rest.split(p).join(''); });
-  rest = rest.replace(/[^\p{L}\p{N}]+/gu, '');           // ignore punctuation left between phrases
+  rest = rest.replace(/[^\p{L}\p{N}]+/gu, '');
   const isPhraseOnly = rest === '' || rest === 'page1' || rest === 'page1of1';
   const isShortWithPrompt = text.length <= 160 && promptPhrases.some(p => normalized.includes(p));
   const isCover = normalized.includes('created by tamim') && text.length <= 400;
@@ -812,16 +762,12 @@ function pageHasContent(page) {
   return hasMeaningfulText || hasVisual || hasCanvasInk;
 }
 
-// ===== BLANK-DOCUMENT COVER-PAGE PLACEHOLDER =====
-// A brand-new document keeps one visible page; this fills that lone, empty page with a cover
-// placeholder (screen-only, never counted as content by pageHasContent).
 function _fillBlankSolePageWithCoverPlaceholder() {
   if (!docContainer) return;
   const pages = docContainer.querySelectorAll('.doc-page-canvas');
   if (pages.length !== 1) return;
   const page = pages[0];
   if (pageHasContent(page)) return;
-  // a new / empty document starts at Paginate level 0 (the level belongs to one document)
   try { if (getPaginateCompactLevel() > 0) _setPaginateCompactLevel(0); } catch (_) { /* not initialised yet */ }
   const lines = _getCoverLines();
   if (!lines.length) return;
@@ -835,18 +781,16 @@ function _removeEmptyEditorPages() {
   if (!docContainer) return;
   const pages = Array.from(docContainer.querySelectorAll('.doc-page-canvas'));
   if (!pages.length) return;
-
-  // Never strip every page down to zero: a lone empty page stays on screen.
   const allEmpty = pages.every(page => !pageHasContent(page));
   const empties = pages.filter(page => !pageHasContent(page) && !_pageIsActive(page));
   const removable = allEmpty ? empties.filter(p => p !== pages[0]) : empties;
   removable.forEach(page => page.parentNode && page.parentNode.removeChild(page));
-
   if (typeof updatePageFooters === 'function') updatePageFooters();
 }
 
-// Removes only the empty pages at the END of the document (never a blank page in the middle,
-// never the page being edited, and never the first page, so the editor can't end up page-less).
+// PAGE-BOUNCE FIX (f): toast throttle — _removeTrailingEmptyPages runs in each settle pass, so the
+// "🧹 Removed N empty page(s)" toast used to fire repeatedly. Fire at most once per 500 ms.
+let _lastEmptyRemovalToastAt = 0;
 function _removeTrailingEmptyPages() {
   if (!docContainer) return;
   const pages = Array.from(docContainer.querySelectorAll('.doc-page-canvas'));
@@ -862,8 +806,10 @@ function _removeTrailingEmptyPages() {
 
   if (removedCount > 0) {
     updatePageFooters();
-    if (typeof displayToastNotification === 'function') {
+    const now = Date.now();
+    if (now - _lastEmptyRemovalToastAt > 500 && typeof displayToastNotification === 'function') {
       displayToastNotification(`🧹 Removed ${removedCount} empty page(s)`);
+      _lastEmptyRemovalToastAt = now;
     }
   }
 }
@@ -875,20 +821,16 @@ const HISTORY = {
   maxSize: 30,
 
   saveState() {
-    // A pagination loop is running: the DOM is half built. Try again right after it.
     if (_slicingDepth > 0) {
       if (!this._saveRetry) {
         this._saveRetry = setTimeout(() => { this._saveRetry = null; this.saveState(); }, 400);
       }
       return;
     }
-    // Lossless snapshot: undo/autosave must not strip emoji or drop blank pages.
     const currentHTML = getCanvasSnapshotHTML();
-    // While the editor is being rebuilt it is briefly empty; never record that as a state.
     if (!currentHTML && _renderInFlight > 0 && this.undoStack.length > 0) return;
     if (this.undoStack.length > 0 && this.undoStack[this.undoStack.length - 1] === currentHTML) return;
     this.undoStack.push(currentHTML);
-    // Every undo step is a full copy of the document. For big documents keep fewer steps.
     const _limit = currentHTML.length > 3000000 ? 3 : currentHTML.length > 800000 ? 8 : this.maxSize;
     while (this.undoStack.length > _limit) this.undoStack.shift();
     this.redoStack = [];
@@ -898,7 +840,6 @@ const HISTORY = {
     }
   },
 
-  // Edits typed in the last 1.2 s are not in the stack yet; record them so undo doesn't lose them.
   _flushPendingSave() {
     if (_autoSavePending) {
       clearTimeout(autoSaveTimer);
@@ -919,7 +860,7 @@ const HISTORY = {
     await setDocumentHTMLAndPaginate(previousState, false);
     if (typeof displayToastNotification === 'function') displayToastNotification("↶ Undone");
     if (typeof TAB_MANAGER !== 'undefined' && TAB_MANAGER.activeId) {
-      TAB_MANAGER._persist(); // runs only after the DOM really shows the restored state
+      TAB_MANAGER._persist();
     }
   },
 
@@ -943,10 +884,9 @@ document.addEventListener('keydown', (e) => {
   const ae = document.activeElement;
   const tag = ae ? ae.tagName : '';
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-  // Don't hijack undo in other editable areas (chat box, titles ...).
   if (ae && ae.isContentEditable && !(docContainer && docContainer.contains(ae))) return;
   if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
-  const k = (e.key || '').toLowerCase();   // works with CapsLock / Shift
+  const k = (e.key || '').toLowerCase();
   if (k === 'z' && !e.shiftKey) {
     e.preventDefault();
     HISTORY.undo();
@@ -959,13 +899,10 @@ document.addEventListener('keydown', (e) => {
 // ===== CANVAS HTML HELPERS =====
 function getAllCanvasHTML() {
   if (!docContainer) return '';
-  // Apply any DOM changes that happened since the last call, so a stale page is never returned.
   if (_pageCacheObserver) _perfInvalidateFromRecords(_pageCacheObserver.takeRecords());
   const parts = [];
   const pages = docContainer.querySelectorAll('.doc-page-canvas');
   for (const page of pages) {
-    // Word export and the Image-PDF path both build their output from this string, so the blank-document
-    // cover placeholder has to be filtered out here too (pageHasContent treats it as "no content").
     if (typeof pageHasContent === 'function' && !pageHasContent(page)) continue;
     let entry = _pageHtmlCache.get(page);
     if (!entry) {
@@ -980,9 +917,6 @@ function getAllCanvasHTML() {
   return parts.join('');
 }
 
-// Lossless snapshot of the document for undo / autosave / re-pagination. Unlike getAllCanvasHTML()
-// (which is the EXPORT view: emoji stripped, empty pages skipped) this keeps the user's text exactly
-// and keeps blank pages that sit between content pages (as a page-break sandwich).
 function getCanvasSnapshotHTML() {
   if (!docContainer) return '';
   if (_pageCacheObserver) _perfInvalidateFromRecords(_pageCacheObserver.takeRecords());
@@ -1005,18 +939,12 @@ function getCanvasSnapshotHTML() {
   const SPACER = '<p class="blank-page-spacer">&nbsp;</p>';
   return entries.map((e, i) => {
     if (!e.has) return (i > first && i < last) ? BR + SPACER + BR : '';
-    // A page that is ONLY a blank-page spacer must keep its own page when the text is re-paginated.
     if (e.html.replace(/<p class="blank-page-spacer">(?:&nbsp;|\u00a0)<\/p>/g, '').trim() === '') return BR + e.html + BR;
     return e.html;
   }).join('');
 }
 window.getCanvasSnapshotHTML = getCanvasSnapshotHTML;
 
-// ---- Leading-pages HTML (for the tab title only) ----
-// _getTabNameFromHtml() only ever reads the first 60 KB of the document, so building the HTML of
-// every page (hundreds of cloneNode calls on freshly built, uncached pages) just to read a title
-// was wasted work. This returns the same text getAllCanvasHTML() would start with (same pages
-// skipped, same footer/emoji clean-up), but stops once enough has been collected.
 function _getLeadingCanvasHTML(limitChars = 60000) {
   if (!docContainer) return '';
   const parts = [];
@@ -1041,9 +969,9 @@ function _getLeadingCanvasHTML(limitChars = 60000) {
   return parts.join('');
 }
 
-// ===== SET DOCUMENT HTML WITH PAGINATION (FIXED: removes empty trailing pages) =====
+// ===== SET DOCUMENT HTML WITH PAGINATION =====
 let autoSaveTimer = null;
-let _autoSavePending = false; // true while the 1.2 s autosave below is still going to run
+let _autoSavePending = false;
 let paginationDebounceTimer = null;
 
 function debouncedAutoSaveAndPaginate() {
@@ -1053,10 +981,8 @@ function debouncedAutoSaveAndPaginate() {
   scheduleReflow();
 }
 
-// WORD-NATIVE: never move nodes between pages while an IME (Bengali / Avro / phonetic keyboards) is
-// in the middle of a composition - moving the node under the composition cancels it.
 let _imeComposing = false;
-let _imeLastActivity = 0;   // a composition that never reports its end must not block the reflow forever
+let _imeLastActivity = 0;
 if (docContainer) {
   docContainer.addEventListener('compositionstart', () => { _imeComposing = true; _imeLastActivity = Date.now(); }, true);
   docContainer.addEventListener('compositionupdate', () => { _imeLastActivity = Date.now(); }, true);
@@ -1065,21 +991,17 @@ if (docContainer) {
 
 function scheduleReflow() {
   clearTimeout(paginationDebounceTimer);
-  // WORD-NATIVE: small documents re-flow almost immediately (text moves to the next page while you
-  // type, like Word). Big documents keep the longer debounce for performance.
   const _pageCount = docContainer ? docContainer.querySelectorAll('.doc-page-canvas').length : 0;
   const _delay = _pageCount <= PERF.LOCAL_REFLOW_MIN_PAGES ? 90 : 300;
   paginationDebounceTimer = setTimeout(() => {
-    if (_imeComposing && Date.now() - _imeLastActivity < 1500) { scheduleReflow(); return; }   // wait for the composition to end (but never forever)
+    if (_imeComposing && Date.now() - _imeLastActivity < 1500) { scheduleReflow(); return; }
     _imeComposing = false;
-    if (_slicingDepth > 0 || _renderInFlight > 0) { scheduleReflow(); return; }   // wait until pagination is done
+    if (_slicingDepth > 0 || _renderInFlight > 0) { scheduleReflow(); return; }
     reflowDocument(_takeDirtyPages());
   }, _delay);
 }
 
 let _caretMarkerSeq = 0;
-// Marker-based caret save/restore: only for operations that MOVE existing nodes (reflow).
-// Full rebuilds use _saveCaretOffset/_restoreCaretOffset instead.
 function saveCaretPosition() {
   const selection = window.getSelection();
   if (!selection || !selection.rangeCount) return null;
@@ -1112,7 +1034,7 @@ function restoreCaretPosition(markerId) {
   selection.removeAllRanges();
   selection.addRange(range);
   parent.removeChild(marker);
-  if (parent.normalize) parent.normalize();   // re-join the text nodes the marker split
+  if (parent.normalize) parent.normalize();
 }
 
 function _isWholeBlockNodeForPagination(node) {
@@ -1122,7 +1044,7 @@ function _isWholeBlockNodeForPagination(node) {
 }
 
 function flattenContentTopLevelNodes(tempSource) {
-  _mergeSplitBlocks(tempSource);   // join paragraph pieces split by an earlier pagination
+  _mergeSplitBlocks(tempSource);
   const topLevelNodes = [];
   const inlineWrapperTags = new Set(['SPAN', 'STRONG', 'B', 'EM', 'I', 'U', 'A', 'SMALL', 'SUB', 'SUP', 'CODE']);
   const blockOnlyTags = new Set(['P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'UL', 'OL', 'LI', 'TABLE', 'BLOCKQUOTE', 'PRE', 'CODE', 'DIV']);
@@ -1146,17 +1068,11 @@ function flattenContentTopLevelNodes(tempSource) {
       const onlyInlineChildren = childEls.length > 0 && childEls.every(child => inlineWrapperTags.has(child.tagName));
       const hasBlockChild = childEls.some(child => blockOnlyTags.has(child.tagName));
 
-      // Keep the wrapper as a single top-level node when the DIV only carries
-      // inline or text-like wrappers; do not unfold it into many fragments.
-      // This is the class of structure that previously created the one-line-per-page
-      // oversplit appearance in the PDF chunk stream.
       if (onlyInlineChildren || !hasBlockChild) {
         topLevelNodes.push(node);
         return;
       }
 
-      // Only expand real block DIVs into their children if the children are an
-      // actual block structure; otherwise keep wrapper cohesion stable.
       childNodes.forEach(child => topLevelNodes.push(child));
       return;
     }
@@ -1173,9 +1089,6 @@ function flattenContentTopLevelNodes(tempSource) {
 
 async function setDocumentHTMLAndPaginate(rawHtml, triggerSave = true) {
   if (!docContainer) return;
-  // If pagination throws midway the editor would stay blank (it was cleared first). Catch it, show
-  // the content in an unpaginated page, and retry once. The retry is cancelled when anything newer
-  // was rendered or typed in the meantime (otherwise it would overwrite the newer content).
   const token = ++_htmlSetToken;
   _renderInFlight++;
   try {
@@ -1202,8 +1115,6 @@ async function setDocumentHTMLAndPaginate(rawHtml, triggerSave = true) {
   }
 }
 
-// ===== PLAIN (UNPAGINATED) FALLBACK RENDER =====
-// Guarantees the editor never ends up blank if real pagination throws.
 function _renderDocumentHTMLPlainFallback(rawHtml, triggerSave) {
   if (!docContainer) return;
   docContainer.innerHTML = '';
@@ -1232,38 +1143,16 @@ async function _paginateDocumentHTMLCore(rawHtml, triggerSave = true) {
   if (typeof invalidatePDFPreviewCache === 'function') invalidatePDFPreviewCache();
   if (!docContainer) return;
   const runId = ++_paginateRunId;
-  document.documentElement.classList.remove('perf-cv-on');   // exact heights while paginating
-  window.__mathLastOverflowSig = null; // new content: forget the previous overflow/reflow attempt
+  document.documentElement.classList.remove('perf-cv-on');
+  window.__mathLastOverflowSig = null;
   const savedScrollPos = docContainer.scrollTop;
   const markerId = _saveCaretOffset();
   docContainer.innerHTML = '';
   const tempSource = document.createElement('div');
   tempSource.innerHTML = _prepareHTML(rawHtml);
   if (typeof enforceDiagramVisualStyles === 'function') enforceDiagramVisualStyles(tempSource);
-  _applyFigureLayout(tempSource);   // small single figure -> right + text beside it; otherwise centered medium
-  // FIX: render KaTeX equations BEFORE measuring/splitting into pages.
-  // Previously equations were rendered only after a block was already
-  // placed on a page, so contentFits() measured the small, unrendered
-  // math markup. Rendered KaTeX (matrices, fractions, tall symbols) is
-  // often much taller, so a block that "fit" during measurement would
-  // grow after rendering and spill into the page-footer-number area —
-  // this is the "text runs into the page footer" bug. Rendering here
-  // first means every fit check below sees the real, final height.
+  _applyFigureLayout(tempSource);
   if (!(await _perfPreRenderMath(tempSource, runId))) return;
-  // FIX: "table row splits onto a new page leaving a big empty gap" bug.
-  // isKatexReady()/renderAllKatexVisuals() only confirm the katex JS
-  // library is loaded — NOT that its @font-face files (KaTeX_Main,
-  // KaTeX_Math, ...) have actually finished downloading. If a page's
-  // math glyphs are being rendered for the first time in this session,
-  // the browser paints them with a fallback font until the real KaTeX
-  // font arrives, so contentFits() below can measure a fallback-font
-  // height that's taller than the real, final height. That makes a row
-  // (a table row with a matrix/formula cell, for example) look like it
-  // "doesn't fit" and get bumped to a fresh page, even though the real
-  // rendered content leaves plenty of room — exactly the empty-space-
-  // then-page-break gap seen with math-heavy tables. Waiting for
-  // document.fonts.ready here guarantees every contentFits() check from
-  // this point on measures the final, real font metrics.
   if (typeof ensureKatexDelimiterFonts === 'function') {
     try { await ensureKatexDelimiterFonts(); } catch (_) { /* best effort */ }
   }
@@ -1285,31 +1174,43 @@ async function _paginateDocumentHTMLCore(rawHtml, triggerSave = true) {
   const createdPages = [currentPage];
   const topLevelNodes = flattenContentTopLevelNodes(tempSource);
 
-  // --- Pagination logic with proper spacing ---
-
   const contentFits = _makeContentFits(pageSnapshot, syncSnapshotFromPage);
 
   const okRun = await _paginateNodesSliced(topLevelNodes, currentPage, createdPages, contentFits,
     createNewPageElement, runId, topLevelNodes.length > PERF.BIG_DOC_NODES);
-  if (!okRun) return;     // a newer pagination replaced this one
+  if (!okRun) return;
+
+  // PAGE-BOUNCE FIX (a): render every equation BEFORE the final layout pass, then one short yield
+  // so the browser finishes the synchronous KaTeX DOM swap. Previously the equations were rendered
+  // AFTER the layout pass and scheduleEquationRecovery(180) rendered any that failed 180 ms later —
+  // then a redundant _reflowAfterStyleChange() pass was needed to push content into the next page,
+  // which is exactly what the user saw as a bounce. Order is now: render equations, then layout,
+  // then post-process diagrams, then a second (final) layout pass.
+  if (typeof forceRenderAllEquations === 'function') forceRenderAllEquations();
+  await new Promise(r => setTimeout(r, 30));
+  if (runId !== _paginateRunId) return;
 
   _wfPostPaginate();
-  _settleOverflowingPages();      // fix any page whose text was clipped
+  _settleOverflowingPages();
   normalizeAllEditorPagesToA4();
   _syncVirtualRender();
   _removeEmptyEditorPages();
   docContainer.scrollTop = savedScrollPos;
   _restoreCaretOffset(markerId);
-  
-  // ===== FIX: Remove empty trailing pages =====
+
   _removeTrailingEmptyPages();
   _fillBlankSolePageWithCoverPlaceholder();
-  
-  if (typeof forceRenderAllEquations === 'function') forceRenderAllEquations();
+
   if (typeof scheduleEquationRecovery === 'function') scheduleEquationRecovery(180);
   if (!(await _perfPostProcessPages(runId))) return;
   if (typeof applyPDFVisualFormat === 'function') applyPDFVisualFormat(typeof getActivePDFVisualFormat === 'function' ? getActivePDFVisualFormat() : 'default');
-  try { _reflowAfterStyleChange(); } catch (err) { console.warn('[style reflow]', err); }   // new fonts may need more room
+
+  // Final settle after diagram fix-ups may have grown SVG rects
+  _settleOverflowingPages();
+  normalizeAllEditorPagesToA4();
+  _removeTrailingEmptyPages();
+  _syncVirtualRender();
+
   if (typeof fitEditorPagesToScreen === 'function') fitEditorPagesToScreen();
   if (triggerSave) HISTORY.saveState();
   if (typeof TAB_MANAGER !== 'undefined' && TAB_MANAGER.activeId) {
@@ -1323,15 +1224,6 @@ async function _paginateDocumentHTMLCore(rawHtml, triggerSave = true) {
       }
     }
   }
-  // FIX: pagination already invalidated the PDF preview cache at the top
-  // of this function, but nothing ever re-generated the preview once the
-  // (now-final) pages were ready. If the PDF tab happened to already be
-  // open — e.g. content is created/regenerated while the PDF preview is
-  // visible — the iframe was left showing stale or blank content until
-  // something else (like a full page refresh) forced a regeneration.
-  // Refresh it here, the same way toggleDarkMode/choosePDFVisualFormat
-  // already do, whenever the PDF tab is the one currently on screen.
-  const _pdfViewAfterPaginate = document.getElementById('pdf-view-container');
   if (_isPdfViewVisible() && typeof generateLivePDFIframePreview === 'function') {
     generateLivePDFIframePreview();
   }
@@ -1340,22 +1232,12 @@ async function _paginateDocumentHTMLCore(rawHtml, triggerSave = true) {
 
 // ========================================================================
 // WORD-LIKE FLOW
-// ------------------------------------------------------------------------
-// A page is only a CONTAINER of fixed height; content flows through the pages like water:
-//  - every page is filled to the bottom: paragraphs, list items, table rows and boxed callouts
-//    break across pages instead of jumping to the next page as a whole block (no dead gaps)
-//  - a heading is never left alone at the bottom of a page (Word "keep with next")
-//  - when content is deleted / shortened, the content of the next page moves back UP into the room
-//  - a table / list / box that was split keeps one identity: header row repeated on each part,
-//    numbering of a split <ol> continues, and the parts are re-joined before every re-pagination
-// Switch a piece off with  WORD_FLOW.<name> = false
 // ========================================================================
 const WORD_FLOW = {
-  SPLIT_DESIGNED_BOXES: true,      // tinted/bordered callout boxes may break across pages (like a Word table cell)
+  SPLIT_DESIGNED_BOXES: true,
   KEEP_HEADING_WITH_NEXT: true,
   PULL_UP: true
 };
-// Small / visual units that stay in one piece (like an inline picture in Word).
 const _WF_ALWAYS_WHOLE = ['figure-pro', 'figure-frame', 'fc-wrapper', 'omr-sheet-page',
   'quiz-item', 'cq-item', 'math-final-answer', 'sol-label'];
 function _wfIsAlwaysWhole(node) {
@@ -1374,21 +1256,18 @@ function _wfFits(page) {
 }
 function _wfCleanClass(el) { if (el && !el.getAttribute('class')) el.removeAttribute('class'); }
 
-// Heading alone at the bottom of a page -> move it to the top of the next page.
 function _wfKeepWithNext(page) {
   if (!WORD_FLOW.KEEP_HEADING_WITH_NEXT) return false;
   const c = _wfContent(page);
-  if (c.length < 2) return false;                 // a page that holds only the heading: nothing better to do
+  if (c.length < 2) return false;
   const last = c[c.length - 1];
   if (!_wfIsHeading(last)) return false;
   let next = _nextEditorPage(page);
-  if (!next) return false;                        // last page of the document: nothing follows
+  if (!next) return false;
   next.insertBefore(last, next.firstChild);
   return true;
 }
 
-// Try to move ONE more piece from the start of the next page onto the free room of `page`.
-// Returns 'moved' | 'partial' (part moved, page is now full) | 'blocked' | 'none'.
 function _wfPullUp(page) {
   const next = _nextEditorPage(page);
   if (!next) return 'none';
@@ -1404,7 +1283,6 @@ function _wfPullUp(page) {
   const putBack = (n) => next.insertBefore(n, next.firstChild);
   const place = (n) => page.insertBefore(n, footer || null);
 
-  // a heading is only pulled up when the block after it can (at least partly) follow it
   if (_wfIsHeading(first) && WORD_FLOW.KEEP_HEADING_WITH_NEXT) {
     place(first);
     if (!_wfFits(page)) { putBack(first); return 'blocked'; }
@@ -1413,7 +1291,6 @@ function _wfPullUp(page) {
     return r;
   }
 
-  // 1) the two halves of a paragraph that was split earlier: join them again
   if (first.nodeType === 1 && first.classList.contains('split-tail') && last && last.nodeType === 1 &&
       last.classList.contains('split-head') && last.tagName === first.tagName) {
     while (first.firstChild) last.appendChild(first.firstChild);
@@ -1424,7 +1301,6 @@ function _wfPullUp(page) {
     return _wfSplitInto(page, next, last);
   }
 
-  // 2) continuation of a table / list / box split earlier: pull its rows up one by one
   if (first.nodeType === 1 && first.hasAttribute('data-split-cont') && last && last.nodeType === 1 &&
       last.tagName === first.tagName) {
     const isTable = first.tagName === 'TABLE';
@@ -1446,13 +1322,11 @@ function _wfPullUp(page) {
     }
   }
 
-  // 3) a whole block that fits
   place(first);
   if (_wfFits(page)) return 'moved';
   page.removeChild(first);
   putBack(first);
 
-  // 4) a paragraph: take as many lines as fit (>= 2 lines each side)
   if (first.nodeType === 1 && _isTextSplittableBlock(first)) {
     next.removeChild(first);
     return _wfSplitInto(page, next, first);
@@ -1460,7 +1334,6 @@ function _wfPullUp(page) {
   return 'blocked';
 }
 
-// Split `node` (detached) so its head fills `page` and its tail starts `next`.
 function _wfSplitInto(page, next, node) {
   const footer = _wfFooter(page);
   const probe = (head) => {
@@ -1483,7 +1356,6 @@ function _wfSplitInto(page, next, node) {
   return 'partial';
 }
 
-// Fill the free room at the bottom of `page` from the following pages.
 function _wfFillFromNext(page) {
   if (!WORD_FLOW.PULL_UP) return false;
   let guard = 0, r, any = false;
@@ -1496,7 +1368,6 @@ function _wfFillFromNext(page) {
   return any;
 }
 
-// After a fresh pagination: fix headings stranded at the bottom of a page.
 function _wfPostPaginate() {
   if (!docContainer || !WORD_FLOW.KEEP_HEADING_WITH_NEXT) return;
   let page = docContainer.querySelector('.doc-page-canvas');
@@ -1519,34 +1390,6 @@ function _wfPostPaginate() {
 // ===== CHUNKED PAGINATION FOR LONG DOCUMENTS =====
 const PAGINATION_CHUNK_SIZE = 60;
 
-// FIX: "PDF page gets cut off / text goes missing" bug.
-// Every top-level block (a <table>, a <ul>/<ol>, a long <blockquote>, etc.)
-// was previously always moved to a page WHOLE, never split — which is
-// correct and necessary for a normal paragraph or heading (so a page never
-// starts mid-sentence), but breaks down the moment a single block is
-// physically taller than one entire empty A4 page: a long table, a long
-// list, or a big block wrapper. In that case the old code still just
-// dropped the whole thing onto one page as-is (see the final unconditional
-// contentFits(currentPageElement, node) check was allowed to fail and the
-// block got appended anyway) — and because .doc-page-canvas has
-// `overflow: hidden`, everything past the page's fixed height was simply
-// invisible, both in the editor and in the exported PDF. This function
-// finds a safe place to split such an oversized block (table rows, list
-// items, or a wrapper's own block children) and spreads it across as many
-// pages as it actually needs.
-// FIX: "colored callout box gets sliced in half across a page break" bug.
-// Boxed/tinted panels — a solution card, a proof block, a definition/warning
-// callout, a figure frame, a quiz block, or any similar AI-authored div with
-// its own background + border/border-radius/box-shadow — read as ONE visual
-// unit (rounded corners, a colored background, a left rule). The generic
-// "DIV with more than one child is splittable" rule below used to treat
-// these exactly like a plain wrapper div and chop them wherever the page
-// ran out of room, leaving half the rounded box on one page and the rest
-// floating with no border/background on the next. This box carries both the
-// known predefined callout classes (.block-solution, .block-important, etc.)
-// and a heuristic for freeform inline-styled cards the AI writes on the fly
-// (background + border/radius, or any box-shadow), so both are recognized
-// and kept whole.
 const UNSPLITTABLE_BLOCK_CLASSES = [
   'block-example', 'block-definition', 'block-warning', 'block-important',
   'block-note', 'block-accent', 'block-solution', 'math-final-answer',
@@ -1566,9 +1409,6 @@ function _isDesignedBoxBlock(node) {
   const hasRadius = /border-radius\s*:\s*(?!0(?:px)?\s*(?:;|$))/i.test(style);
   const hasBorder = /\bborder(-left|-right|-top|-bottom)?\s*:\s*(?!none|0(?:px)?\s*(?:;|$))[^;]*\d/i.test(style);
   const hasTintedBg = /background(-color)?\s*:\s*(?!transparent|none|#fff(?:fff)?;|white;)/i.test(noSpace + ';');
-  // A "designed box" needs at least a background paired with a border or
-  // rounded corners, or an explicit shadow — plain text divs with only
-  // color/margin/font styling never match this and remain freely splittable.
   return hasShadow || (hasTintedBg && (hasBorder || hasRadius));
 }
 
@@ -1592,9 +1432,6 @@ function _getSplittableChildrenForOverflow(node) {
   return null;
 }
 
-// Appends `node` starting on `currentPageElement`, splitting it across as
-// many additional pages as needed if it (or a smaller piece of it) still
-// doesn't fit on a fresh, empty page. Returns the updated currentPageElement.
 function _appendPossiblyOversizedNode(node, currentPageElement, createdPages, contentFits, createNewPageElement) {
   const splitChildren = _getSplittableChildrenForOverflow(node);
   const renderMath = (el) => {
@@ -1602,20 +1439,15 @@ function _appendPossiblyOversizedNode(node, currentPageElement, createdPages, co
     if (typeof renderAllKatexVisuals === 'function') renderAllKatexVisuals(el);
   };
   if (!splitChildren) {
-    // A long paragraph is broken at a word boundary and continues on the next page(s).
     if (_isTextSplittableBlock(node)) {
       return _splitTextBlockAcrossPages(node, currentPageElement, createdPages, contentFits, createNewPageElement, renderMath);
     }
-    // Nothing safe to split on (a single image/equation/canvas taller than a page, etc.).
     const clone = node.cloneNode(true);
     currentPageElement.appendChild(clone);
     renderMath(clone);
     return currentPageElement;
   }
 
-  // A table split across pages repeats its header row(s) (thead rows, or rows made only of <th>),
-  // keeps its <colgroup> on every part and its <caption> on the first part, and keeps rows inside
-  // a real <tbody>/<thead> so stylesheet selectors still match.
   const isTable = (node.tagName || '').toUpperCase() === 'TABLE';
   const headerRows = isTable
     ? splitChildren.filter(r => (r.parentElement && r.parentElement.tagName === 'THEAD') ||
@@ -1630,10 +1462,10 @@ function _appendPossiblyOversizedNode(node, currentPageElement, createdPages, co
   function startWrapperOnCurrentPage() {
     const isFirst = firstWrapper;
     firstWrapper = false;
-    const w = node.cloneNode(false); // tag + attributes only
+    const w = node.cloneNode(false);
     if (!isFirst) {
-      w.setAttribute('data-split-cont', '1');            // re-joined with the previous part before re-pagination
-      if (isOl) w.setAttribute('start', String(olBase + placedItems));   // numbering continues
+      w.setAttribute('data-split-cont', '1');
+      if (isOl) w.setAttribute('start', String(olBase + placedItems));
     }
     currentPageElement.appendChild(w);
     let host = w;
@@ -1666,15 +1498,11 @@ function _appendPossiblyOversizedNode(node, currentPageElement, createdPages, co
     renderMath(childClone);
 
     if (!contentFits(currentPageElement)) {
-      // Is there anything else on this page besides our wrapper (and the footer)?
       const otherContent = Array.from(currentPageElement.childNodes).some(n => n !== cur.w &&
         (n.nodeType === 1 ? !(n.classList && n.classList.contains('page-footer-number')) : n.textContent.trim().length > 0));
-      // The piece overflows. Move it to a fresh page unless it is already the very first thing on an
-      // otherwise empty page (then nothing better can be done). This also covers the FIRST row, which
-      // used to be accepted without checking and got clipped at the bottom of the page.
       if (wrapperHasChild || otherContent) {
         cur.host.removeChild(childClone);
-        if (!wrapperHasChild) {            // wrapper holds only repeated header rows: drop it
+        if (!wrapperHasChild) {
           currentPageElement.removeChild(cur.w);
           firstWrapper = cur.isFirst;
         }
@@ -1691,12 +1519,8 @@ function _appendPossiblyOversizedNode(node, currentPageElement, createdPages, co
   return currentPageElement;
 }
 
-// ===== TEXT-LEVEL PAGE BREAKING (paragraphs flow across pages like in Word) =====
-// Before: a paragraph (or any block with no table-row/list-item/child parts) that did not fit on a
-// whole empty page was appended anyway and its lower part was silently clipped by the page's
-// overflow:hidden. Now such blocks are split at a word boundary: the part that fits stays, the rest
-// continues on the next page(s). Orphan/widow control keeps at least 2 lines on each side.
-const _TEXT_SPLIT_MIN_CHARS = 30;   // Word lets any multi-line paragraph break across pages (2-line widow/orphan control is in _chooseParagraphSplit)
+// ===== TEXT-LEVEL PAGE BREAKING =====
+const _TEXT_SPLIT_MIN_CHARS = 30;
 const _BLOCK_CHILD_TAGS = new Set(['P', 'DIV', 'UL', 'OL', 'LI', 'TABLE', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
   'PRE', 'BLOCKQUOTE', 'FIGURE', 'SECTION', 'ARTICLE', 'HR', 'SVG', 'CANVAS', 'DL', 'FORM']);
 
@@ -1712,12 +1536,10 @@ function _isTextSplittableBlock(node) {
   return (node.textContent || '').trim().length >= _TEXT_SPLIT_MIN_CHARS;
 }
 
-// Anything that can be broken into smaller parts (table rows, list items, child blocks, or text).
 function _canSplitBlock(node) {
   return !!_getSplittableChildrenForOverflow(node) || _isTextSplittableBlock(node);
 }
 
-// Word boundaries inside the block's own text (never inside rendered math / svg / non-editable bits).
 function _textBreakPoints(node) {
   const pts = [];
   let chars = 0;
@@ -1734,7 +1556,7 @@ function _textBreakPoints(node) {
     const re = /[ \t\r\n]+/g;
     let m;
     while ((m = re.exec(v))) {
-      const off = m.index + m[0].length;      // break AFTER the whitespace, so the tail starts with a word
+      const off = m.index + m[0].length;
       if (off > 0 && off < v.length) pts.push({ n: t, off, chars: chars + off });
     }
     chars += v.length;
@@ -1760,12 +1582,11 @@ function _splitTextBlockAt(node, pt, headOnly) {
   return { head, tail };
 }
 
-// probe(headEl) -> { fits, h, lh }  (h = rendered height, lh = line height, only meaningful when fits)
 function _chooseParagraphSplit(node, probe, hasOtherContent) {
   const { pts, total } = _textBreakPoints(node);
   if (!pts.length) return null;
   let lo = 0, hi = pts.length - 1, best = -1;
-  while (lo <= hi) {                       // biggest head that still fits (monotonic)
+  while (lo <= hi) {
     const mid = (lo + hi) >> 1;
     if (probe(_splitTextBlockAt(node, pts[mid], true).head).fits) { best = mid; lo = mid + 1; } else hi = mid - 1;
   }
@@ -1774,16 +1595,15 @@ function _chooseParagraphSplit(node, probe, hasOtherContent) {
   const info = probe(_splitTextBlockAt(node, pts[best], true).head);
   if (info.fits && info.h > 0 && info.lh > 0) {
     const headLines = Math.max(1, Math.round(info.h / info.lh));
-    const cpl = pts[best].chars / headLines;                       // characters per line (estimate)
+    const cpl = pts[best].chars / headLines;
     let strict = idx;
-    while (strict >= 0 && (total - pts[strict].chars) < 2 * cpl) strict--;   // widow: >= 2 lines left for the tail
-    if (strict >= 0 && (!hasOtherContent || pts[strict].chars / cpl >= 1.5)) idx = strict;   // orphan: >= 2 lines here
-    else if (hasOtherContent) return null;                                                  // can't do it nicely: move whole block
+    while (strict >= 0 && (total - pts[strict].chars) < 2 * cpl) strict--;
+    if (strict >= 0 && (!hasOtherContent || pts[strict].chars / cpl >= 1.5)) idx = strict;
+    else if (hasOtherContent) return null;
   }
   return _splitTextBlockAt(node, pts[idx], false);
 }
 
-// Core-pagination version: fills the current page, continues on new pages. Returns the last page.
 function _splitTextBlockAcrossPages(node, page, createdPages, contentFits, createNewPage, renderMath) {
   const hasOther = (p) => Array.from(p.childNodes).some(n => n.nodeType === 1
     ? !(n.classList && n.classList.contains('page-footer-number')) : n.textContent.trim().length > 0);
@@ -1792,7 +1612,7 @@ function _splitTextBlockAcrossPages(node, page, createdPages, contentFits, creat
   while (rest && guard++ < 500) {
     const probe = (head) => {
       page.appendChild(head);
-      const fits = contentFits(page);          // no extra node => measured from scratch, mirror reset
+      const fits = contentFits(page);
       let h = 0, lh = 0;
       if (fits) {
         h = head.offsetHeight;
@@ -1811,8 +1631,8 @@ function _splitTextBlockAcrossPages(node, page, createdPages, contentFits, creat
     }
     const split = _chooseParagraphSplit(rest, probe, hasOther(page));
     if (!split) {
-      if (hasOther(page)) { page = createNewPage(); createdPages.push(page); continue; }   // retry on an empty page
-      const c = rest.cloneNode(true);          // empty page and still no break possible: keep it whole
+      if (hasOther(page)) { page = createNewPage(); createdPages.push(page); continue; }
+      const c = rest.cloneNode(true);
       page.appendChild(c);
       renderMath(c);
       return page;
@@ -1826,7 +1646,6 @@ function _splitTextBlockAcrossPages(node, page, createdPages, contentFits, creat
   return page;
 }
 
-// Live-editor version (typing): the first overflowing block is cut so its first part stays on `page`.
 function _splitFirstOverflowParagraph(page, overflow) {
   const first = overflow[0];
   if (!_isTextSplittableBlock(first)) return;
@@ -1853,8 +1672,6 @@ function _splitFirstOverflowParagraph(page, overflow) {
   overflow[0] = split.tail;
 }
 
-// Re-joins pieces made by the splitter (head + tail) into one paragraph before the text is paginated
-// again, so the layout is recomputed from the real paragraph and no stray break remains.
 function _mergeSplitBlocks(root) {
   if (!root || typeof root.querySelectorAll !== 'function') return;
   const gone = new Set();
@@ -1869,7 +1686,7 @@ function _mergeSplitBlocks(root) {
     el.classList.remove('split-head', 'split-tail');
     if (!el.getAttribute('class')) el.removeAttribute('class');
   });
-  Array.from(root.querySelectorAll('[data-split-cont]')).forEach(el => {   // table / list / box parts
+  Array.from(root.querySelectorAll('[data-split-cont]')).forEach(el => {
     el.removeAttribute('data-split-cont');
     const prev = el.previousElementSibling;
     if (!prev || prev.tagName !== el.tagName) return;
@@ -1883,7 +1700,7 @@ function _mergeSplitBlocks(root) {
     el.remove();
   });
   Array.from(root.querySelectorAll('[data-split-repeat]')).forEach(el => el.removeAttribute('data-split-repeat'));
-  Array.from(root.querySelectorAll('.split-tail')).forEach(el => {   // orphaned tails (head was edited away)
+  Array.from(root.querySelectorAll('.split-tail')).forEach(el => {
     el.classList.remove('split-tail');
     if (!el.getAttribute('class')) el.removeAttribute('class');
   });
@@ -1902,10 +1719,6 @@ function _processPaginationNode(node, currentPageElement, createdPages, contentF
     return { currentPageElement, createdPages, handled: true };
   }
 
-  // Editor pagination must never split a paragraph block into a page of one line.
-  // If the whole element does not fit in the current page, move the full element
-  // to the next page as one semantic block. This is the required fix for the
-  // "paragraph ends, then next page begins with the last line or word only" bug.
   const hasContent = Array.from(currentPageElement.childNodes).some(n => {
     if (n.nodeType === Node.TEXT_NODE) return n.textContent.trim().length > 0;
     if (n.nodeType === Node.ELEMENT_NODE) {
@@ -1915,34 +1728,7 @@ function _processPaginationNode(node, currentPageElement, createdPages, contentF
     return false;
   });
 
-  // FIX: "empty space left on the page" bug. A table, list, or boxed block
-  // (.block-solution and similar bordered/boxed DIVs, blockquotes) has
-  // safely splittable pieces inside it — whole rows, list items, or child
-  // lines. Previously, the moment such a block didn't fit in the ROOM LEFT
-  // on the current page — even though it would fit easily on a fresh page
-  // on its own — it was moved WHOLE to a brand new page. That stranded
-  // whatever room was left on the current page as dead blank space, and
-  // disconnected the block from the text that came right before it. Now,
-  // whenever the current page already has content and the block has
-  // splittable pieces, it fills the remaining room with as much of itself
-  // as fits — continuing immediately after the preceding text, without
-  // breaking a row, item, or the block's own design apart — and only spills
-  // whatever's left onto as many further pages as it needs. FIGURE (and any
-  // other block _getSplittableChildrenForOverflow doesn't recognize) never
-  // takes this path, so it keeps moving to a fresh page as one untouched
-  // whole block, since a figure's visual layout matters more than filling
-  // every last bit of space.
   if (hasContent && !contentFits(currentPageElement, node)) {
-    // FIX: "table split across two pages just to fill leftover room" bug.
-    // The row-splitting path below exists so a block taller than a whole
-    // empty page doesn't get silently clipped — but it was also firing
-    // whenever a TABLE simply didn't fit in the ROOM LEFT on the current
-    // page, even though the whole table fits easily on a fresh page. That
-    // produced a table cut in half with its header row repeated on the
-    // second half. A table must always move to a fresh page as one whole
-    // block here; it only gets split as a last resort a few lines below,
-    // when it still doesn't fit on a completely empty page (so a
-    // genuinely oversized table is still never clipped/lost).
     const tag = (node.tagName || '').toUpperCase();
     const isTable = tag === 'TABLE';
     const splitChildren = _getSplittableChildrenForOverflow(node);
@@ -1951,8 +1737,6 @@ function _processPaginationNode(node, currentPageElement, createdPages, contentF
       return { currentPageElement, createdPages, handled: true };
     }
     if (_isTextSplittableBlock(node)) {
-      // Fill the rest of this page with the first lines (>= 2) and continue on the next page (>= 2 lines),
-      // instead of leaving a big blank gap at the bottom.
       const _renderMathNow = (el) => {
         if (typeof processMathEquationsInContainer === 'function') processMathEquationsInContainer(el);
         if (typeof renderAllKatexVisuals === 'function') renderAllKatexVisuals(el);
@@ -1965,9 +1749,6 @@ function _processPaginationNode(node, currentPageElement, createdPages, contentF
   }
 
   if (!contentFits(currentPageElement, node)) {
-    // Even a completely fresh, empty page can't hold this block whole —
-    // it's genuinely taller than one A4 page. Split it instead of
-    // silently clipping it (see _appendPossiblyOversizedNode above).
     currentPageElement = _appendPossiblyOversizedNode(node, currentPageElement, createdPages, contentFits, createNewPageElement);
     return { currentPageElement, createdPages, handled: true };
   }
@@ -1982,7 +1763,6 @@ function _processPaginationNode(node, currentPageElement, createdPages, contentF
 
 async function paginateDocumentCanvasAsync(rawHtml, triggerSave = true) {
   if (!docContainer) return;
-  // Same blank-until-refresh safety net as setDocumentHTMLAndPaginate.
   const token = ++_htmlSetToken;
   _renderInFlight++;
   try {
@@ -1992,7 +1772,7 @@ async function paginateDocumentCanvasAsync(rawHtml, triggerSave = true) {
       console.error('[paginateDocumentCanvasAsync] pagination failed, showing plain fallback:', err);
       _renderDocumentHTMLPlainFallback(rawHtml, triggerSave);
       await new Promise(resolve => setTimeout(resolve, 400));
-      if (token !== _htmlSetToken) return;   // something newer was rendered/typed: don't overwrite it
+      if (token !== _htmlSetToken) return;
       try {
         await _paginateDocumentCanvasAsyncCore(rawHtml, triggerSave);
       } catch (retryErr) {
@@ -2010,35 +1790,23 @@ async function paginateDocumentCanvasAsync(rawHtml, triggerSave = true) {
 async function _paginateDocumentCanvasAsyncCore(rawHtml, triggerSave = true) {
   const scratch = { els: [] };
   try { return await _paginateDocumentCanvasAsyncCoreImpl(rawHtml, triggerSave, scratch); }
-  finally { scratch.els.forEach(el => { try { el.remove(); } catch (_) {} }); } // the measuring elements used to leak into <body> on every run
+  finally { scratch.els.forEach(el => { try { el.remove(); } catch (_) {} }); }
 }
 
 async function _paginateDocumentCanvasAsyncCoreImpl(rawHtml, triggerSave, scratch) {
   if (typeof invalidatePDFPreviewCache === 'function') invalidatePDFPreviewCache();
   if (!docContainer) return;
   const runId = ++_paginateRunId;
-  document.documentElement.classList.remove('perf-cv-on');   // exact heights while paginating
-  window.__mathLastOverflowSig = null; // new content: forget the previous overflow/reflow attempt
+  document.documentElement.classList.remove('perf-cv-on');
+  window.__mathLastOverflowSig = null;
   const savedScrollPos = docContainer.scrollTop;
   const markerId = _saveCaretOffset();
   docContainer.innerHTML = '';
   const tempSource = document.createElement('div');
   tempSource.innerHTML = _prepareHTML(rawHtml);
   if (typeof enforceDiagramVisualStyles === 'function') enforceDiagramVisualStyles(tempSource);
-  _applyFigureLayout(tempSource);   // small single figure -> right + text beside it; otherwise centered medium
-  // FIX: same fix as in setDocumentHTMLAndPaginate — render KaTeX before
-  // splitting into pages so the fit-measurement below uses the real,
-  // final (rendered) height instead of the smaller unrendered markup.
-  // Otherwise a block that measured as "fits" grows after KaTeX renders
-  // and overlaps the page-footer-number underneath it.
+  _applyFigureLayout(tempSource);
   if (!(await _perfPreRenderMath(tempSource, runId))) return;
-  // FIX: same "table row bumped to a new page, leaving a big empty gap"
-  // bug as in _paginateDocumentHTMLCore — see the matching comment there.
-  // This chunked/streamed pagination path renders KaTeX just like the
-  // other one, so it needs the same wait for the real @font-face files
-  // (not just the katex JS library) before contentFits() starts
-  // measuring, or math-heavy rows can be mismeasured against fallback-
-  // font heights.
   if (typeof ensureKatexDelimiterFonts === 'function') {
     try { await ensureKatexDelimiterFonts(); } catch (_) { /* best effort */ }
   }
@@ -2060,7 +1828,6 @@ async function _paginateDocumentCanvasAsyncCoreImpl(rawHtml, triggerSave, scratc
   const createdPages = [currentPage];
   const topLevelNodes = flattenContentTopLevelNodes(tempSource);
 
-  // Private measuring page (so live typing never collides with this run); removed again when the run ends.
   const pageSnapshot = document.createElement('div');
   pageSnapshot.className = 'doc-page-canvas pdf-export-measure-page';
   pageSnapshot.style.cssText = measurePage.style.cssText;
@@ -2083,15 +1850,6 @@ async function _paginateDocumentCanvasAsyncCoreImpl(rawHtml, triggerSave, scratc
 
   const useChunking = topLevelNodes.length > PERF.BIG_DOC_NODES;
 
-  // FIX: "scroll jumps back up while I'm scrolling" bug. This chunked path
-  // is async — it yields with `await` between chunks for long documents
-  // (exactly the case a PDF gets generated from). Yielding hands control
-  // back to the browser, so if the person scrolls the document while a
-  // chunk boundary is paused, `docContainer.scrollTop = savedScrollPos`
-  // below used to unconditionally snap them back to wherever they were
-  // BEFORE this whole repagination started, fighting their scroll input.
-  // Track real user scroll intent (wheel/touch/keyboard) during this
-  // window and only restore the saved position if they never touched it.
   let userScrolledDuringPagination = false;
   const _markUserScrollIntent = () => { userScrolledDuringPagination = true; };
   docContainer.addEventListener('wheel', _markUserScrollIntent, { passive: true });
@@ -2111,8 +1869,13 @@ async function _paginateDocumentCanvasAsyncCoreImpl(rawHtml, triggerSave, scratc
   docContainer.removeEventListener('touchmove', _markUserScrollIntent);
   docContainer.removeEventListener('keydown', _markUserScrollIntent);
 
+  // PAGE-BOUNCE FIX (a): same consolidation as in the sync path.
+  if (typeof forceRenderAllEquations === 'function') forceRenderAllEquations();
+  await new Promise(r => setTimeout(r, 30));
+  if (runId !== _paginateRunId) return;
+
   _wfPostPaginate();
-  _settleOverflowingPages();      // fix any page whose text was clipped
+  _settleOverflowingPages();
   normalizeAllEditorPagesToA4();
   _syncVirtualRender();
   if (!userScrolledDuringPagination) {
@@ -2121,12 +1884,18 @@ async function _paginateDocumentCanvasAsyncCoreImpl(rawHtml, triggerSave, scratc
   _restoreCaretOffset(markerId);
 
   _removeTrailingEmptyPages();
+  _fillBlankSolePageWithCoverPlaceholder();
 
-  if (typeof forceRenderAllEquations === 'function') forceRenderAllEquations();
   if (typeof scheduleEquationRecovery === 'function') scheduleEquationRecovery(180);
   if (!(await _perfPostProcessPages(runId))) return;
   if (typeof applyPDFVisualFormat === 'function') applyPDFVisualFormat(typeof getActivePDFVisualFormat === 'function' ? getActivePDFVisualFormat() : 'default');
-  try { _reflowAfterStyleChange(); } catch (err) { console.warn('[style reflow]', err); }   // new fonts may need more room
+
+  // Final settle after diagram fix-ups
+  _settleOverflowingPages();
+  normalizeAllEditorPagesToA4();
+  _removeTrailingEmptyPages();
+  _syncVirtualRender();
+
   if (typeof fitEditorPagesToScreen === 'function') fitEditorPagesToScreen();
   if (triggerSave) HISTORY.saveState();
   if (typeof TAB_MANAGER !== 'undefined' && TAB_MANAGER.activeId) {
@@ -2140,14 +1909,6 @@ async function _paginateDocumentCanvasAsyncCoreImpl(rawHtml, triggerSave, scratc
       }
     }
   }
-  // FIX: same fix as in setDocumentHTMLAndPaginate — this is the chunked
-  // path used for long/math-heavy documents, where pagination itself runs
-  // across several event-loop ticks (see the `await` above). If the PDF
-  // tab is open and a preview got generated from an in-progress chunk,
-  // nothing ever told it to re-render once chunking actually finished —
-  // that's the "PDF looks blank/incomplete until I refresh the page" bug.
-  // Refresh the live preview now that pagination is genuinely done.
-  const _pdfViewAfterPaginateAsync = document.getElementById('pdf-view-container');
   if (_isPdfViewVisible() && typeof generateLivePDFIframePreview === 'function') {
     generateLivePDFIframePreview();
   }
@@ -2155,11 +1916,6 @@ async function _paginateDocumentCanvasAsyncCoreImpl(rawHtml, triggerSave, scratc
 
 // ===== PAGE EVENT HANDLERS =====
 
-// ---- WORD-NATIVE: caret navigation across the page border ----
-// Every page is its own contenteditable, so the browser can never move the caret from one page to the
-// next. These helpers make Arrow Up/Down/Right and Delete behave as if the document were one piece.
-
-// Best-effort bounding rect of a (collapsed) range; collapsed ranges at element boundaries have none.
 function _pgRectOfRange(range) {
   if (!range) return null;
   const list = range.getClientRects();
@@ -2186,9 +1942,6 @@ function _pgCaretFromPoint(x, y) {
   return null;
 }
 
-// True when there is no further text line above (dir -1) / below (dir +1) the caret inside this page.
-// Uses Selection.modify to ask the browser itself, then restores the selection untouched.
-// Returns null when it cannot tell.
 function _pgOnEdgeLine(sel, dir) {
   try {
     if (!sel || !sel.rangeCount || typeof sel.modify !== 'function') return null;
@@ -2202,11 +1955,10 @@ function _pgOnEdgeLine(sel, dir) {
     if (!rect0 || !rect1) return null;
     const h = Math.max(rect0.height || 0, 8);
     const moved = dir < 0 ? (rect0.top - rect1.top) : (rect1.top - rect0.top);
-    return moved < h * 0.5;   // the caret did not reach another line
+    return moved < h * 0.5;
   } catch (_) { return null; }
 }
 
-// True when nothing (text or media) follows the caret on this page.
 function _pgCaretAtPageEnd(page, range) {
   try {
     const footer = page.querySelector(':scope > .page-footer-number');
@@ -2219,8 +1971,6 @@ function _pgCaretAtPageEnd(page, range) {
   } catch (_) { return false; }
 }
 
-// Put the caret at the start/end of `page`. With `x` it lands on the first/last line at that
-// horizontal position (so Arrow Up/Down keep their column like in Word).
 function _pgPlaceCaret(page, where, x) {
   if (!page) return;
   page.focus();
@@ -2256,15 +2006,13 @@ function _pgPlaceCaret(page, where, x) {
 
 function handlePageKeydown(e) {
   if (!docContainer) return;
-  if (e.isComposing) return;   // never interfere with an IME composition
+  if (e.isComposing) return;
   const page = e.currentTarget;
   const selection = window.getSelection();
   if (!selection.rangeCount) return;
   const pages = Array.from(docContainer.querySelectorAll('.doc-page-canvas'));
   const pageIndex = pages.indexOf(page);
 
-  // Backspace / ArrowLeft at the very start of a page -> end of the previous page.
-  // (ArrowUp is handled below by line position; it only stays here when Selection.modify is missing.)
   const _upFallback = e.key === 'ArrowUp' && typeof selection.modify !== 'function';
   if ((e.key === 'Backspace' || e.key === 'ArrowLeft' || _upFallback) && !e.shiftKey && selection.focusOffset === 0) {
     const range = selection.getRangeAt(0);
@@ -2292,12 +2040,10 @@ function handlePageKeydown(e) {
     }
   }
 
-  // WORD-NATIVE: plain (unmodified) navigation keys with a collapsed caret only.
   if (e.shiftKey || e.ctrlKey || e.metaKey || e.altKey || !selection.isCollapsed) return;
   if (pageIndex < 0) return;
   const cur = selection.getRangeAt(0);
 
-  // Arrow Up / Down on the first / last line of a page -> previous / next page, same column.
   if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
     const down = e.key === 'ArrowDown';
     const neighbour = pages[pageIndex + (down ? 1 : -1)];
@@ -2311,8 +2057,6 @@ function handlePageKeydown(e) {
     return;
   }
 
-  // Arrow Right / Delete at the very end of a page -> start of the next page
-  // (Delete then removes the first character there, like deleting forward in Word).
   if (e.key === 'ArrowRight' || e.key === 'Delete') {
     const nextPage = pages[pageIndex + 1];
     if (!nextPage) return;
@@ -2329,15 +2073,11 @@ function handlePageKeydown(e) {
 
 function handleCanvasInput(event) {
   if (event && event.currentTarget && event.currentTarget.classList) _dirtyPages.add(event.currentTarget);
-  _htmlSetToken++;   // typing cancels any delayed fallback re-render of older HTML
+  _htmlSetToken++;
   if (typeof invalidatePDFPreviewCache === 'function') invalidatePDFPreviewCache();
-  debouncedAutoSaveAndPaginate();   // also schedules the reflow
+  debouncedAutoSaveAndPaginate();
 }
 
-// True when the page has text that still needs math processing ($ or \\ outside already-rendered
-// equations) or an equation that is not rendered correctly. page.textContent can NOT be used for this:
-// rendered KaTeX keeps its TeX source (with backslashes) in a hidden annotation, so every page that
-// contained any equation looked like it "needed work" on every blur.
 function _pageNeedsMathPass(page) {
   const spans = page.querySelectorAll('.katex-eq');
   if (typeof isKatexSpanBroken === 'function') {
@@ -2370,8 +2110,6 @@ function _nextEditorPage(page) {
   return n;
 }
 
-// Overflowing blocks go to the START of the next page (which is then re-checked) instead of always
-// creating a new page, so typing no longer leaves a trail of nearly empty pages.
 function _moveOverflowToNextPage(page, overflow) {
   let target = _nextEditorPage(page);
   if (!target) target = createNewPageAfter(page);
@@ -2390,7 +2128,6 @@ function reflowDocument(dirtyList) {
   if (!docContainer || _slicingDepth > 0) return;
   const pages = Array.from(docContainer.querySelectorAll('.doc-page-canvas'));
   if (pages.length === 0) return;
-  // Big document + we know which page(s) were edited: re-flow only those (not all pages).
   if (Array.isArray(dirtyList) && dirtyList.length && pages.length > PERF.LOCAL_REFLOW_MIN_PAGES) {
     _reflowDirtyPagesOnly(dirtyList);
     return;
@@ -2404,36 +2141,32 @@ function reflowDocument(dirtyList) {
     if ((page.scrollHeight / zoomFactor) > EDITOR_A4_HEIGHT + 1) {
       const overflow = getOverflowNodes(page);
       if (overflow.length > 0) {
-        // A table/list/boxed block with splittable parts is handed to the split-aware paginator.
         if (overflow.length === 1 && _getSplittableChildrenForOverflow(overflow[0])) {
           _putBackBeforeFooter(page, overflow[0]);
           restoreCaretPosition(markerId);
           if (typeof paginateDocumentCanvas === 'function') paginateDocumentCanvas();
           return;
         }
-        _splitFirstOverflowParagraph(page, overflow);   // keep as many lines as fit on this page
+        _splitFirstOverflowParagraph(page, overflow);
         _moveOverflowToNextPage(page, overflow);
-        continue;   // re-check this page, then the page that received the overflow
+        continue;
       }
     }
-    // Word behaviour: free room at the bottom of the page is refilled from the next page(s).
     if (_wfFits(page)) _wfFillFromNext(page);
     if (_wfKeepWithNext(page)) {
       const nxt = _nextEditorPage(page);
-      if (nxt && !_wfFits(nxt)) { page = nxt; continue; }   // the heading may overflow the next page
+      if (nxt && !_wfFits(nxt)) { page = nxt; continue; }
     }
     page = _nextEditorPage(page);
   }
   normalizeAllEditorPagesToA4();
   _removeTrailingEmptyPages();
   restoreCaretPosition(markerId);
-  // While typing, the pending autosave saves the final state once; saving here too doubled the work.
   if (!_autoSavePending) HISTORY.saveState();
   if (typeof forceRenderAllEquations === 'function') forceRenderAllEquations();
   if (typeof scheduleEquationRecovery === 'function') scheduleEquationRecovery(180);
 }
 
-// Typing in a big document: only the page being edited (and any page it spills onto) is measured.
 function _reflowDirtyPagesOnly(dirtyList) {
   const dirty = Array.from(new Set(dirtyList)).filter(p => p && p.isConnected);
   if (!dirty.length) return;
@@ -2460,9 +2193,8 @@ function _reflowDirtyPagesOnly(dirtyList) {
       const target = _moveOverflowToNextPage(page, overflow);
       if (!hadNext) createdAny = true;
       touched.add(target);
-      if (!queue.includes(target)) queue.push(target);   // the receiving page is checked too
+      if (!queue.includes(target)) queue.push(target);
     }
-    // Word behaviour: refill free room from the next page; the page that gave content is checked next.
     if (page.isConnected && _wfFits(page)) {
       const nxt0 = _nextEditorPage(page);
       if (_wfFillFromNext(page) && nxt0 && nxt0.isConnected) {
@@ -2477,9 +2209,7 @@ function _reflowDirtyPagesOnly(dirtyList) {
   }
   touched.forEach(p => {
     resetPageToA4(p);
-    if (p.scrollHeight > EDITOR_A4_HEIGHT + 1) tightenPageContentToA4(p);
   });
-  // Pages the edit may have emptied (and the last page) — not every page of the document.
   let removed = 0;
   const candidates = Array.from(touched).concat(docContainer.lastElementChild ? [docContainer.lastElementChild] : []);
   new Set(candidates).forEach(p => {
@@ -2488,7 +2218,10 @@ function _reflowDirtyPagesOnly(dirtyList) {
     if (!pageHasContent(p) && !_pageIsActive(p)) { p.remove(); removed++; }
   });
   if (createdAny || removed) updatePageFooters();
-  if (removed && typeof displayToastNotification === 'function') displayToastNotification(`🧹 Removed ${removed} empty page(s)`);
+  if (removed && typeof displayToastNotification === 'function' && Date.now() - _lastEmptyRemovalToastAt > 500) {
+    displayToastNotification(`🧹 Removed ${removed} empty page(s)`);
+    _lastEmptyRemovalToastAt = Date.now();
+  }
   restoreCaretPosition(markerId);
   if (!_autoSavePending) HISTORY.saveState();
   touched.forEach(p => {
@@ -2498,9 +2231,6 @@ function _reflowDirtyPagesOnly(dirtyList) {
   });
 }
 
-// Loose text / inline nodes sitting directly inside a page (typed into a brand-new empty page, or
-// pasted) cannot be split by the paginator, so a long run of them used to make the page grow taller
-// instead of flowing to the next page. Wrap each such run into one <div> block first.
 const _LOOSE_INLINE_TAGS = new Set(['SPAN', 'B', 'STRONG', 'I', 'EM', 'U', 'A', 'SMALL', 'SUB', 'SUP', 'CODE', 'BR', 'FONT', 'MARK', 'S', 'STRIKE']);
 function _wrapLooseInlineRuns(page) {
   if (!page) return;
@@ -2521,13 +2251,9 @@ function _wrapLooseInlineRuns(page) {
   flush(run);
 }
 
-// Takes the blocks that do not fit off the END of the page and returns them (already detached).
-// IMPORTANT: it measures the REAL page, not the hidden measuring copy. The copy does not carry the
-// page's own classes (pdf-format-* fonts, text-format-* sizes) so it could "fit" while the real page
-// did not; nothing was moved, and the page then grew taller than A4 instead of splitting.
 function getOverflowNodes(page) {
   const zoom = parseFloat(page.style.zoom) || 1;
-  const fits = () => (page.scrollHeight / zoom) <= EDITOR_A4_HEIGHT + 1;   // same tolerance as contentFits()
+  const fits = () => (page.scrollHeight / zoom) <= EDITOR_A4_HEIGHT + 1;
   if (fits()) return [];
 
   _wrapLooseInlineRuns(page);
@@ -2541,8 +2267,6 @@ function getOverflowNodes(page) {
     overflow.unshift(children[i]);
   }
 
-  // If even the first block alone is too tall and cannot be split, leave it where it is (moving it
-  // would only leave an empty page behind and push the same problem onto the next page).
   if (overflow.length > 0 && overflow.length === children.length && !_canSplitBlock(overflow[0])) {
     page.insertBefore(overflow.shift(), page.firstChild);
   }
@@ -2554,9 +2278,6 @@ function getOverflowNodes(page) {
   if (!document.head || document.getElementById('tight-page-styles')) return;
   const st = document.createElement('style');
   st.id = 'tight-page-styles';
-  // Tightening is done with page-level CSS (attribute + variable on the page itself) instead of
-  // inline styles on the user's elements, so it is never saved into the document and is fully
-  // undone by resetPageToA4() when the content shrinks again.
   st.textContent = `
     .doc-page-canvas[data-tight~="media"] img,
     .doc-page-canvas[data-tight~="media"] canvas { max-height: var(--tight-media-max, none) !important; width: auto !important; }
@@ -2570,24 +2291,46 @@ function getOverflowNodes(page) {
   document.head.appendChild(st);
 })();
 
+// PAGE-BOUNCE FIX (b): resetPageToA4 now owns the whole sizing decision (A4 vs oversized).
+// It also detects when the page can't fit even after media scaling and applies the oversized state
+// immediately, so successive layout passes see the SAME final state instead of flipping the page
+// between "A4 fixed height" and "auto height oversized" on each pass.
 function resetPageToA4(page) {
-  if (!page) return;
+  if (!page) return false;
+
+  // Try the A4 fixed size first.
   page.style.width = EDITOR_A4_WIDTH + 'px';
   page.style.height = EDITOR_A4_HEIGHT + 'px';
   page.style.minHeight = EDITOR_A4_HEIGHT + 'px';
   page.style.maxHeight = EDITOR_A4_HEIGHT + 'px';
   page.style.overflow = 'hidden';
-  delete page.dataset.oversized;
   page.style.zoom = '';
-  // undo any previous tightening
   page.style.fontSize = '';
   page.style.lineHeight = '';
   page.style.removeProperty('--tight-media-max');
   page.removeAttribute('data-tight');
+
+  if (page.scrollHeight <= EDITOR_A4_HEIGHT + 1) {
+    delete page.dataset.oversized;
+    return true;
+  }
+
+  // Try scaling media only (never font-size/line-height — see WORD-NATIVE patch).
+  for (const scale of [1, 0.85, 0.7, 0.55]) {
+    page.style.setProperty('--tight-media-max', Math.max(180, Math.floor(EDITOR_A4_HEIGHT * 0.72 * scale)) + 'px');
+    page.setAttribute('data-tight', 'media');
+    if (page.scrollHeight <= EDITOR_A4_HEIGHT + 1) {
+      delete page.dataset.oversized;
+      return true;
+    }
+  }
+
+  // Still too tall: show in full (oversized) and KEEP that state so the next pass is a no-op.
+  page.dataset.oversized = 'true';
+  _applyOversizedBox(page);
+  return false;
 }
 
-// WORD-NATIVE: an oversized page (one block that cannot be split) is shown IN FULL, growing taller than
-// A4, instead of being silently clipped by overflow:hidden. Word never hides content either.
 function _applyOversizedBox(page) {
   if (!page) return;
   page.style.height = 'auto';
@@ -2598,36 +2341,13 @@ function _applyOversizedBox(page) {
 
 function tightenPageContentToA4(page) {
   if (!page) return false;
-  resetPageToA4(page);
-  const footer = page.querySelector('.page-footer-number');
-  const contentNodes = Array.from(page.childNodes).filter(n => n !== footer);
-  if (!contentNodes.length) return true;
-  if (page.scrollHeight <= EDITOR_A4_HEIGHT + 1) return true;
-
-  // WORD-NATIVE: the old version shrank font-size / line-height / table text step by step until the
-  // page fitted, so pages of one document ended up with different text sizes. Word never does that.
-  // Only pictures / figures are allowed to be scaled down; text keeps its size and flows to the next
-  // page through the normal pagination (see WORD-LIKE FLOW).
-  for (const scale of [1, 0.85, 0.7, 0.55]) {
-    page.style.setProperty('--tight-media-max', Math.max(180, Math.floor(EDITOR_A4_HEIGHT * 0.72 * scale)) + 'px');
-    page.setAttribute('data-tight', 'media');
-    if (page.scrollHeight <= EDITOR_A4_HEIGHT + 1) {
-      delete page.dataset.oversized;
-      return true;
-    }
-  }
-  page.dataset.oversized = 'true';
-  _applyOversizedBox(page);
-  return false;
+  return resetPageToA4(page);
 }
 
 function normalizeAllEditorPagesToA4() {
   if (!docContainer) return;
   const pages = Array.from(docContainer.querySelectorAll('.doc-page-canvas'));
-  // Write all, then read all (the old loop alternated write/read per page = one forced layout per page).
   pages.forEach(resetPageToA4);
-  const tooTall = pages.filter(page => page.scrollHeight > EDITOR_A4_HEIGHT + 1);
-  tooTall.forEach(tightenPageContentToA4);
   updatePageFooters();
 }
 
@@ -2656,7 +2376,6 @@ function updatePageFooters() {
       page.appendChild(footer);
     }
     const _footerText = `Page ${index + 1} of ${pages.length}`;
-    // Re-writing identical text still replaces the text node (a DOM mutation that wakes the observers).
     if (footer.textContent !== _footerText) footer.textContent = _footerText;
   });
   if (typeof fitEditorPagesToScreen === 'function') fitEditorPagesToScreen();
@@ -2675,18 +2394,15 @@ function scheduleFitEditor() {
 let _lastFitSig = '';
 function fitEditorPagesToScreen() {
   if (!docContainer) return;
-  // Many code paths call this (view switch x3, resize, ResizeObserver,
-  // MutationObserver...). Re-writing identical styles is wasted work on a phone
-  // and re-running it mid-scroll caused visible shaking, so bail out when the
-  // width, page count and mode are unchanged since the last real fit.
+  // PAGE-BOUNCE FIX (c): the signature uses getBoundingClientRect().width (unaffected by a
+  // scrollbar appearing/disappearing when scrollbar-gutter:stable is supported) and rounds to a
+  // 4-px grid, so sub-pixel jitter and old browsers without scrollbar-gutter still behave.
   const _pc = docContainer.querySelectorAll('.doc-page-canvas').length;
-  const _sig = [docContainer.clientWidth, _pc, window.innerWidth <= 850 ? 'm' : 'd'].join('|');
+  const _rawW = docContainer.getBoundingClientRect().width || docContainer.clientWidth || 0;
+  const _stableW = Math.round(_rawW / 4) * 4;
+  const _sig = [_stableW, _pc, window.innerWidth <= 850 ? 'm' : 'd'].join('|');
   const pages = Array.from(docContainer.querySelectorAll('.doc-page-canvas'));
   if (!pages.length) return;
-  // Nothing to do when the width/page count/mode are unchanged AND every page was already fitted for
-  // this exact signature. (The old check looked at style.transform, which is always '' on desktop,
-  // so on desktop it never skipped and re-wrote every page's styles on each call.) A page created
-  // by a new pagination has no mark yet, so it is always fitted.
   if (_sig === _lastFitSig && pages.every(p => p.__fitSig === _sig)) return;
   _lastFitSig = _sig;
 
@@ -2698,7 +2414,7 @@ function fitEditorPagesToScreen() {
       p.style.transform = '';
       p.style.transformOrigin = '';
       p.style.margin = '';
-      p.style.marginBottom = '12px';   // WORD-NATIVE: was 30px (Word's gap between sheets is ~10-12px)
+      p.style.marginBottom = '12px';
       p.style.marginLeft = 'auto';
       p.style.marginRight = 'auto';
       p.style.width = EDITOR_A4_WIDTH + 'px';
@@ -2708,7 +2424,7 @@ function fitEditorPagesToScreen() {
       p.style.maxWidth = '';
       p.style.marginTop = '';
       p.style.boxSizing = '';
-      if (p.dataset.oversized === 'true') _applyOversizedBox(p);   // WORD-NATIVE: never clip content
+      if (p.dataset.oversized === 'true') _applyOversizedBox(p);
     });
     docContainer.style.overflowX = '';
     docContainer.style.width = '';
@@ -2723,21 +2439,17 @@ function fitEditorPagesToScreen() {
   docContainer.style.overflowX = 'hidden';
   docContainer.style.width = '100%';
 
-  // Use the container's CONTENT width (client width minus its padding) and
-  // never fit while it is hidden (width 0): a hidden-measure fallback made the
-  // first fit differ from later ones, so the page visibly jumped on entry.
   const _cs = getComputedStyle(docContainer);
   const _padX = (parseFloat(_cs.paddingLeft) || 0) + (parseFloat(_cs.paddingRight) || 0);
   if (!docContainer.clientWidth) return;
   const containerWidth = Math.max(1, docContainer.clientWidth - _padX);
   const available = Math.max(1, containerWidth - 4);
-  // FIX: the old 0.48 floor made the page 381px wide, wider than a 351px phone (clipped on the right). Always fit the real width.
   const scale = Math.round(Math.min(1, Math.max(0.2, available / EDITOR_A4_WIDTH)) * 1000) / 1000;
 
   const scaledW = EDITOR_A4_WIDTH * scale;
   const scaledH = EDITOR_A4_HEIGHT * scale;
   const offsetX = Math.max(0, Math.round((containerWidth - scaledW) / 2));
-  const gap = Math.max(8, Math.round(12 * scale));   // WORD-NATIVE: was max(12, 16*scale)
+  const gap = Math.max(8, Math.round(12 * scale));
 
   const marginRightComp = Math.round(EDITOR_A4_WIDTH * (scale - 1));
   const marginBottomComp = Math.round(EDITOR_A4_HEIGHT * (scale - 1) + gap);
@@ -2756,7 +2468,7 @@ function fitEditorPagesToScreen() {
     p.style.marginLeft = offsetX + 'px';
     p.style.marginRight = marginRightComp + 'px';
     p.style.marginBottom = marginBottomComp + 'px';
-    if (p.dataset.oversized === 'true') _applyOversizedBox(p);   // WORD-NATIVE: never clip content
+    if (p.dataset.oversized === 'true') _applyOversizedBox(p);
   });
   docContainer.style.setProperty('--editor-page-scale', String(scale));
   pages.forEach(p => { p.__fitSig = _sig; });
@@ -2782,13 +2494,6 @@ if (!window.__editorFitResizeBound) {
       const w = Math.round((entries[0] && entries[0].contentRect && entries[0].contentRect.width) || 0);
       if (w > 0 && w !== _lastObservedW) {
         _lastObservedW = w;
-        // FIX (mobile shake / jump on entry): when the Editor panel goes from
-        // display:none to visible, the pages first paint at full A4 width
-        // (794px) and only got scaled ~80ms later by the debounced fit, so
-        // the page visibly jumped/wobbled on entry. ResizeObserver callbacks
-        // run after layout but BEFORE paint, so fitting right here means the
-        // first frame the person sees is already the correctly scaled page.
-        // (fitEditorPagesToScreen bails out cheaply when nothing changed.)
         clearTimeout(_fitEditorTimer);
         try { fitEditorPagesToScreen(); } catch (_) {}
       }
@@ -2797,9 +2502,26 @@ if (!window.__editorFitResizeBound) {
     if (docContainer.parentElement) ro.observe(docContainer.parentElement);
   }
 
+  // PAGE-BOUNCE FIX (e): only page add/remove (direct children of docContainer) triggers a fit.
+  // The old observer watched subtree:true, so every KaTeX node swap, footer text change, caret
+  // marker, split-head/split-tail move, etc., fired scheduleFitEditor — which re-scaled every
+  // page (visible bounce) even though only content had changed, not the page count.
   if (docContainer && typeof MutationObserver === 'function') {
-    const mo = new MutationObserver(() => scheduleFitEditor());
-    mo.observe(docContainer, { childList: true, subtree: true });
+    const mo = new MutationObserver((records) => {
+      for (const r of records) {
+        const list = r.addedNodes;
+        for (let i = 0; i < list.length; i++) {
+          const n = list[i];
+          if (n.nodeType === 1 && n.classList && n.classList.contains('doc-page-canvas')) { scheduleFitEditor(); return; }
+        }
+        const rlist = r.removedNodes;
+        for (let i = 0; i < rlist.length; i++) {
+          const n = rlist[i];
+          if (n.nodeType === 1 && n.classList && n.classList.contains('doc-page-canvas')) { scheduleFitEditor(); return; }
+        }
+      }
+    });
+    mo.observe(docContainer, { childList: true });
   }
 
   setTimeout(scheduleFitEditor, 50);
@@ -2842,12 +2564,8 @@ function updateSpecificPageByNumber(pageNumber, newHtml, opts) {
     if (typeof renderAllKatexVisuals === 'function') renderAllKatexVisuals(page);
 
     resetPageToA4(page);
-    if (page.scrollHeight > EDITOR_A4_HEIGHT + 1) {
-      tightenPageContentToA4(page);
-    }
 
     updatePageFooters();
-    // Remove any resulting empty trailing pages
     _removeTrailingEmptyPages();
     if (typeof forceRenderAllEquations === 'function') forceRenderAllEquations();
     if (typeof scheduleEquationRecovery === 'function') scheduleEquationRecovery(180);
@@ -2859,11 +2577,7 @@ function updateSpecificPageByNumber(pageNumber, newHtml, opts) {
   }
 }
 
-// ===== INSERT NEW CONTENT RIGHT AFTER A PAGE (used by @Add + page) =====
-// Unlike updateSpecificPageByNumber (which squeezes everything back onto ONE
-// A4 page), this puts the new material straight after the selected page's
-// content and re-paginates, so a long addition flows onto as many following
-// pages as it needs. Pages before the insertion point are untouched.
+// ===== INSERT NEW CONTENT RIGHT AFTER A PAGE =====
 async function insertHtmlAfterPage(pageNumber, newHtml) {
   const n = Number.parseInt(pageNumber, 10);
   if (!docContainer || !Number.isInteger(n) || n < 1 || typeof newHtml !== 'string' || !newHtml.trim()) return false;
@@ -2872,7 +2586,7 @@ async function insertHtmlAfterPage(pageNumber, newHtml) {
   let combined = '';
   pages.forEach((page, i) => {
     if (typeof pageHasContent === 'function' && !pageHasContent(page) && i !== n - 1) return;
-    combined += _pageSnapshotHTML(page);   // lossless: the user's own emoji are kept
+    combined += _pageSnapshotHTML(page);
     if (i === n - 1) combined += '<br>' + newHtml;
   });
   HISTORY.saveState();
@@ -2906,7 +2620,6 @@ function updateSpecificPagesByNumber(updates) {
       if (typeof processMathEquationsInContainer === 'function') processMathEquationsInContainer(page);
       if (typeof renderAllKatexVisuals === 'function') renderAllKatexVisuals(page);
       resetPageToA4(page);
-      if (page.scrollHeight > EDITOR_A4_HEIGHT + 1) tightenPageContentToA4(page);
     });
     updatePageFooters();
     _removeTrailingEmptyPages();
@@ -2932,7 +2645,6 @@ async function updateSpecificSectionByHeading(targetHeading, newHtml) {
   const headings = Array.from(docContainer.querySelectorAll('.doc-page-canvas h1, .doc-page-canvas h2, .doc-page-canvas h3'));
   let heading = headings.find(h => norm(h.textContent) === target);
   if (!heading) {
-    // Fuzzy match. Ignore empty/very short headings: '' is "included" in every string.
     const candidates = headings.map(h => ({ h, text: norm(h.textContent) }))
       .filter(x => x.text.length >= 3 && (x.text.includes(target) || target.includes(x.text)));
     heading = candidates.sort((a, b) => Math.abs(a.text.length - target.length) - Math.abs(b.text.length - target.length))[0]?.h || null;
@@ -2944,7 +2656,6 @@ async function updateSpecificSectionByHeading(targetHeading, newHtml) {
     const ownerPage = heading.closest('.doc-page-canvas');
     if (!ownerPage) return false;
 
-    // The heading may sit inside a wrapper <div>; work with the wrapper that is a direct child of the page.
     let anchor = heading;
     while (anchor && anchor.parentNode !== ownerPage) anchor = anchor.parentNode;
     if (!anchor) return false;
@@ -2966,7 +2677,7 @@ async function updateSpecificSectionByHeading(targetHeading, newHtml) {
     for (let pIdx = startPageIndex; pIdx < pages.length && !stop; pIdx++) {
       const page = pages[pIdx];
       const pageNodes = Array.from(page.childNodes);
-      const begin = pIdx === startPageIndex ? pageNodes.indexOf(anchor) + 1 : 0;   // indexOf is never -1 now
+      const begin = pIdx === startPageIndex ? pageNodes.indexOf(anchor) + 1 : 0;
       for (let i = begin; i < pageNodes.length; i++) {
         const node = pageNodes[i];
         if (startsNewSection(node)) { stop = true; break; }
@@ -3080,28 +2791,20 @@ function removeCurrentPage() {
 }
 
 async function paginateDocumentCanvas() {
-  // Lossless snapshot (the export view strips emoji and drops blank pages). An empty document or
-  // one that holds only the placeholder yields '' and is skipped.
   const currentHTML = getCanvasSnapshotHTML();
   if (!currentHTML) return;
-  // This pass only COUNTS top-level blocks to choose the pagination path; the real pagination below
-  // does the full math processing itself, so doing it here as well was a second, wasted full pass.
   const tempSource = document.createElement('div');
   tempSource.innerHTML = _safeHTML(currentHTML);
   const nodes = flattenContentTopLevelNodes(tempSource);
   if (nodes.length > PAGINATION_CHUNK_SIZE * 2 && typeof paginateDocumentCanvasAsync === 'function') {
     await paginateDocumentCanvasAsync(currentHTML);
   } else {
-    await setDocumentHTMLAndPaginate(currentHTML);   // awaited: callers continue only once pages exist
+    await setDocumentHTMLAndPaginate(currentHTML);
   }
   if (typeof displayToastNotification === 'function') displayToastNotification("📄 Document Paginated!");
 }
 
-// ===== PROGRESSIVE PAGINATE (toolbar "Paginate" button) =====
-// Every click raises a compaction level (1..PAGINATE_COMPACT_MAX): spacing, type,
-// tables and figures get tighter and typography gets cleaner (see styles.css,
-// html[data-paginate-compact]). Internal re-pagination (typing, reflow, AI edits)
-// still calls paginateDocumentCanvas() and never changes the level.
+// ===== PROGRESSIVE PAGINATE =====
 const PAGINATE_COMPACT_MAX = 6;
 let paginateCompactLevel = 0;
 let _paginateProgressiveBusy = false;
@@ -3125,7 +2828,7 @@ async function _repaginateCurrentDocument() {
   const html = getCanvasSnapshotHTML();
   if (!html) return false;
   const tmp = document.createElement('div');
-  tmp.innerHTML = _safeHTML(html); // count only — see paginateDocumentCanvas()
+  tmp.innerHTML = _safeHTML(html);
   const nodes = flattenContentTopLevelNodes(tmp);
   if (nodes.length > PAGINATION_CHUNK_SIZE * 2 && typeof paginateDocumentCanvasAsync === 'function') {
     await paginateDocumentCanvasAsync(html);
@@ -3135,9 +2838,6 @@ async function _repaginateCurrentDocument() {
   return true;
 }
 
-// Compact-level CSS for standalone documents (the True-PDF preview/print iframe is a
-// separate document, so it never sees styles.css's html[data-paginate-compact] rules).
-// Returns '' at level 0. Must stay in sync with the level table in styles.css.
 const PAGINATE_COMPACT_LEVELS = {
   1: { fs: 12,   lh: 1.34, pmb: 6,   h1: 21, h1mb: 8, h2: 15.5, h2mt: 10, h2mb: 5,   h3: 12.5, h3mt: 8, h3mb: 3,   lmt: 5, lmb: 6, li: 2,   tm: 8, pad: '5px 7px', tf: 98, fz: 1 },
   2: { fs: 11.8, lh: 1.31, pmb: 5,   h1: 20, h1mb: 7, h2: 15,   h2mt: 8,  h2mb: 4,   h3: 12.5, h3mt: 7, h3mb: 3,   lmt: 4, lmb: 5, li: 1.5, tm: 7, pad: '4px 6px', tf: 96, fz: 0.97 },
@@ -3190,7 +2890,7 @@ async function paginateDocumentProgressive() {
     }
   } catch (err) {
     console.error('[paginateDocumentProgressive]', err);
-    if (!wasMax && paginateCompactLevel > 0) _setPaginateCompactLevel(paginateCompactLevel - 1);   // roll back the level that was never applied
+    if (!wasMax && paginateCompactLevel > 0) _setPaginateCompactLevel(paginateCompactLevel - 1);
   } finally {
     _paginateProgressiveBusy = false;
     document.querySelectorAll('[data-paginate-btn]').forEach(b => { b.disabled = false; });
@@ -3336,20 +3036,6 @@ function executeEditorCommand(command, value = null) {
 }
 
 // ===== KEEP DOCUMENT SELECTION ALIVE WHEN CLICKING RIBBON BUTTONS =====
-// Clicking anything outside the contenteditable page — including a plain
-// toolbar <button> — fires a mousedown first, and a browser's default
-// mousedown behavior on a click target that isn't inside the current
-// selection is to collapse that selection before the click (and the
-// button's onclick handler) ever runs. That's why a single click on Bold/
-// Italic/justify/etc. was wiping out whatever text had been selected in
-// the document, so the command then had nothing left to act on.
-// preventDefault() on mousedown stops the browser from touching focus/
-// selection at all, so the selection the user made in the document is
-// still fully intact by the time the button's click handler executes.
-// Only plain <button>s are covered here — <select> and <input type="color">
-// inside the toolbar still need their own default mousedown behavior to
-// open (the color inputs already have their own selection save/restore
-// fix above/below for that reason).
 (function setupToolbarSelectionPreservation() {
   const toolbar = document.getElementById('editor-toolbar');
   if (!toolbar) return;
@@ -3360,14 +3046,6 @@ function executeEditorCommand(command, value = null) {
 })();
 
 // ===== COLOR PICKER SELECTION FIX =====
-// A native <input type="color"> steals focus (and with it the browser's
-// text selection inside the contenteditable page) the instant it's
-// clicked/opened — well before its change event ever fires. By the time
-// foreColor/hiliteColor actually ran, the document's selection was already
-// gone, so execCommand had nothing left to color — which is why the color
-// buttons looked like they "didn't work". Fix: capture the selection on
-// mousedown (before the native picker takes focus) and restore it right
-// before applying the color command.
 let _savedEditorSelectionRange = null;
 
 function saveEditorSelectionForColorPicker() {
@@ -3380,7 +3058,6 @@ function saveEditorSelectionForColorPicker() {
 }
 
 function applyColorCommand(command, value) {
-  // The saved range is useless once a re-pagination replaced its nodes.
   if (_savedEditorSelectionRange && !(_savedEditorSelectionRange.startContainer.isConnected && _savedEditorSelectionRange.endContainer.isConnected)) {
     _savedEditorSelectionRange = null;
   }
@@ -3400,10 +3077,6 @@ window.saveEditorSelectionForColorPicker = saveEditorSelectionForColorPicker;
 window.applyColorCommand = applyColorCommand;
 
 // ===== INCREMENTAL FONT SIZE (A+ / A-) =====
-// The old font-size dropdown only offers a few fixed legacy steps. These
-// buttons instead nudge the CURRENTLY SELECTED text's actual size up/down
-// by a few pixels every click, so repeated clicking keeps growing/shrinking
-// it smoothly rather than jumping between a few presets.
 const FONT_SIZE_STEP_PX = 2;
 const FONT_SIZE_MIN_PX = 8;
 const FONT_SIZE_MAX_PX = 96;
@@ -3417,9 +3090,6 @@ function stepSelectedFontSize(deltaPx) {
   const page = anchorEl && anchorEl.closest ? anchorEl.closest('.doc-page-canvas') : null;
   if (!page) return;
 
-  // Measure the CURRENT size before we touch anything — wrapping with
-  // execCommand('fontSize','7') below would otherwise make every run jump
-  // to the browser's huge "size 7" default first, corrupting the reading.
   const currentPx = parseFloat(getComputedStyle(anchorEl).fontSize) || 12;
   const targetPx = Math.max(FONT_SIZE_MIN_PX, Math.min(FONT_SIZE_MAX_PX, Math.round(currentPx + deltaPx)));
 
@@ -3450,7 +3120,6 @@ function updateToolbarButtonStates() {
 if (docContainer) {
   docContainer.addEventListener('keyup', updateToolbarButtonStates);
   docContainer.addEventListener('mouseup', updateToolbarButtonStates);
-  // Touch selection (mobile) fires neither keyup nor mouseup.
   let _toolbarRaf = 0;
   document.addEventListener('selectionchange', () => {
     if (_toolbarRaf) return;
@@ -3532,7 +3201,7 @@ function rankDiagramCandidatesForPrompt(candidates, promptText, pageContext = nu
     if (pageContext && d.pageNumber === pageContext.targetPage) score += 1000;
     const hay = `${d.title} ${d.heading}`.toLowerCase();
     tokens.forEach(t => { if (hay.includes(t)) score += 20; });
-    if (/diagram|figure|flowchart|concept map|mind map|schematic|chart|চিত্র|ডায়াগ্রাম|ডায়াগ্রাম|ফিগার|ফ্লোচার্ট/i.test(p)) score += 5;
+    if (/diagram|figure|flowchart|concept map|mind map|schematic|chart|চিত্র|ডায়াগ্রাম|ডায়াগ্রাম|ফিগার|ফ্লোচার্ট/i.test(p)) score += 5;
     score -= i * 0.01;
     return { ...d, _score: score };
   }).sort((a, b) => b._score - a._score);
@@ -3558,14 +3227,6 @@ function validateDiagramReplacementAgainstOriginal(originalHtml, replacementHtml
 }
 
 function isDiagramEditRequest(promptText, intentPayload) {
-  // Diagrams are permanently disabled across the app (product decision) —
-  // the specialized diagram edit/redesign pipeline below
-  // (getDiagramCandidates / handleDiagramEditOrRefine) would generate a
-  // brand-new hand-drawn diagram, which is exactly what's banned, so this
-  // detector is hard-wired off. A pre-existing diagram left over in an
-  // older document can still be deleted or rewritten as text through the
-  // normal edit flow — it just no longer routes through the
-  // diagram-specific regeneration pipeline.
   return false;
 }
 
@@ -3595,10 +3256,6 @@ function extractBeautifyHtmlFromAIResponse(rawContent) {
     try {
       return JSON.parse('"' + m[1] + '"');
     } catch (_) {
-      // Single-pass JSON unescape. The old chain of .replace(/\\r/g,'') etc. ran over the
-      // text several times and also matched the "\r" of LaTeX commands, so "\\right]"
-      // became "\ight]" (and \theta/\times/\neq were corrupted too) - which is how matrix
-      // brackets ended up broken or collapsed to plain [ ].
       return m[1].replace(/\\(u[0-9a-fA-F]{4}|["\\\/bfnrt])/g, (full, k) => {
         switch (k[0]) {
           case 'n': return '\n';
@@ -3607,7 +3264,7 @@ function extractBeautifyHtmlFromAIResponse(rawContent) {
           case 'b': return '\b';
           case 'f': return '\f';
           case 'u': return String.fromCharCode(parseInt(k.slice(1), 16));
-          default: return k;   // \\  \"  \/
+          default: return k;
         }
       });
     }
@@ -3629,7 +3286,6 @@ function localBeautifyHTML(rawHtml) {
 
   temp.querySelectorAll('p, div, li, h1, h2, h3, h4').forEach(el => {
     if (!(el.textContent || '').trim() && !_elementHasVisualContent(el) && !el.querySelector('br, hr, .manual-page-break, .blank-page-spacer')) {
-      // keep intentional page breaks / spacers and styled bars, lines and boxes
       const decorative = el.classList.contains('manual-page-break') || el.classList.contains('blank-page-spacer') ||
         _isDesignedBoxBlock(el) || /border|background|height/i.test(el.getAttribute('style') || '');
       if (!decorative) el.remove();
@@ -3644,7 +3300,6 @@ function localBeautifyHTML(rawHtml) {
   temp.querySelectorAll('table').forEach(table => {
     table.style.width = table.style.width || '100%';
     table.style.borderCollapse = 'collapse';
-    // Only add default borders to tables that have none (don't override borderless/layout tables).
     const _hasBorders = table.hasAttribute('border') || !!table.style.border || !!table.querySelector('[style*="border"]');
     table.querySelectorAll('th, td').forEach(cell => {
       if (!_hasBorders && !cell.style.border) cell.style.border = '1px solid #cbd5e1';
@@ -3707,7 +3362,6 @@ function getBrokenPages() {
   pages.forEach((page, index) => {
     const brokenEquations = typeof findBrokenEquations === 'function' ? findBrokenEquations(page) : [];
     const hasBrokenKatex = page.querySelectorAll('.katex-eq.katex-render-failed, .katex-eq[data-render-pending="true"]').length > 0;
-    // pageHasContent() ignores the "Page x of y" footer (page.innerText included it, so a page was never "empty").
     const isEmpty = pages.length > 1 && !pageHasContent(page);
     if (brokenEquations.length > 0 || hasBrokenKatex || isEmpty) {
       brokenIndices.push(index);
@@ -3721,14 +3375,12 @@ async function fixBrokenPagesWithAI(pageIndices, modelsUsedSet) {
   const container = document.getElementById('document-view-container');
   if (!container || !pageIndices.length) return false;
   const pages = Array.from(container.querySelectorAll('.doc-page-canvas'));
-  const totalPages = pages.length;
 
   const pageData = pageIndices.filter(idx => Number.isInteger(idx) && pages[idx]).map(idx => {
     const page = pages[idx];
     const clone = page.cloneNode(true);
     clone.querySelectorAll('.page-footer-number').forEach(f => f.remove());
     let html = clone.innerHTML;
-    // send LaTeX source, not the (huge) rendered KaTeX markup
     if (typeof convertKatexSpansToLatexSource === 'function') html = convertKatexSpansToLatexSource(html);
     return { index: idx, html, originalPage: page };
   });
@@ -3760,7 +3412,7 @@ Return ONLY the JSON array, no other text.`;
       return false;
     }
 
-    HISTORY.saveState();   // one undo step for the whole batch
+    HISTORY.saveState();
     let applied = 0;
     for (const item of parsed) {
       const idx = parseInt(item.page_index, 10);
@@ -4002,7 +3654,6 @@ async function beautifyDocument(options = {}) {
   } catch (error) {
     if (typeof ProgressUI !== 'undefined' && ProgressUI.hide) ProgressUI.hide();
     if (error && error.message === 'Beautify session changed.') {
-      // The user switched documents meanwhile: abandon quietly instead of rewriting the wrong one.
       if (typeof displayToastNotification === 'function') displayToastNotification('ℹ️ Beautify cancelled (document changed).');
       return;
     }
@@ -4136,14 +3787,12 @@ function stripEmojiFromNode(root) {
   nodes.forEach(node => {
     const parent = node.parentElement;
     if (!parent || ['SCRIPT', 'STYLE'].includes(parent.tagName)) return;
-    // never touch rendered math glyphs (brackets, arrows, symbols inside KaTeX output)
     if (parent.closest && parent.closest('.katex, .katex-eq')) return;
     const re = _getEmojiRe();
     if (!re) return;
     const before = node.nodeValue;
-    // keep ZWJ/ZWNJ that stand alone: Bengali (and Persian) conjuncts need them
     const after = before.replace(re, m => (/^[\u200c\u200d]+$/.test(m) ? m : ''));
-    if (after !== before) node.nodeValue = after;   // no needless DOM mutation
+    if (after !== before) node.nodeValue = after;
   });
 }
 
@@ -4151,7 +3800,6 @@ function stripEmojiFromNode(root) {
 function cleanupEmptyVisualContainers(root) {
   if (!root || typeof root.querySelectorAll !== 'function') return;
   root.querySelectorAll('.figure-pro').forEach(fig => {
-    // A figure without a .figure-frame (plain <img>/<svg> inside) is judged as a whole, not deleted.
     const frame = fig.querySelector('.figure-frame') || fig;
     const hasVisual = _elementHasVisualContent(frame);
     if (!hasVisual) fig.remove();
@@ -4224,17 +3872,6 @@ function enforceDiagramVisualStyles(root = docContainer) {
 }
 
 // ===== AUTO-FIT DIAGRAM LABELS TO THEIR BOXES =====
-// The AI picks each node's rect width/height AND its label's text independently
-// in one shot — nothing ties them together, so the box is only ever as big as
-// the AI guessed the text would need. When the guess is short, the label
-// renders wider/taller than its rect and spills outside it. This measures
-// each label's REAL rendered size in the browser (via SVG getComputedTextLength,
-// so it matches the actual font/size being used, not an assumed average
-// character width), wraps it onto as many lines as the box's current width
-// allows, and grows the rect's height (and, only if a single word still can't
-// fit, its width) to match — after the fact, based on real measurements,
-// instead of trusting the AI's guess. Safe to call repeatedly on the same
-// diagram; already-fitting labels are left alone.
 function autoFitDiagramTextToNodes(root = docContainer) {
   if (!root || typeof root.querySelectorAll !== 'function') return;
   root.querySelectorAll('svg.fc-svg').forEach(svg => {
@@ -4246,24 +3883,6 @@ function autoFitDiagramTextToNodes(root = docContainer) {
   });
 }
 
-// ===== NEVER LET TEXT IN A FREEFORM AI FIGURE SPILL OUTSIDE ITS BOX =====
-// fitOneDiagramSvgLabels (above) only understands the fixed fc-node-rect/
-// fc-node-text markup of the .fc-svg diagram system. .figure-pro/.figure-frame
-// figures are freeform, AI-authored SVG — any shape can be a "box" (rect,
-// circle, ellipse, polygon, even a path), and there's no class tying a label
-// to its shape. This is the freeform equivalent of fitOneDiagramSvgLabels:
-// for every text label, it finds the smallest shape whose real, rendered
-// bounding box actually contains that label (mirroring preventDarkFigureBoxes'
-// pairing heuristic below), measures the label's REAL rendered width via
-// getComputedTextLength, and wraps it to fit inside that shape. Rects can be
-// safely grown (wider only as a last resort, then taller) the same way the
-// fixed system does. Other shapes — circles, blobs, arrows, anything whose
-// geometry can't just be widened/heightened without redrawing it — are left
-// exactly where they are, and instead the font is shrunk step by step (down
-// to a readable floor) until the wrapped label fits inside the shape's own
-// box both ways. Either path, once this runs, a label can never render wider
-// or taller than the box it sits in. Safe to call repeatedly on the same
-// figure; already-fitting labels are left alone.
 function fitOneFigureProLabels(svg) {
   if (!svg || typeof svg.querySelectorAll !== 'function' || !svg.isConnected) return;
   const PAD_X = 10, PAD_Y = 6, LINE_HEIGHT_EM = 1.18, MIN_FONT_SIZE = 8, MAX_WIDTH_GROWTH = 1.6;
@@ -4281,9 +3900,6 @@ function fitOneFigureProLabels(svg) {
   try {
     texts.forEach(textEl => {
       try {
-        // Collapse any existing tspans (authored, or left over from a previous
-        // fit pass) back into one plain string so wrapping always starts from
-        // the label's real, full text instead of stacking wraps on wraps.
         const existingTspans = Array.from(textEl.querySelectorAll('tspan'));
         const original = (existingTspans.length
           ? existingTspans.map(t => t.textContent).join(' ')
@@ -4296,10 +3912,6 @@ function fitOneFigureProLabels(svg) {
         const tx = tbb.x + tbb.width / 2;
         const ty = tbb.y + tbb.height / 2;
 
-        // The label's own box is the smallest not-yet-claimed shape whose
-        // bounding box contains its center — same heuristic as
-        // preventDarkFigureBoxes, so a larger background/frame shape behind
-        // several labels is never mistaken for one label's individual box.
         let bestShape = null, bestArea = Infinity, bestBB = null;
         shapes.forEach(shape => {
           if (claimedShapes.has(shape)) return;
@@ -4344,9 +3956,6 @@ function fitOneFigureProLabels(svg) {
         let neededH = lines.length * fontSize * LINE_HEIGHT_EM + PAD_Y * 2;
 
         if (isRect) {
-          // Rects can be safely resized: widen (capped) only if a single word
-          // still can't fit even at the box's own width, then grow height to
-          // match however many lines wrapping produced.
           let finalW = bestBB.width;
           if (widestLine + PAD_X * 2 > bestBB.width) {
             finalW = Math.min(widestLine + PAD_X * 2, bestBB.width * MAX_WIDTH_GROWTH);
@@ -4361,10 +3970,6 @@ function fitOneFigureProLabels(svg) {
             bestBB = { x: cx - finalW / 2, y: cy - finalH / 2, width: finalW, height: finalH };
           }
         } else {
-          // Non-rect boxes (circles, blobs, arrows, freeform paths) can't be
-          // widened or heightened without redrawing their geometry, so shrink
-          // the font instead, re-wrapping at each size, until the label fits
-          // inside the shape's own box both ways — down to a readable floor.
           while (fontSize > MIN_FONT_SIZE && (neededH > bestBB.height || widestLine + PAD_X * 2 > bestBB.width)) {
             fontSize -= 0.5;
             lines = wrapAt(fontSize, bestBB.width);
@@ -4373,7 +3978,6 @@ function fitOneFigureProLabels(svg) {
           }
         }
 
-        // Nothing actually needs to change — leave the markup untouched.
         if (fontSize === originalFontSize && lines.length <= 1 && !existingTspans.length &&
             widestLine + PAD_X * 2 <= bestBB.width + 0.5 && neededH <= bestBB.height + 0.5) return;
 
@@ -4390,24 +3994,13 @@ function fitOneFigureProLabels(svg) {
           tspan.textContent = line;
           textEl.appendChild(tspan);
         });
-      } catch (_) { /* leave this one label as-is, keep fitting the rest */ }
+      } catch (_) { /* leave this one label as-is */ }
     });
   } finally {
     if (probe.parentNode) probe.parentNode.removeChild(probe);
   }
 }
 
-// ===== NEVER LET AN AI-DRAWN FIGURE RENDER A LABELED BOX AS SOLID BLACK =====
-// The prompt already tells the AI never to fill a labeled node with solid
-// black (see buildSharedRules's figure rules in app.js), but the AI doesn't
-// always follow that — and .figure-pro/.figure-frame figures are freeform,
-// AI-authored SVG, not the fixed fc-node-rect/fc-node-text markup that
-// enforceDiagramVisualStyles can safely recolor by class. This is a runtime
-// safety net: for every text label, find the smallest shape whose bounding
-// box actually contains it (that's its own box, not some larger background
-// frame behind it), and if that shape's fill is near-black, lighten it and
-// set the label to dark text — so a box can never render as solid black,
-// no matter what the AI generated.
 function preventDarkFigureBoxes(svg) {
   if (!svg || typeof svg.querySelectorAll !== 'function' || !svg.isConnected) return;
   const DARK_LUMINANCE_THRESHOLD = 0.22;
@@ -4446,9 +4039,6 @@ function preventDarkFigureBoxes(svg) {
       ty = bb.y + bb.height / 2;
     } catch (_) { return; }
 
-    // The label's own box is the SMALLEST shape that contains it — a larger
-    // shape containing the same point is usually a background/frame behind
-    // several labels, not this label's individual box.
     let bestShape = null, bestArea = Infinity;
     shapes.forEach(shape => {
       let bb;
@@ -4468,9 +4058,6 @@ function preventDarkFigureBoxes(svg) {
     if (!rgb) return;
 
     if (luminanceOf(rgb) < DARK_LUMINANCE_THRESHOLD) {
-      // Lighten the box well clear of "black" while keeping a hint of its
-      // original hue, and force the label to dark text so it stays
-      // readable against the now-light fill.
       const lightened = rgb.map(c => c + (255 - c) * 0.75);
       bestShape.style.setProperty('fill', toHex(lightened), 'important');
       textEl.style.setProperty('fill', '#111827', 'important');
@@ -4483,22 +4070,10 @@ function fitOneDiagramSvgLabels(svg) {
   if (!svg || typeof svg.querySelectorAll !== 'function' || !svg.isConnected) return;
   const PAD_X = 14, PAD_Y = 8, LINE_HEIGHT_EM = 1.18;
   const texts = Array.from(svg.querySelectorAll('text.fc-node-text'));
-  // Every <rect> in the diagram, not just ones carrying the fc-node-rect
-  // class — enforceDiagramVisualStyles only recolors classed rects, so a
-  // rect the AI forgot to class (or drew as part of a freeform shape) keeps
-  // whatever fill the AI gave it, sometimes a dark one. Widening the search
-  // here means the contrast check below still finds and fixes that rect's
-  // paired label instead of silently skipping it.
   const rects = Array.from(svg.querySelectorAll('rect'));
   if (!texts.length || !rects.length) return;
 
   const monochrome = document.body.classList.contains('photocopy-mode');
-  // Reads whatever fill actually ends up on a rect — a class-driven color
-  // from enforceDiagramVisualStyles, an AI-authored attribute, or an
-  // AI-authored inline style — and picks whichever of light/dark text
-  // stays readable on it, instead of assuming the box is always light
-  // (which is what let dark, unclassed boxes end up with invisible
-  // same-color-as-background text).
   function readableTextColorFor(rectEl) {
     let fillStr = '';
     try { fillStr = getComputedStyle(rectEl).fill || ''; } catch (_) { /* ignore */ }
@@ -4521,10 +4096,6 @@ function fitOneDiagramSvgLabels(svg) {
       try {
         const tx = parseFloat(textEl.getAttribute('x')) || 0;
         const ty = parseFloat(textEl.getAttribute('y')) || 0;
-        // The label belongs to whichever rect's center it's closest to — the
-        // AI always places text at the rect's center (text-anchor="middle",
-        // dominant-baseline="middle"), so this pairing is reliable even
-        // though the markup never explicitly links a <text> to its <rect>.
         let best = null, bestDist = Infinity;
         rects.forEach(r => {
           if (claimedRects.has(r)) return;
@@ -4538,10 +4109,6 @@ function fitOneDiagramSvgLabels(svg) {
         if (!best) return;
         claimedRects.add(best);
 
-        // Fix contrast first — unconditionally, regardless of whether the
-        // box also needs resizing below — since this is what turns an
-        // invisible (same-color-as-background) label back into a readable
-        // one on a dark or unexpectedly-colored box.
         textEl.style.setProperty('fill', readableTextColorFor(best), 'important');
         textEl.style.setProperty('color', readableTextColorFor(best), 'important');
 
@@ -4577,8 +4144,6 @@ function fitOneDiagramSvgLabels(svg) {
         if (current) lines.push(current);
         if (!lines.length) return;
 
-        // If a single word alone is wider than the box, that's the one case
-        // wrapping can't solve — allow modest, capped width growth for it.
         const widestLine = Math.max(0, ...lines.map(measure));
         let finalRectW = rectW;
         if (widestLine + PAD_X * 2 > rectW) {
@@ -4588,7 +4153,6 @@ function fitOneDiagramSvgLabels(svg) {
         const neededH = lines.length * fontSize * LINE_HEIGHT_EM + PAD_Y * 2;
         const finalRectH = Math.max(rectH, neededH);
 
-        // Nothing actually needs to change — leave the markup untouched.
         if (finalRectW <= rectW + 0.5 && finalRectH <= rectH + 0.5 && lines.length <= 1) return;
 
         best.setAttribute('x', String(cx - finalRectW / 2));
@@ -4605,7 +4169,7 @@ function fitOneDiagramSvgLabels(svg) {
           tspan.textContent = line;
           textEl.appendChild(tspan);
         });
-      } catch (_) { /* leave this one label as-is, keep fitting the rest */ }
+      } catch (_) { /* leave this one label as-is */ }
     });
   } finally {
     if (probe.parentNode) probe.parentNode.removeChild(probe);
@@ -4613,15 +4177,12 @@ function fitOneDiagramSvgLabels(svg) {
 }
 
 // ===== APPLY MONOCHROME DOCUMENT STYLES =====
-// Monochrome mode is a VIEW option. The original inline values are remembered in data-mono-orig
-// so switching back restores the author's colours/borders exactly, and nothing is touched at all
-// while monochrome is off.
 function _monoSet(el, props) {
   let rec = { props: {}, attr: el.getAttribute('style'), applied: null };
   if (el.dataset.monoOrig) { try { rec = JSON.parse(el.dataset.monoOrig) || rec; } catch (_) { /* start fresh */ } }
   Object.keys(props).forEach(p => {
     if (!(p in rec.props)) rec.props[p] = [el.style.getPropertyValue(p), el.style.getPropertyPriority(p)];
-    el.style.setProperty(p, props[p][0], props[p][1]);   // an empty value removes the property
+    el.style.setProperty(p, props[p][0], props[p][1]);
   });
   rec.applied = el.getAttribute('style');
   el.dataset.monoOrig = JSON.stringify(rec);
@@ -4632,10 +4193,8 @@ function _monoRestore(el) {
   try {
     const rec = JSON.parse(raw) || {};
     if (el.getAttribute('style') === rec.applied) {
-      // untouched since monochrome was applied: put the exact original style attribute back
       if (rec.attr == null) el.removeAttribute('style'); else el.setAttribute('style', rec.attr);
     } else {
-      // the user edited the element meanwhile (e.g. resized an image): restore only what we changed
       Object.keys(rec.props || {}).forEach(p => {
         const [val, prio] = rec.props[p];
         if (val) el.style.setProperty(p, val, prio); else el.style.removeProperty(p);
@@ -4666,7 +4225,6 @@ function applyMonochromeDocumentStyles() {
       page.querySelectorAll('table, th, td, .figure-pro, .figure-frame').forEach(el => {
         _monoSet(el, { 'border-color': ['#000', 'important'], 'box-shadow': ['none', 'important'], 'background': ['#fff', 'important'] });
       });
-      // block-solution / math-final-answer / sol-label read as plain text in monochrome (see styles.css)
       page.querySelectorAll('.block-solution, .math-final-answer, .sol-label').forEach(el => {
         _monoSet(el, { 'background': ['', ''], 'border': ['', ''], 'border-color': ['', ''], 'box-shadow': ['', ''] });
       });
