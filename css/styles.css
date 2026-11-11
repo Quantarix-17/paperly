@@ -2083,7 +2083,7 @@ html.dark #creation-mode-select,
   display: flex;
   flex-direction: column;
   align-items: center;
-  scroll-behavior: smooth;
+  scroll-behavior: auto;   /* WORD-NATIVE: was smooth - it lagged behind the caret */
   background: #e5e7eb;   /* WORD-NATIVE: flat neutral grey workspace instead of a tinted gradient */
 }
 .dark #document-view-container {
@@ -2396,8 +2396,10 @@ html.dark #creation-mode-select,
   font-family: 'Arial', sans-serif;
   font-weight: bold;
   color: #172554 !important;
-  border-bottom: 2px solid #1d4ed8;
-  padding-bottom: 4px;
+  /* WORD-NATIVE: Word headings have no underline rule. The old 2px border is replaced by 2px of
+     extra padding so the heading keeps EXACTLY the same height (pagination stays unchanged). */
+  border-bottom: 0;
+  padding-bottom: 6px;
   line-height: 1.2;
 }
 .doc-page-canvas h2 {
@@ -2430,21 +2432,23 @@ html.dark #creation-mode-select,
   border-collapse: collapse;
   margin: 10pt 0;
 }
+/* WORD-NATIVE: plain thin grid like Word's "Table Grid" - light grey header, no blue fill, no zebra.
+   Border width and padding are unchanged, so table heights (and page breaks) stay the same. */
 .doc-page-canvas table th {
-  background: #2563eb;
-  color: #fff;
+  background: #f2f2f2;
+  color: #111827;
   font-weight: bold;
   padding: 8px;
-  border: 1px solid #1d4ed8;
+  border: 1px solid #8c8c8c;
   text-align: left;
 }
 .doc-page-canvas table td {
-  border: 1px solid #cbd5e1;
+  border: 1px solid #8c8c8c;
   padding: 6px 8px;
   text-align: left;
 }
 .doc-page-canvas table tr:nth-child(even) {
-  background: #f8fafc;
+  background: transparent;
 }
 .doc-page-canvas table td,
 .doc-page-canvas table th {
