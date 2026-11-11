@@ -4190,7 +4190,18 @@ async function appendNodeWithPagination(node, currentPage, createPage) {
         return result.page;
     }
 
-    if (pageHasContent(currentPage) && !pageFits(currentPage)) currentPage = createPage();
+    // FIX (blank / heading-only page): we only get here when this unsplittable block (heading, table,
+    // image, hr, empty-child div ...) did NOT fit on the current page, and its test clone was removed
+    // above. The old guard `pageHasContent && !pageFits` was therefore always false (the page "fit"
+    // again after the removal), so the block was re-appended to the SAME page, overflowed it, and later
+    // pages were created while this one stayed overfull. applyLocalMarginSafetyFixes() then spilled the
+    // block onto a continuation page inserted BETWEEN pages -> a page with only a heading (page 2) and
+    // a table pushed away from the text that followed it (pages 4/5). Start a new page right here instead.
+    {
+        const _fw = currentPage && currentPage.querySelector ? currentPage.querySelector('.pdf-fit-wrapper') : null;
+        const _hasBlocks = _fw ? _fw.children.length > 0 : pageHasContent(currentPage);
+        if (_hasBlocks) currentPage = createPage();
+    }
     const finalClone = appendClone(currentPage, node);
     if (typeof processMathEquationsInContainer === 'function') processMathEquationsInContainer(finalClone);
     if (typeof renderAllKatexVisuals === 'function') renderAllKatexVisuals(finalClone);
