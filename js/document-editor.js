@@ -1,6 +1,14 @@
 // ========================================================================
 // DOCUMENT EDITOR - History, Pagination, Page Management, and Core Editing
 // ========================================================================
+// WORD-NATIVE PATCH (search for "WORD-NATIVE" to find every change):
+//  1. injectWordNativePageStyles()  - square, flat pages (no radius / border / heavy shadow)
+//  2. fitEditorPagesToScreen()      - page gap 30px -> 12px (desktop), tighter on mobile
+//  3. tightenPageContentToA4()      - no more shrinking of font-size / line-height to cram a page
+//  4. oversized pages               - are shown in full instead of being clipped by overflow:hidden
+//  5. handlePageKeydown()           - Up/Down/Right/Delete cross the page border like one document
+//  6. scheduleReflow()              - faster reflow on small docs, paused during IME composition
+// ========================================================================
 
 // ===== DOM REFS =====
 const docContainer = document.getElementById('document-view-container');
@@ -135,6 +143,34 @@ function _perfProgress(done, total) {
 window.__setEditorVirtualRender = function(on) {
   document.documentElement.classList.toggle('perf-no-cv', !on);
 };
+
+// ---- WORD-NATIVE: square, flat editing pages ----
+// MS Word shows a plain rectangular sheet: no rounded corners, no border, only a very light edge
+// shadow. The page CSS lives in styles.css (not part of this file), so the look is enforced here
+// with a scoped override that only touches the EDITING canvas (#document-view-container). The
+// PDF/print iframe and the export code are not affected. The pdf-format-* "skins" keep their
+// colours but lose their rounded/bordered/shadowed card look while editing.
+(function injectWordNativePageStyles() {
+  if (document.getElementById('word-native-page-styles')) return;
+  const st = document.createElement('style');
+  st.id = 'word-native-page-styles';
+  st.textContent = `
+    #document-view-container .doc-page-canvas,
+    #document-view-container .doc-page-canvas[class*="pdf-format-"] {
+      border-radius: 0 !important;
+      border: 0 !important;
+      outline: none;
+      box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.20) !important;
+    }
+    body.photocopy-mode #document-view-container .doc-page-canvas {
+      box-shadow: 0 0 0 1px #000 !important;
+    }
+    #document-view-container .doc-page-canvas::before,
+    #document-view-container .doc-page-canvas::after {
+      border-radius: 0 !important;
+    }`;
+  document.head.appendChild(st);
+})();
 
 // ---- Incremental "does it fit" measurer (shared by both pagination paths) ----
 function _makeContentFits(snapEl, syncFn) {
@@ -974,12 +1010,25 @@ function debouncedAutoSaveAndPaginate() {
   scheduleReflow();
 }
 
+// WORD-NATIVE: never move nodes between pages while an IME (Bengali / Avro / phonetic keyboards) is
+// in the middle of a composition - moving the node under the composition cancels it.
+let _imeComposing = false;
+if (docContainer) {
+  docContainer.addEventListener('compositionstart', () => { _imeComposing = true; }, true);
+  docContainer.addEventListener('compositionend', () => { _imeComposing = false; scheduleReflow(); }, true);
+}
+
 function scheduleReflow() {
   clearTimeout(paginationDebounceTimer);
+  // WORD-NATIVE: small documents re-flow almost immediately (text moves to the next page while you
+  // type, like Word). Big documents keep the longer debounce for performance.
+  const _pageCount = docContainer ? docContainer.querySelectorAll('.doc-page-canvas').length : 0;
+  const _delay = _pageCount <= PERF.LOCAL_REFLOW_MIN_PAGES ? 90 : 300;
   paginationDebounceTimer = setTimeout(() => {
+    if (_imeComposing) { scheduleReflow(); return; }                                 // wait for the composition to end
     if (_slicingDepth > 0 || _renderInFlight > 0) { scheduleReflow(); return; }   // wait until pagination is done
     reflowDocument(_takeDirtyPages());
-  }, 300);
+  }, _delay);
 }
 
 let _caretMarkerSeq = 0;
@@ -2056,15 +2105,119 @@ async function _paginateDocumentCanvasAsyncCoreImpl(rawHtml, triggerSave, scratc
 }
 
 // ===== PAGE EVENT HANDLERS =====
+
+// ---- WORD-NATIVE: caret navigation across the page border ----
+// Every page is its own contenteditable, so the browser can never move the caret from one page to the
+// next. These helpers make Arrow Up/Down/Right and Delete behave as if the document were one piece.
+
+// Best-effort bounding rect of a (collapsed) range; collapsed ranges at element boundaries have none.
+function _pgRectOfRange(range) {
+  if (!range) return null;
+  const list = range.getClientRects();
+  if (list && list.length) return list[0];
+  const r = range.getBoundingClientRect();
+  if (r && (r.height || r.width)) return r;
+  const el = range.startContainer && range.startContainer.nodeType === 1
+    ? range.startContainer : (range.startContainer && range.startContainer.parentElement);
+  return el ? el.getBoundingClientRect() : null;
+}
+
+function _pgCaretFromPoint(x, y) {
+  try {
+    if (document.caretRangeFromPoint) return document.caretRangeFromPoint(x, y);
+    if (document.caretPositionFromPoint) {
+      const p = document.caretPositionFromPoint(x, y);
+      if (!p) return null;
+      const r = document.createRange();
+      r.setStart(p.offsetNode, p.offset);
+      r.collapse(true);
+      return r;
+    }
+  } catch (_) { /* fall through */ }
+  return null;
+}
+
+// True when there is no further text line above (dir -1) / below (dir +1) the caret inside this page.
+// Uses Selection.modify to ask the browser itself, then restores the selection untouched.
+// Returns null when it cannot tell.
+function _pgOnEdgeLine(sel, dir) {
+  try {
+    if (!sel || !sel.rangeCount || typeof sel.modify !== 'function') return null;
+    const r0 = sel.getRangeAt(0).cloneRange();
+    const rect0 = _pgRectOfRange(r0);
+    sel.modify('move', dir < 0 ? 'backward' : 'forward', 'line');
+    const r1 = sel.rangeCount ? sel.getRangeAt(0).cloneRange() : null;
+    const rect1 = _pgRectOfRange(r1);
+    sel.removeAllRanges();
+    sel.addRange(r0);
+    if (!rect0 || !rect1) return null;
+    const h = Math.max(rect0.height || 0, 8);
+    const moved = dir < 0 ? (rect0.top - rect1.top) : (rect1.top - rect0.top);
+    return moved < h * 0.5;   // the caret did not reach another line
+  } catch (_) { return null; }
+}
+
+// True when nothing (text or media) follows the caret on this page.
+function _pgCaretAtPageEnd(page, range) {
+  try {
+    const footer = page.querySelector(':scope > .page-footer-number');
+    const post = document.createRange();
+    post.selectNodeContents(page);
+    post.setStart(range.endContainer, range.endOffset);
+    if (footer) post.setEndBefore(footer);
+    if (post.toString().replace(/[\s\u200b\u00a0]/g, '') !== '') return false;
+    return !post.cloneContents().querySelector('img,svg,canvas,hr,video,iframe,.katex,.katex-eq');
+  } catch (_) { return false; }
+}
+
+// Put the caret at the start/end of `page`. With `x` it lands on the first/last line at that
+// horizontal position (so Arrow Up/Down keep their column like in Word).
+function _pgPlaceCaret(page, where, x) {
+  if (!page) return;
+  page.focus();
+  const sel = window.getSelection();
+  const footer = page.querySelector(':scope > .page-footer-number');
+  const base = document.createRange();
+  base.selectNodeContents(page);
+  if (where === 'start') {
+    base.collapse(true);
+  } else if (footer) {
+    base.setStartBefore(footer);
+    base.setEndBefore(footer);
+  } else {
+    base.collapse(false);
+  }
+  let target = base;
+  if (typeof x === 'number' && isFinite(x)) {
+    const content = Array.from(page.children).filter(c => !c.classList.contains('page-footer-number'));
+    const el = where === 'start' ? content[0] : content[content.length - 1];
+    if (el) {
+      const rr = el.getBoundingClientRect();
+      const y = where === 'start' ? rr.top + 6 : rr.bottom - 6;
+      const hit = _pgCaretFromPoint(x, y);
+      if (hit && page.contains(hit.startContainer) && !(footer && footer.contains(hit.startContainer))) target = hit;
+    }
+  }
+  sel.removeAllRanges();
+  sel.addRange(target);
+  const anchorEl = target.startContainer && target.startContainer.nodeType === 1
+    ? target.startContainer : (target.startContainer && target.startContainer.parentElement);
+  if (anchorEl && anchorEl.scrollIntoView) anchorEl.scrollIntoView({ block: 'nearest' });
+}
+
 function handlePageKeydown(e) {
   if (!docContainer) return;
+  if (e.isComposing) return;   // never interfere with an IME composition
   const page = e.currentTarget;
   const selection = window.getSelection();
   if (!selection.rangeCount) return;
   const pages = Array.from(docContainer.querySelectorAll('.doc-page-canvas'));
   const pageIndex = pages.indexOf(page);
 
-  if ((e.key === 'Backspace' || e.key === 'ArrowUp' || e.key === 'ArrowLeft') && selection.focusOffset === 0) {
+  // Backspace / ArrowLeft at the very start of a page -> end of the previous page.
+  // (ArrowUp is handled below by line position; it only stays here when Selection.modify is missing.)
+  const _upFallback = e.key === 'ArrowUp' && typeof selection.modify !== 'function';
+  if ((e.key === 'Backspace' || e.key === 'ArrowLeft' || _upFallback) && !e.shiftKey && selection.focusOffset === 0) {
     const range = selection.getRangeAt(0);
     const preCaretRange = range.cloneRange();
     preCaretRange.selectNodeContents(page);
@@ -2085,6 +2238,41 @@ function handlePageKeydown(e) {
         if (e.key === 'Backspace') {
           scheduleReflow();
         }
+        return;
+      }
+    }
+  }
+
+  // WORD-NATIVE: plain (unmodified) navigation keys with a collapsed caret only.
+  if (e.shiftKey || e.ctrlKey || e.metaKey || e.altKey || !selection.isCollapsed) return;
+  if (pageIndex < 0) return;
+  const cur = selection.getRangeAt(0);
+
+  // Arrow Up / Down on the first / last line of a page -> previous / next page, same column.
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    const down = e.key === 'ArrowDown';
+    const neighbour = pages[pageIndex + (down ? 1 : -1)];
+    if (!neighbour) return;
+    const rect = _pgRectOfRange(cur);
+    const x = rect ? rect.left : undefined;
+    if (_pgOnEdgeLine(selection, down ? 1 : -1) === true) {
+      e.preventDefault();
+      _pgPlaceCaret(neighbour, down ? 'start' : 'end', x);
+    }
+    return;
+  }
+
+  // Arrow Right / Delete at the very end of a page -> start of the next page
+  // (Delete then removes the first character there, like deleting forward in Word).
+  if (e.key === 'ArrowRight' || e.key === 'Delete') {
+    const nextPage = pages[pageIndex + 1];
+    if (!nextPage) return;
+    if (_pgCaretAtPageEnd(page, cur)) {
+      e.preventDefault();
+      _pgPlaceCaret(nextPage, 'start');
+      if (e.key === 'Delete') {
+        try { document.execCommand('forwardDelete'); } catch (_) { /* ignore */ }
+        scheduleReflow();
       }
     }
   }
@@ -2337,25 +2525,38 @@ function resetPageToA4(page) {
   page.removeAttribute('data-tight');
 }
 
+// WORD-NATIVE: an oversized page (one block that cannot be split) is shown IN FULL, growing taller than
+// A4, instead of being silently clipped by overflow:hidden. Word never hides content either.
+function _applyOversizedBox(page) {
+  if (!page) return;
+  page.style.height = 'auto';
+  page.style.maxHeight = 'none';
+  page.style.minHeight = EDITOR_A4_HEIGHT + 'px';
+  page.style.overflow = 'visible';
+}
+
 function tightenPageContentToA4(page) {
   if (!page) return false;
   resetPageToA4(page);
   const footer = page.querySelector('.page-footer-number');
   const contentNodes = Array.from(page.childNodes).filter(n => n !== footer);
   if (!contentNodes.length) return true;
+  if (page.scrollHeight <= EDITOR_A4_HEIGHT + 1) return true;
 
-  for (const pt of EDITOR_A4_TEXT_SIZES_PT) {
-    const scale = pt / 12;
-    page.style.fontSize = pt + 'pt';
-    page.style.lineHeight = String(pt >= 12 ? 1.6 : 1.55);
+  // WORD-NATIVE: the old version shrank font-size / line-height / table text step by step until the
+  // page fitted, so pages of one document ended up with different text sizes. Word never does that.
+  // Only pictures / figures are allowed to be scaled down; text keeps its size and flows to the next
+  // page through the normal pagination (see WORD-LIKE FLOW).
+  for (const scale of [1, 0.85, 0.7, 0.55]) {
     page.style.setProperty('--tight-media-max', Math.max(180, Math.floor(EDITOR_A4_HEIGHT * 0.72 * scale)) + 'px');
-    page.setAttribute('data-tight', pt >= 12 ? 'media' : 'media small');
+    page.setAttribute('data-tight', 'media');
     if (page.scrollHeight <= EDITOR_A4_HEIGHT + 1) {
       delete page.dataset.oversized;
       return true;
     }
   }
   page.dataset.oversized = 'true';
+  _applyOversizedBox(page);
   return false;
 }
 
@@ -2436,7 +2637,7 @@ function fitEditorPagesToScreen() {
       p.style.transform = '';
       p.style.transformOrigin = '';
       p.style.margin = '';
-      p.style.marginBottom = '30px';
+      p.style.marginBottom = '12px';   // WORD-NATIVE: was 30px (Word's gap between sheets is ~10-12px)
       p.style.marginLeft = 'auto';
       p.style.marginRight = 'auto';
       p.style.width = EDITOR_A4_WIDTH + 'px';
@@ -2446,6 +2647,7 @@ function fitEditorPagesToScreen() {
       p.style.maxWidth = '';
       p.style.marginTop = '';
       p.style.boxSizing = '';
+      if (p.dataset.oversized === 'true') _applyOversizedBox(p);   // WORD-NATIVE: never clip content
     });
     docContainer.style.overflowX = '';
     docContainer.style.width = '';
@@ -2474,7 +2676,7 @@ function fitEditorPagesToScreen() {
   const scaledW = EDITOR_A4_WIDTH * scale;
   const scaledH = EDITOR_A4_HEIGHT * scale;
   const offsetX = Math.max(0, Math.round((containerWidth - scaledW) / 2));
-  const gap = Math.max(12, Math.round(16 * scale));
+  const gap = Math.max(8, Math.round(12 * scale));   // WORD-NATIVE: was max(12, 16*scale)
 
   const marginRightComp = Math.round(EDITOR_A4_WIDTH * (scale - 1));
   const marginBottomComp = Math.round(EDITOR_A4_HEIGHT * (scale - 1) + gap);
@@ -2493,6 +2695,7 @@ function fitEditorPagesToScreen() {
     p.style.marginLeft = offsetX + 'px';
     p.style.marginRight = marginRightComp + 'px';
     p.style.marginBottom = marginBottomComp + 'px';
+    if (p.dataset.oversized === 'true') _applyOversizedBox(p);   // WORD-NATIVE: never clip content
   });
   docContainer.style.setProperty('--editor-page-scale', String(scale));
   pages.forEach(p => { p.__fitSig = _sig; });
