@@ -9,13 +9,20 @@
 //  5. handlePageKeydown()           - Up/Down/Right/Delete cross the page border like one document
 //  6. scheduleReflow()              - faster reflow on small docs, paused during IME composition
 //  7. FIX "page grows like a modal instead of splitting": getOverflowNodes() now measures the REAL page
-//  8. BOUNCE-FIX:                    - see the "PAGE-BOUNCE FIX" markers below
-//     (a) single consolidated layout pass at the end of pagination (no more redundant reflow pass)
-//     (b) hysteresis on oversized pages (no A4 <-> auto-height flip-flop)
-//     (c) stable fit signature via scrollbar-gutter + getBoundingClientRect
-//     (d) font loadingdone debounce 250 ms -> 800 ms
-//     (e) MutationObserver only watches page add/remove (not subtree)
-//     (f) toast throttled so "🧹 Removed N empty page(s)" fires once
+//  8. PAGE-BOUNCE FIX (previous round): single consolidated layout pass, oversized hysteresis,
+//     scrollbar-gutter, font-loading debounce, MutationObserver watching only page add/remove
+//  9. THEME-CHANGE BOUNCE FIX (this round):
+//     (a) forceCursorRepaint - only touches pages currently on screen (was forcing one layout
+//         flush per page on every body/html class change, which is what menu opens + theme
+//         switches were visibly shaking the document)
+//     (b) _scheduleStyleReflow - now SYNCHRONOUS when nothing else is blocking. Previously it
+//         used setTimeout(120) which put the class mutations on paint frame N and the content
+//         reflow on paint frame N+8 — the user saw the new theme first, then the content
+//         jumping to new pages 120ms later.
+//     (c) applyPDFVisualFormat / applyPDFTextFormat - store the applied format in a data
+//         attribute so a format switch is 2 class operations per page (was 11).
+//     (d) applyMonochromeDocumentStyles - uses the same 2-op pattern, and now schedules a
+//         synchronous reflow itself (it changes borders/colors that alter page heights).
 // ========================================================================
 
 // ===== DOM REFS =====
@@ -24,11 +31,32 @@ const chatHistoryArea = document.getElementById('chat-history');
 
 // ============================================================
 // CARET / MOUSE-CURSOR THEME REPAINT FIX
+// The native text (I-beam) pointer's black-vs-white rendering is drawn
+// by the browser from the element's `color-scheme`, but Chromium only
+// re-evaluates that on the *next* mousemove — so toggling light/dark
+// left the pointer showing the old color for a moment until the mouse
+// moved again, even though color-scheme had already updated. Forcing a
+// synchronous `cursor` property flip on every open page repaints the
+// pointer immediately instead of waiting on the user's mouse.
+//
+// THEME-CHANGE BOUNCE FIX: the original version did this for EVERY page,
+// and `void page.offsetHeight` between the two cursor writes was forcing
+// a full-document layout flush once per page (50+ flushes on every theme
+// switch, menu open, or any other body.class change). Now only pages the
+// user can actually SEE get the flip — off-screen pages don't need the
+// cursor color corrected at all (the browser re-evaluates their cursor on
+// the next mousemove over them anyway).
 // ============================================================
 function forceCursorRepaint() {
   if (!docContainer) return;
   const pages = docContainer.querySelectorAll('.doc-page-canvas');
+  if (!pages.length) return;
+  const containerRect = docContainer.getBoundingClientRect();
+  const visTop = containerRect.top;
+  const visBottom = containerRect.bottom;
   pages.forEach(page => {
+    const r = page.getBoundingClientRect();
+    if (r.bottom < visTop || r.top > visBottom) return;   // off-screen: skip
     const _prevCursor = page.style.cursor;
     page.style.cursor = 'default';
     void page.offsetHeight;
@@ -139,16 +167,13 @@ window.__setEditorVirtualRender = function(on) {
 };
 
 // ---- WORD-NATIVE: square, flat editing pages ----
-// PAGE-BOUNCE FIX (c): scrollbar-gutter:stable on the container so a vertical scrollbar appearing
-// does not shrink clientWidth. Without it, fitEditorPagesToScreen() would re-scale, which then
-// changed page height and could hide/show the scrollbar again (visible wobble).
 (function injectWordNativePageStyles() {
   if (document.getElementById('word-native-page-styles')) return;
   const st = document.createElement('style');
   st.id = 'word-native-page-styles';
   st.textContent = `
     #document-view-container {
-      scrollbar-gutter: stable;   /* PAGE-BOUNCE FIX (c) */
+      scrollbar-gutter: stable;
     }
     #document-view-container .doc-page-canvas,
     #document-view-container .doc-page-canvas[class*="pdf-format-"] {
@@ -252,7 +277,7 @@ async function _perfPreRenderMath(tempSource, runId) {
   return true;
 }
 
-// ---- Diagram fix-ups after pagination ----
+// ---- Diagram fix-ups after pagination, page by page, in slices ----
 async function _perfPostProcessPages(runId) {
   const pages = Array.from(docContainer.querySelectorAll('.doc-page-canvas'));
   const hasEnforce = typeof enforceDiagramVisualStyles === 'function';
@@ -348,14 +373,9 @@ function _settleOverflowingPages() {
   if (!docContainer) return;
   document.documentElement.classList.remove('perf-cv-on');
   const pages = Array.from(docContainer.querySelectorAll('.doc-page-canvas'));
-  // PAGE-BOUNCE FIX (b): resetPageToA4 now itself applies the oversized state when the page can't
-  // fit; calling it here is idempotent and lets a page that stopped overflowing (content shrunk)
-  // come back to A4 while a page that's still too tall keeps its oversized state instead of
-  // flip-flopping A4 <-> auto on every pass.
   pages.forEach(resetPageToA4);
   let page = pages[0], moves = 0, guard = 0;
   while (page && moves < 3000 && guard++ < 30000) {
-    // An oversized page (single block taller than A4) is shown in full; nothing to split here.
     if (page.dataset.oversized === 'true') { page = _nextEditorPage(page); continue; }
     if (!_wfFits(page)) {
       const overflow = getOverflowNodes(page);
@@ -386,8 +406,23 @@ function _reflowAfterStyleChange() {
     _syncVirtualRender();
   } finally { restoreCaretPosition(marker); }
 }
+
+// THEME-CHANGE BOUNCE FIX (b): run synchronously when possible.
+// Previously this always used setTimeout(120), which meant:
+//   Paint N   : applyPDFVisualFormat's class mutations become visible (new theme)
+//   Paint N+8 : _reflowAfterStyleChange finally runs and content jumps to new pages
+// That gap between "new theme" and "content in final positions" was the bounce the user saw
+// every time the visual/text format was changed from the command menu. Now:
+//   - If nothing else is running, reflow IMMEDIATELY so the whole change is one paint.
+//   - If a pagination is in progress (rare for a theme change), fall back to the delayed retry.
 let _styleReflowTimer = null;
 function _scheduleStyleReflow() {
+  if (_slicingDepth === 0 && _renderInFlight === 0) {
+    clearTimeout(_styleReflowTimer);
+    _styleReflowTimer = null;
+    try { _reflowAfterStyleChange(); } catch (err) { console.warn('[style reflow]', err); }
+    return;
+  }
   clearTimeout(_styleReflowTimer);
   _styleReflowTimer = setTimeout(() => {
     if (_slicingDepth > 0 || _renderInFlight > 0) { _scheduleStyleReflow(); return; }
@@ -425,9 +460,7 @@ function _syncVirtualRender() {
     n > 40 && !document.documentElement.classList.contains('perf-no-cv'));
 }
 
-// PAGE-BOUNCE FIX (d): many KaTeX @font-face files load in batches; 'loadingdone' fires per batch.
-// The old 250 ms debounce re-ran _settleOverflowingPages every batch (a visible re-layout each time).
-// 800 ms batches the font stream into one settle.
+// Font loadingdone debounce (see PAGE-BOUNCE FIX (d) in the header comment).
 if (document.fonts && document.fonts.addEventListener && !window.__fontSettleBound) {
   window.__fontSettleBound = true;
   let _fontSettleTimer = null;
@@ -568,6 +601,7 @@ function _applyFigureLayout(root) {
 }
 window.applyFigureLayout = _applyFigureLayout;
 window.FIG_LAYOUT_CONFIG = FIG;
+
 function _pageSnapshotHTML(page) {
   const clone = page.cloneNode(true);
   clone.querySelectorAll('.page-footer-number').forEach(f => f.remove());
@@ -591,7 +625,7 @@ function _getEmojiRe() {
   return re;
 }
 
-// ---- Caret save/restore that survives a full rebuild ----
+// ---- Caret save/restore that survives a full rebuild of the pages ----
 function _caretTextWalker(root) {
   return document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(n) {
@@ -788,8 +822,6 @@ function _removeEmptyEditorPages() {
   if (typeof updatePageFooters === 'function') updatePageFooters();
 }
 
-// PAGE-BOUNCE FIX (f): toast throttle — _removeTrailingEmptyPages runs in each settle pass, so the
-// "🧹 Removed N empty page(s)" toast used to fire repeatedly. Fire at most once per 500 ms.
 let _lastEmptyRemovalToastAt = 0;
 function _removeTrailingEmptyPages() {
   if (!docContainer) return;
@@ -1180,12 +1212,6 @@ async function _paginateDocumentHTMLCore(rawHtml, triggerSave = true) {
     createNewPageElement, runId, topLevelNodes.length > PERF.BIG_DOC_NODES);
   if (!okRun) return;
 
-  // PAGE-BOUNCE FIX (a): render every equation BEFORE the final layout pass, then one short yield
-  // so the browser finishes the synchronous KaTeX DOM swap. Previously the equations were rendered
-  // AFTER the layout pass and scheduleEquationRecovery(180) rendered any that failed 180 ms later —
-  // then a redundant _reflowAfterStyleChange() pass was needed to push content into the next page,
-  // which is exactly what the user saw as a bounce. Order is now: render equations, then layout,
-  // then post-process diagrams, then a second (final) layout pass.
   if (typeof forceRenderAllEquations === 'function') forceRenderAllEquations();
   await new Promise(r => setTimeout(r, 30));
   if (runId !== _paginateRunId) return;
@@ -1205,7 +1231,6 @@ async function _paginateDocumentHTMLCore(rawHtml, triggerSave = true) {
   if (!(await _perfPostProcessPages(runId))) return;
   if (typeof applyPDFVisualFormat === 'function') applyPDFVisualFormat(typeof getActivePDFVisualFormat === 'function' ? getActivePDFVisualFormat() : 'default');
 
-  // Final settle after diagram fix-ups may have grown SVG rects
   _settleOverflowingPages();
   normalizeAllEditorPagesToA4();
   _removeTrailingEmptyPages();
@@ -1730,7 +1755,6 @@ function _processPaginationNode(node, currentPageElement, createdPages, contentF
 
   if (hasContent && !contentFits(currentPageElement, node)) {
     const tag = (node.tagName || '').toUpperCase();
-    const isTable = tag === 'TABLE';
     const splitChildren = _getSplittableChildrenForOverflow(node);
     if (splitChildren) {
       currentPageElement = _appendPossiblyOversizedNode(node, currentPageElement, createdPages, contentFits, createNewPageElement);
@@ -1856,20 +1880,19 @@ async function _paginateDocumentCanvasAsyncCoreImpl(rawHtml, triggerSave, scratc
   docContainer.addEventListener('touchmove', _markUserScrollIntent, { passive: true });
   docContainer.addEventListener('keydown', _markUserScrollIntent, { passive: true });
 
-  const _dropScrollListeners = () => {
+  const okRun = await _paginateNodesSliced(topLevelNodes, currentPage, createdPages, contentFits,
+    createNewPageElement, runId, useChunking);
+  if (!okRun) {
     docContainer.removeEventListener('wheel', _markUserScrollIntent);
     docContainer.removeEventListener('touchmove', _markUserScrollIntent);
     docContainer.removeEventListener('keydown', _markUserScrollIntent);
-  };
-  const okRun = await _paginateNodesSliced(topLevelNodes, currentPage, createdPages, contentFits,
-    createNewPageElement, runId, useChunking);
-  if (!okRun) { _dropScrollListeners(); return; }
+    return;
+  }
 
   docContainer.removeEventListener('wheel', _markUserScrollIntent);
   docContainer.removeEventListener('touchmove', _markUserScrollIntent);
   docContainer.removeEventListener('keydown', _markUserScrollIntent);
 
-  // PAGE-BOUNCE FIX (a): same consolidation as in the sync path.
   if (typeof forceRenderAllEquations === 'function') forceRenderAllEquations();
   await new Promise(r => setTimeout(r, 30));
   if (runId !== _paginateRunId) return;
@@ -1890,7 +1913,6 @@ async function _paginateDocumentCanvasAsyncCoreImpl(rawHtml, triggerSave, scratc
   if (!(await _perfPostProcessPages(runId))) return;
   if (typeof applyPDFVisualFormat === 'function') applyPDFVisualFormat(typeof getActivePDFVisualFormat === 'function' ? getActivePDFVisualFormat() : 'default');
 
-  // Final settle after diagram fix-ups
   _settleOverflowingPages();
   normalizeAllEditorPagesToA4();
   _removeTrailingEmptyPages();
@@ -2207,9 +2229,7 @@ function _reflowDirtyPagesOnly(dirtyList) {
       }
     }
   }
-  touched.forEach(p => {
-    resetPageToA4(p);
-  });
+  touched.forEach(p => { resetPageToA4(p); });
   let removed = 0;
   const candidates = Array.from(touched).concat(docContainer.lastElementChild ? [docContainer.lastElementChild] : []);
   new Set(candidates).forEach(p => {
@@ -2291,14 +2311,9 @@ function getOverflowNodes(page) {
   document.head.appendChild(st);
 })();
 
-// PAGE-BOUNCE FIX (b): resetPageToA4 now owns the whole sizing decision (A4 vs oversized).
-// It also detects when the page can't fit even after media scaling and applies the oversized state
-// immediately, so successive layout passes see the SAME final state instead of flipping the page
-// between "A4 fixed height" and "auto height oversized" on each pass.
 function resetPageToA4(page) {
   if (!page) return false;
 
-  // Try the A4 fixed size first.
   page.style.width = EDITOR_A4_WIDTH + 'px';
   page.style.height = EDITOR_A4_HEIGHT + 'px';
   page.style.minHeight = EDITOR_A4_HEIGHT + 'px';
@@ -2315,7 +2330,6 @@ function resetPageToA4(page) {
     return true;
   }
 
-  // Try scaling media only (never font-size/line-height — see WORD-NATIVE patch).
   for (const scale of [1, 0.85, 0.7, 0.55]) {
     page.style.setProperty('--tight-media-max', Math.max(180, Math.floor(EDITOR_A4_HEIGHT * 0.72 * scale)) + 'px');
     page.setAttribute('data-tight', 'media');
@@ -2325,7 +2339,6 @@ function resetPageToA4(page) {
     }
   }
 
-  // Still too tall: show in full (oversized) and KEEP that state so the next pass is a no-op.
   page.dataset.oversized = 'true';
   _applyOversizedBox(page);
   return false;
@@ -2394,9 +2407,6 @@ function scheduleFitEditor() {
 let _lastFitSig = '';
 function fitEditorPagesToScreen() {
   if (!docContainer) return;
-  // PAGE-BOUNCE FIX (c): the signature uses getBoundingClientRect().width (unaffected by a
-  // scrollbar appearing/disappearing when scrollbar-gutter:stable is supported) and rounds to a
-  // 4-px grid, so sub-pixel jitter and old browsers without scrollbar-gutter still behave.
   const _pc = docContainer.querySelectorAll('.doc-page-canvas').length;
   const _rawW = docContainer.getBoundingClientRect().width || docContainer.clientWidth || 0;
   const _stableW = Math.round(_rawW / 4) * 4;
@@ -2434,7 +2444,6 @@ function fitEditorPagesToScreen() {
     return;
   }
 
-  // ---- Mobile narrow layout ----
   docContainer.style.alignItems = 'flex-start';
   docContainer.style.overflowX = 'hidden';
   docContainer.style.width = '100%';
@@ -2502,10 +2511,6 @@ if (!window.__editorFitResizeBound) {
     if (docContainer.parentElement) ro.observe(docContainer.parentElement);
   }
 
-  // PAGE-BOUNCE FIX (e): only page add/remove (direct children of docContainer) triggers a fit.
-  // The old observer watched subtree:true, so every KaTeX node swap, footer text change, caret
-  // marker, split-head/split-tail move, etc., fired scheduleFitEditor — which re-scaled every
-  // page (visible bounce) even though only content had changed, not the page count.
   if (docContainer && typeof MutationObserver === 'function') {
     const mo = new MutationObserver((records) => {
       for (const r of records) {
@@ -3212,7 +3217,6 @@ function validateDiagramReplacementAgainstOriginal(originalHtml, replacementHtml
   const tempNew = document.createElement('div');
   tempOld.innerHTML = _safeHTML(originalHtml || '');
   tempNew.innerHTML = _safeHTML(replacementHtml || '');
-  const oldSvg = tempOld.querySelector('svg');
   const newSvg = tempNew.querySelector('svg');
   if (!newSvg) return { ok: false, reason: 'replacement has no SVG' };
   const oldLabels = Array.from(tempOld.querySelectorAll('svg text, .fc-node-text, .fc-node-note')).map(x => x.textContent.trim()).filter(Boolean);
@@ -3387,10 +3391,10 @@ async function fixBrokenPagesWithAI(pageIndices, modelsUsedSet) {
   if (!pageData.length) return false;
 
   const prompt =
-    `You are an expert LaTeX/KaTeX error fixer. The following are specific pages from a document that contain rendering errors (failed equations, malformed LaTeX, or empty content). 
-Your task is to correct ONLY the LaTeX/KaTeX syntax and ensure all equations render properly. 
+    `You are an expert LaTeX/KaTeX error fixer. The following are specific pages from a document that contain rendering errors (failed equations, malformed LaTeX, or empty content).
+Your task is to correct ONLY the LaTeX/KaTeX syntax and ensure all equations render properly.
 Preserve ALL other content, text, structure, and formatting exactly as-is. Do not add, remove, or modify any non-LaTeX content.
-For each page, return the corrected HTML. 
+For each page, return the corrected HTML.
 Output MUST be a JSON array where each element has "page_index" (0-based index) and "fixed_html" (the corrected HTML fragment for that page).
 Example: [{"page_index":0,"fixed_html":"<p>Corrected content...</p>"}]
 Return ONLY the JSON array, no other text.`;
@@ -3419,7 +3423,6 @@ Return ONLY the JSON array, no other text.`;
       if (isNaN(idx) || idx < 0 || idx >= pages.length) continue;
       const fixedHtml = item.fixed_html;
       if (typeof fixedHtml !== 'string' || !fixedHtml.trim()) continue;
-
       const pageNum = idx + 1;
       const success = updateSpecificPageByNumber(pageNum, fixedHtml, { saveHistory: false });
       if (success) applied++;
@@ -3482,56 +3485,55 @@ async function beautifyDocument(options = {}) {
   };
 
   const brokenIndices = getBrokenPages();
-  const totalPages = document.getElementById('document-view-container')?.querySelectorAll('.doc-page-canvas').length || 0;
 
   if (hasAIModel && brokenIndices.length > 0) {
     try {
-    if (typeof ProgressUI !== 'undefined' && ProgressUI.show) {
-      ProgressUI.show('Fixing broken pages...', `Detected ${brokenIndices.length} page(s) with rendering issues.`);
-      ProgressUI.startAutoEstimate(8);
-    }
-    const fixed = await fixBrokenPagesWithAI(brokenIndices, modelsUsed);
-    if (fixed) {
-      const afterFixHTML = typeof getCanvasSnapshotHTML === 'function' ? getCanvasSnapshotHTML() : '';
-      if (afterFixHTML) {
-        const localPolished = localBeautifyHTML(afterFixHTML);
-        if (localPolished && localPolished !== afterFixHTML) {
-          if (typeof HISTORY !== 'undefined' && HISTORY.saveState) HISTORY.saveState();
-          if (typeof setDocumentHTMLAndPaginate === 'function') await setDocumentHTMLAndPaginate(localPolished, false);
+      if (typeof ProgressUI !== 'undefined' && ProgressUI.show) {
+        ProgressUI.show('Fixing broken pages...', `Detected ${brokenIndices.length} page(s) with rendering issues.`);
+        ProgressUI.startAutoEstimate(8);
+      }
+      const fixed = await fixBrokenPagesWithAI(brokenIndices, modelsUsed);
+      if (fixed) {
+        const afterFixHTML = typeof getCanvasSnapshotHTML === 'function' ? getCanvasSnapshotHTML() : '';
+        if (afterFixHTML) {
+          const localPolished = localBeautifyHTML(afterFixHTML);
+          if (localPolished && localPolished !== afterFixHTML) {
+            if (typeof HISTORY !== 'undefined' && HISTORY.saveState) HISTORY.saveState();
+            if (typeof setDocumentHTMLAndPaginate === 'function') await setDocumentHTMLAndPaginate(localPolished, false);
+          }
         }
-      }
-      if (typeof ProgressUI !== 'undefined' && ProgressUI.finish) ProgressUI.finish();
-      setTimeout(() => { if (typeof ProgressUI !== 'undefined' && ProgressUI.hide) ProgressUI.hide(); }, 300);
-      if (typeof displayToastNotification === 'function') {
-        displayToastNotification('✅ Fixed broken pages and applied local polish.');
-      }
-      if (typeof appendChatMessageToUI === 'function') {
-        appendChatMessageToUI('ai', `✅ Fixed ${brokenIndices.length} page(s) with rendering issues and polished locally.`);
-      }
-      if (window.APP_STATE) window.APP_STATE.isAIGenerating = false;
-      if (sendBtn) sendBtn.disabled = false;
-      return;
-    } else {
-      if (typeof ProgressUI !== 'undefined' && ProgressUI.hide) ProgressUI.hide();
-      const localPolished = localBeautifyHTML(currentFullHTML);
-      if (localPolished && localPolished !== currentFullHTML) {
-        if (typeof HISTORY !== 'undefined' && HISTORY.saveState) HISTORY.saveState();
-        if (typeof setDocumentHTMLAndPaginate === 'function') await setDocumentHTMLAndPaginate(localPolished, false);
+        if (typeof ProgressUI !== 'undefined' && ProgressUI.finish) ProgressUI.finish();
+        setTimeout(() => { if (typeof ProgressUI !== 'undefined' && ProgressUI.hide) ProgressUI.hide(); }, 300);
         if (typeof displayToastNotification === 'function') {
-          displayToastNotification('✅ Applied local polish (AI fix failed).');
+          displayToastNotification('✅ Fixed broken pages and applied local polish.');
         }
         if (typeof appendChatMessageToUI === 'function') {
-          appendChatMessageToUI('ai', '⚠️ AI fix failed; applied local polish only.');
+          appendChatMessageToUI('ai', `✅ Fixed ${brokenIndices.length} page(s) with rendering issues and polished locally.`);
         }
+        if (window.APP_STATE) window.APP_STATE.isAIGenerating = false;
+        if (sendBtn) sendBtn.disabled = false;
+        return;
       } else {
-        if (typeof displayToastNotification === 'function') {
-          displayToastNotification('⚠️ No changes made – broken pages could not be fixed.');
+        if (typeof ProgressUI !== 'undefined' && ProgressUI.hide) ProgressUI.hide();
+        const localPolished = localBeautifyHTML(currentFullHTML);
+        if (localPolished && localPolished !== currentFullHTML) {
+          if (typeof HISTORY !== 'undefined' && HISTORY.saveState) HISTORY.saveState();
+          if (typeof setDocumentHTMLAndPaginate === 'function') await setDocumentHTMLAndPaginate(localPolished, false);
+          if (typeof displayToastNotification === 'function') {
+            displayToastNotification('✅ Applied local polish (AI fix failed).');
+          }
+          if (typeof appendChatMessageToUI === 'function') {
+            appendChatMessageToUI('ai', '⚠️ AI fix failed; applied local polish only.');
+          }
+        } else {
+          if (typeof displayToastNotification === 'function') {
+            displayToastNotification('⚠️ No changes made – broken pages could not be fixed.');
+          }
         }
+        if (window.APP_STATE) window.APP_STATE.isAIGenerating = false;
+        if (sendBtn) sendBtn.disabled = false;
+        return;
       }
-      if (window.APP_STATE) window.APP_STATE.isAIGenerating = false;
-      if (sendBtn) sendBtn.disabled = false;
-      return;
-    }
     } catch (brokenErr) {
       console.error('[beautifyDocument] broken-page repair failed:', brokenErr);
       if (typeof ProgressUI !== 'undefined' && ProgressUI.hide) ProgressUI.hide();
@@ -4205,14 +4207,28 @@ function _monoRestore(el) {
   if (!el.getAttribute('style')) el.removeAttribute('style');
 }
 
+// THEME-CHANGE BOUNCE FIX (e): monochrome toggle now uses the same 2-op class pattern as the
+// visual-format switcher, AND it schedules a synchronous reflow at the end. Previously a
+// monochrome toggle silently altered border/backgrounds (and autoFitDiagramTextToNodes could grow
+// diagram SVG rects) without ever reflowing the pages, so the content would "jump" into new pages
+// on the next unrelated interaction (typing, another theme click, etc.). Now the whole change
+// — class switches + inline style writes + reflow — completes before the browser paints once.
 function applyMonochromeDocumentStyles() {
   if (!docContainer) return;
   const monochrome = document.body.classList.contains('photocopy-mode');
   docContainer.classList.toggle('monochrome-document', monochrome);
 
   const pages = docContainer.querySelectorAll('.doc-page-canvas');
+  const activeFormat = monochrome ? 'default' : getActivePDFVisualFormat();
   pages.forEach(page => {
-    PDF_VISUAL_FORMAT_IDS.forEach(f => page.classList.remove('pdf-format-' + f));
+    // (i) 2-op format class swap (was 10 removes + 1 add in the original).
+    const prev = page.dataset.pdfFormatApplied || 'default';
+    if (prev !== activeFormat) {
+      if (prev !== 'default') page.classList.remove('pdf-format-' + prev);
+      if (activeFormat !== 'default') page.classList.add('pdf-format-' + activeFormat);
+      page.dataset.pdfFormatApplied = activeFormat;
+    }
+
     if (monochrome) {
       page.style.background = '#fff';
       page.style.color = '#000';
@@ -4236,14 +4252,15 @@ function applyMonochromeDocumentStyles() {
       page.style.color = '';
       page.style.borderColor = '';
       page.style.boxShadow = '';
-      const activeFormat = getActivePDFVisualFormat();
-      if (activeFormat && activeFormat !== 'default') page.classList.add('pdf-format-' + activeFormat);
       page.querySelectorAll('[data-mono-orig]').forEach(_monoRestore);
     }
   });
 
   if (typeof enforceDiagramVisualStyles === 'function') enforceDiagramVisualStyles(docContainer);
   if (typeof autoFitDiagramTextToNodes === 'function') autoFitDiagramTextToNodes(docContainer);
+
+  // (ii) reflow synchronously so the whole toggle is a single paint.
+  _scheduleStyleReflow();
 }
 
 // ===== PDF VISUAL FORMAT =====
@@ -4282,31 +4299,54 @@ function choosePDFLanguageFormat(formatId) {
   if (typeof displayToastNotification === 'function') displayToastNotification('✅ Language format applied');
 }
 
+// THEME-CHANGE BOUNCE FIX (c): the original removed 10 pdf-format-* classes per page and
+// added back 1 — 11 classList mutations per page, ~500+ for a 50-page document. Each classList
+// mutation is a separate style-recalc candidate, and the browser was visibly repainting the
+// whole document more than once as the format changed from "old" through "no format" to "new".
+// Now each page remembers the exact class it currently holds in data-pdf-format-applied, and a
+// format change is ONE classList.remove(old) + ONE classList.add(new). Same visual result, 9x
+// fewer mutations — and crucially, no "intermediate no-format paint" where every page is briefly
+// stripped of its theme before the new one is applied.
 function applyPDFVisualFormat(formatId) {
   const id = PDF_VISUAL_FORMAT_IDS.includes(formatId) ? formatId : 'default';
   const monochrome = !!(document.body && document.body.classList.contains('photocopy-mode'));
   if (!docContainer) return;
+
   docContainer.querySelectorAll('.doc-page-canvas').forEach(page => {
-    PDF_VISUAL_FORMAT_IDS.forEach(f => page.classList.remove('pdf-format-' + f));
-    if (!monochrome && id !== 'default') page.classList.add('pdf-format-' + id);
+    const prev = page.dataset.pdfFormatApplied || 'default';
+    const want = monochrome ? 'default' : id;
+    if (prev === want) return;
+    if (prev !== 'default') page.classList.remove('pdf-format-' + prev);
+    if (want !== 'default') page.classList.add('pdf-format-' + want);
+    page.dataset.pdfFormatApplied = want;
   });
+
   if (window.APP_STATE) window.APP_STATE.pdfVisualFormat = id;
   try { localStorage.setItem(PDF_VISUAL_FORMAT_KEY, id); } catch (e) { console.warn('Could not save visual format:', e); }
 }
 
+// THEME-CHANGE BOUNCE FIX (d): same 2-op pattern as applyPDFVisualFormat.
 function applyPDFTextFormat(formatId) {
   const id = PDF_TEXT_FORMAT_IDS.includes(formatId) ? formatId : 'default';
   if (!docContainer) return;
+
   docContainer.querySelectorAll('.doc-page-canvas').forEach(page => {
-    PDF_TEXT_FORMAT_IDS.forEach(f => page.classList.remove('text-format-' + f));
+    const prev = page.dataset.pdfTextFormatApplied || 'default';
+    if (prev === id) return;
+    if (prev !== 'default') page.classList.remove('text-format-' + prev);
     if (id !== 'default') page.classList.add('text-format-' + id);
+    page.dataset.pdfTextFormatApplied = id;
   });
+
   if (window.APP_STATE) window.APP_STATE.pdfTextFormat = id;
   try { localStorage.setItem(PDF_TEXT_FORMAT_KEY, id); } catch (e) { console.warn('Could not save text format:', e); }
 }
 
 function choosePDFVisualFormat(formatId) {
   applyPDFVisualFormat(formatId);
+  // _scheduleStyleReflow is now synchronous when nothing else is running, so the class change
+  // and the content reflow land in the SAME paint frame — no more "new theme first, content
+  // jumps 120 ms later" bounce.
   _scheduleStyleReflow();
   if (typeof invalidatePDFPreviewCache === 'function') invalidatePDFPreviewCache();
   _refreshPdfPreviewIfVisible();
