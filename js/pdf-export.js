@@ -3193,6 +3193,7 @@ function _buildFallbackPreviewHTML(pageChunks, isMonochromeMode, isDark) {
       @page { size:210mm 297mm; margin:0; }
       @media print { html, body { height:auto !important; overflow:visible !important; } .pdf-page-wrap { width:210mm !important; height:297mm !important; background:${pageBg} !important; content-visibility:visible !important; contain-intrinsic-size:auto !important; page-break-before:always !important; break-before:page !important; page-break-after:avoid !important; break-after:avoid !important; margin:0 !important; } .pdf-page-wrap:first-of-type { page-break-before:auto !important; break-before:auto !important; } .pdf-page { width:210mm !important; height:297mm !important; } body { padding:0; background:${pageBg} !important; } }
       ${typeof getPaginateCompactCSS === 'function' ? getPaginateCompactCSS('.pdf-page') : ''}
+      ${PDF_SPLIT_CONTINUATION_CSS}
     </style>
   </head><body${pageClasses ? ` class="${pageClasses}"` : ''}>${pagesHTML}
   <script>
@@ -3387,6 +3388,7 @@ function buildUnifiedPDFPreviewDocument(pageChunks, isMonochromeMode, isDark) {
       @media print { .pdf-page-wrap{content-visibility:visible !important;contain:none !important;contain-intrinsic-size:auto !important;} .pdf-page,.pdf-page *{filter:none !important;backdrop-filter:none !important;mix-blend-mode:normal !important;text-shadow:none !important;} .katex-eq,.katex-eq *{opacity:1 !important;} html, body { height:auto !important; overflow:visible !important; -webkit-overflow-scrolling:auto !important; } body{padding:0 !important;background:${pageBg} !important; display:block !important;} .pdf-page-wrap{width:210mm !important;height:297mm !important;background:${pageBg} !important;margin:0 !important;overflow:hidden !important;page-break-before:always !important; break-before:page !important; page-break-after:avoid !important; break-after:avoid !important; page-break-inside:avoid !important; break-inside:avoid !important;} .pdf-page-wrap:first-of-type{page-break-before:auto !important; break-before:auto !important;} .pdf-page{width:210mm !important;height:297mm !important;transform:none !important;box-shadow:none !important; border:none !important; border-radius:0 !important; page-break-inside:avoid !important; break-inside:avoid !important;} }
       @media screen and (max-width:850px) { body{padding:8px 0 !important; align-items:center;} .pdf-page-wrap{margin:0 auto 12px; overflow:hidden;} .pdf-page{transform-origin:top left;} }
       ${typeof getPaginateCompactCSS === 'function' ? getPaginateCompactCSS('.pdf-page') : ''}
+      ${PDF_SPLIT_CONTINUATION_CSS}
     </style>
   </head><body${pageClasses ? ` class="${pageClasses}"` : ''}>${pagesHTML}
   <script>
@@ -3646,6 +3648,30 @@ async function computeTruePDFPageChunks(options = {}) {
   }
 }
 
+// ===== WORD-LIKE PAGE FLOW: constants + continuation styles =====
+// Safety band kept clear above the bottom margin. Layout can still grow a little AFTER a page is measured
+// (Bengali shaping, equation sprites, font swaps), and that growth used to push the last lines into the
+// bottom margin / page number. Raise it if text still gets too close to the footer, lower it to pack more in.
+const PDF_BOTTOM_SAFETY = 12;
+
+// A block (callout panel / equation panel / table) that is cut by a page break must look like ONE block:
+// the open edge is flat, has no margin and no border, so the two halves join the way a Word table does.
+const PDF_SPLIT_CONTINUATION_CSS = `
+.pdf-split-next{margin-bottom:0 !important;border-bottom-left-radius:0 !important;border-bottom-right-radius:0 !important;border-bottom-width:0 !important;}
+.pdf-split-prev{margin-top:0 !important;border-top-left-radius:0 !important;border-top-right-radius:0 !important;border-top-width:0 !important;}
+.pdf-table-cont-next{margin-bottom:0 !important;}
+.pdf-table-cont-prev{margin-top:0 !important;}
+`;
+(function _pdfInstallSplitStyles() {
+  try {
+    if (typeof document === 'undefined' || document.getElementById('pdf-split-continuation-css')) return;
+    const st = document.createElement('style');
+    st.id = 'pdf-split-continuation-css';
+    st.textContent = PDF_SPLIT_CONTINUATION_CSS;
+    (document.head || document.documentElement).appendChild(st);
+  } catch (_) { /* cosmetic */ }
+})();
+
 // ===== PAGE MEASUREMENT HELPERS =====
 function createPDFMeasurePage(offscreen) {
   const page = document.createElement('div');
@@ -3666,6 +3692,9 @@ function createPDFMeasurePage(offscreen) {
   wrapper.className = 'pdf-fit-wrapper';
   wrapper.style.setProperty('font-size', '100%', 'important');
   wrapper.style.setProperty('line-height', '1.6', 'important');
+  // flow-root: the last block's bottom margin used to collapse OUT of the wrapper, so scrollHeight ignored it and
+  // the page filled ~10-25px past the real bottom margin (text ended up almost touching the page number).
+  wrapper.style.setProperty('display', 'flow-root', 'important');
   page.appendChild(wrapper);
 
   offscreen.appendChild(page);
@@ -3687,7 +3716,7 @@ function pageFits(page) {
   // number footer. The fit check must use the available *content* height
   // (page height minus top/bottom padding), not the full page height.
   const pageHeight = wrapper
-    ? (Number(PDF_LAYOUT.contentHeight) || 1003)
+    ? (Number(PDF_LAYOUT.contentHeight) || 1003) - PDF_BOTTOM_SAFETY
     : (Number(PDF_LAYOUT.height) || 1123);
 
   // Prefer the wrapper content height whenever the exporter has already
@@ -3695,9 +3724,23 @@ function pageFits(page) {
   // same measurement view that the HTML preview and image PDF reuse, while
   // page.scrollHeight can include the stale page frame's hidden padding and
   // artificially report an overflow for a page that is otherwise fit.
-  const measuredHeight = wrapper
+  let measuredHeight = wrapper
     ? Number(wrapper.scrollHeight || wrapper.offsetHeight || wrapper.clientHeight || 0)
     : Number(page.scrollHeight || page.offsetHeight || page.clientHeight || 0);
+
+  // Geometric double-check: where does the last block REALLY end (its bottom margin included)? scrollHeight can
+  // under-report when a margin collapses through or a block is floated/positioned.
+  if (wrapper && wrapper.lastElementChild) {
+    try {
+      const last = wrapper.lastElementChild;
+      const wr = wrapper.getBoundingClientRect();
+      const lr = last.getBoundingClientRect();
+      if (lr.height || lr.width) {
+        const mb = parseFloat(getComputedStyle(last).marginBottom) || 0;
+        measuredHeight = Math.max(measuredHeight, Math.ceil(lr.bottom - wr.top + mb));
+      }
+    } catch (_) { /* fall back to scrollHeight */ }
+  }
 
   return measuredHeight <= pageHeight + 1;
 }
@@ -4039,6 +4082,7 @@ function ensurePageFitWrapper(pageEl) {
   const footer = Array.from(pageEl.children).find(c => c.classList && c.classList.contains('page-footer-number'));
   const wrapper = document.createElement('div');
   wrapper.className = 'pdf-fit-wrapper';
+  wrapper.style.setProperty('display', 'flow-root', 'important');
   const toMove = Array.from(pageEl.childNodes).filter(n => n !== footer);
   toMove.forEach(n => wrapper.appendChild(n));
   pageEl.insertBefore(wrapper, footer || null);
@@ -4220,6 +4264,24 @@ async function appendNodeWithPagination(node, currentPage, createPage) {
         return result.page;
     }
 
+    // TABLES flow across pages like in Word (header row repeated, rows never cut) instead of jumping whole to the
+    // next page and leaving the rest of this page empty.
+    {
+        const _tinfo = typeof _pdfTableInfo === 'function' ? _pdfTableInfo(node) : null;
+        if (_tinfo && _tinfo.table.rows && _tinfo.table.rows.length > 1) {
+            const _fw0 = currentPage && currentPage.querySelector ? currentPage.querySelector('.pdf-fit-wrapper') : null;
+            let _page = currentPage;
+            const _nextCtx = () => {
+                _page = createPage();
+                if (typeof processMathEquationsInContainer === 'function') processMathEquationsInContainer(_page);
+                if (typeof renderAllKatexVisuals === 'function') renderAllKatexVisuals(_page);
+                return { page: _page, host: _page.querySelector('.pdf-fit-wrapper') || _page };
+            };
+            const _res = await _splitTableAcrossPages(_tinfo, { page: currentPage, host: _fw0 || currentPage }, _nextCtx);
+            return _res.page;
+        }
+    }
+
     // FIX (blank / heading-only page): we only get here when this unsplittable block (heading, table,
     // image, hr, empty-child div ...) did NOT fit on the current page, and its test clone was removed
     // above. The old guard `pageHasContent && !pageFits` was therefore always false (the page "fit"
@@ -4267,6 +4329,108 @@ function cloneElementShell(node) {
     shell.removeAttribute('contenteditable');
     shell.removeAttribute('spellcheck');
     return shell;
+}
+
+// ===== TABLE SPLITTING (Word-like) =====
+// A table is either the node itself or a <div> that holds nothing but that table.
+function _pdfTableInfo(node) {
+  if (!node || node.nodeType !== 1) return null;
+  if (/^TABLE$/i.test(node.tagName)) return { outer: null, table: node };
+  if (!/^(DIV|SECTION)$/i.test(node.tagName)) return null;
+  const els = Array.from(node.children);
+  if (els.length !== 1 || !/^TABLE$/i.test(els[0].tagName)) return null;
+  const stray = Array.from(node.childNodes).some((n) => n.nodeType === 3 && (n.textContent || '').trim());
+  return stray ? null : { outer: node, table: els[0] };
+}
+
+function _pdfPageHasBlocks(page) {
+  const w = _pdfWrapperOf(page);
+  if (!w) return false;
+  return Array.from(w.children).some((c) => (c.textContent || '').trim() || (c.querySelector && c.querySelector('img, svg, canvas, table, hr, .katex-eq')));
+}
+
+// Lays a table onto `ctx.page` and continues on new pages (made by nextCtx) when the rows run out of room.
+// Rows are never cut; the header row(s) repeat on every page; the pieces carry pdf-table-cont-* classes so they join.
+async function _splitTableAcrossPages(info, ctx, nextCtx) {
+  const { outer, table } = info;
+  const allRows = Array.from(table.rows);
+  let headRows = table.tHead ? Array.from(table.tHead.rows) : [];
+  if (!headRows.length && allRows.length > 1 && allRows[0].cells.length && Array.from(allRows[0].cells).every((c) => c.tagName === 'TH')) headRows = [allRows[0]];
+  const bodyRows = allRows.filter((r) => !headRows.includes(r));
+  const colgroups = Array.from(table.children).filter((c) => /^COLGROUP$/i.test(c.tagName));
+
+  const prep = async (el) => {
+    if (typeof processMathEquationsInContainer === 'function') processMathEquationsInContainer(el);
+    if (typeof renderAllKatexVisuals === 'function') renderAllKatexVisuals(el);
+    await waitForImagesToLoad(el);
+    if (typeof shrinkOverflowingKatexEquations === 'function') shrinkOverflowingKatexEquations(el);
+  };
+
+  let cur = ctx;
+  const makeChunk = async (c) => {
+    const holder = outer ? cloneElementShell(outer) : null;
+    const t = table.cloneNode(false);
+    colgroups.forEach((cg) => t.appendChild(cg.cloneNode(true)));
+    if (headRows.length) {
+      const th = document.createElement('thead');
+      headRows.forEach((r) => th.appendChild(r.cloneNode(true)));
+      t.appendChild(th);
+    }
+    const tb = document.createElement('tbody');
+    t.appendChild(tb);
+    if (holder) holder.appendChild(t);
+    c.host.appendChild(holder || t);
+    await prep(t);
+    return { t, tb, el: holder || t, rows: 0 };
+  };
+
+  // nothing to split (header only / no body rows): behave like any other unsplittable block
+  if (!bodyRows.length) {
+    const whole = (outer || table).cloneNode(true);
+    cur.host.appendChild(whole);
+    await prep(whole);
+    if (!pageFits(cur.page) && typeof shrinkPageToFit === 'function') shrinkPageToFit(cur.page);
+    return cur;
+  }
+
+  let chunk = await makeChunk(cur);
+  let pieces = 1;
+  for (const row of bodyRows) {
+    const rc = row.cloneNode(true);
+    chunk.tb.appendChild(rc);
+    await prep(rc);
+    if (pageFits(cur.page)) { chunk.rows++; continue; }
+    chunk.tb.removeChild(rc);
+
+    if (chunk.rows === 0) {
+      // not even ONE body row fits under what is already on this page
+      chunk.el.remove();
+      if (_pdfPageHasBlocks(cur.page)) {
+        cur = nextCtx();                                  // start the table on a fresh page (with its header)
+        chunk = await makeChunk(cur);
+        if (pieces > 1) chunk.t.classList.add('pdf-table-cont-prev');
+      } else {
+        cur.host.appendChild(chunk.el);                   // empty page and the row is still too tall: keep it, shrink to fit
+      }
+      chunk.tb.appendChild(rc);
+      await prep(rc);
+      chunk.rows++;
+      if (!pageFits(cur.page) && typeof shrinkPageToFit === 'function') shrinkPageToFit(cur.page);
+      continue;
+    }
+
+    // this page is full: close the piece and continue on the next page, joined to it
+    chunk.t.classList.add('pdf-table-cont-next');
+    cur = nextCtx();
+    chunk = await makeChunk(cur);
+    pieces++;
+    chunk.t.classList.add('pdf-table-cont-prev');
+    chunk.tb.appendChild(rc);
+    await prep(rc);
+    chunk.rows++;
+    if (!pageFits(cur.page) && typeof shrinkPageToFit === 'function') shrinkPageToFit(cur.page);
+  }
+  return cur;
 }
 
 async function splitListElement(node, currentPage, createPage) {
@@ -4318,7 +4482,33 @@ async function splitChildFlowElement(node, currentPage, createPage) {
     appendToFitWrapper(page, shell);
     let didSplit = false;
 
+    // Opens the next page + a fresh copy of this block. If the block already has content on the page we are
+    // leaving, both halves are flagged so they join (flat edge, no margin, no rounded corner / border at the cut).
+    const openNextPage = () => {
+        const oldShell = shell;
+        const hadContent = oldShell.childNodes.length > 0;
+        if (!hadContent && oldShell.parentNode) oldShell.parentNode.removeChild(oldShell);   // never leave an empty shell behind
+        page = createPage();
+        if (typeof processMathEquationsInContainer === 'function') processMathEquationsInContainer(page);
+        if (typeof renderAllKatexVisuals === 'function') renderAllKatexVisuals(page);
+        shell = cloneElementShell(node);
+        appendToFitWrapper(page, shell);
+        if (hadContent) {
+            oldShell.classList.add('pdf-split-next');
+            shell.classList.add('pdf-split-prev');
+        }
+        didSplit = true;
+        return { page, host: shell };
+    };
+
     for (const child of children) {
+        // a table inside this block flows over the page break instead of jumping to the next page as a whole
+        const tinfo = child.nodeType === Node.ELEMENT_NODE && typeof _pdfTableInfo === 'function' ? _pdfTableInfo(child) : null;
+        if (tinfo && tinfo.table.rows && tinfo.table.rows.length > 1) {
+            await _splitTableAcrossPages(tinfo, { page, host: shell }, openNextPage);
+            continue;
+        }
+
         const childClone = child.cloneNode(true);
         shell.appendChild(childClone);
         if (childClone.nodeType === Node.ELEMENT_NODE) {
@@ -4329,14 +4519,8 @@ async function splitChildFlowElement(node, currentPage, createPage) {
         }
         if (!pageFits(page)) {
             shell.removeChild(childClone);
-            if (!shell.childNodes.length && shell.parentNode) shell.parentNode.removeChild(shell);
-            page = createPage();
-            if (typeof processMathEquationsInContainer === 'function') processMathEquationsInContainer(page);
-            if (typeof renderAllKatexVisuals === 'function') renderAllKatexVisuals(page);
-            shell = cloneElementShell(node);
-            appendToFitWrapper(page, shell);
+            openNextPage();
             shell.appendChild(childClone);
-            didSplit = true;
             // A figure/diagram can still be taller than a whole empty page.
             // It must not be split across pages, so scale it down to fit
             // instead of leaving it to overflow and get silently clipped.
