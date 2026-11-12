@@ -957,6 +957,36 @@ function _applyLanguageFormatChoice(id) {
 }
 window.refreshFormatChip = function () { renderSelectedCommandChips(); };
 
+// ===== THEME CHIP IN THE CHAT PANEL =====
+// A Design theme picked in the Theme tab is shown next to the command chips as just its square swatch
+// (the same swatch the Theme list uses), with a x that puts the theme back to Default.
+const AT_THEME_LABELS = {
+  aurora: 'Aurora Flow', editorial: 'Editorial', midnight: 'Midnight Canvas', blueprint: 'Blueprint Grid',
+  sage: 'Sage Minimal', minimal: 'Minimal Paper', rose: 'Rose Studio', ocean: 'Ocean Depth', highcontrast: 'High Contrast'
+};
+function _getCurrentThemeId() {
+  try { return (typeof getActivePDFVisualFormat === 'function' ? getActivePDFVisualFormat() : 'default') || 'default'; }
+  catch (_) { return 'default'; }
+}
+// The theme can also change from outside this file (saved choices re-applied at start-up, Reset, other code).
+// Wrap applyPDFVisualFormat once so the chip always follows the real active theme.
+function _installThemeChipHook() {
+  const fn = window.applyPDFVisualFormat;
+  if (typeof fn !== 'function') return false;
+  if (fn.__themeChipHooked) return true;
+  const wrapped = function () {
+    const r = fn.apply(this, arguments);
+    const refresh = () => { try { renderSelectedCommandChips(); } catch (_) { /* chips not ready yet */ } };
+    if (r && typeof r.then === 'function') r.then(refresh, refresh); else refresh();
+    return r;
+  };
+  wrapped.__themeChipHooked = true;
+  window.applyPDFVisualFormat = wrapped;
+  return true;
+}
+[0, 400, 1500, 4000].forEach(ms => setTimeout(_installThemeChipHook, ms));
+window.addEventListener('load', _installThemeChipHook);
+
 // ===== RENDER CHIPS =====
 // Chat-panel chips show the command's own title (Create / Copy / Copy & Refine ...), WITHOUT a leading "@".
 // Display only: the stored command ids are never changed.
@@ -1010,6 +1040,35 @@ function renderSelectedCommandChips() {
     chip.appendChild(removeBtn);
     wrap.appendChild(chip);
   });
+
+  // Selected Design theme (anything but Default) -> show ONLY its square swatch, no name.
+  const themeId = _getCurrentThemeId();
+  if (themeId && themeId !== 'default') {
+    const themeLabel = AT_THEME_LABELS[themeId] || themeId;
+    const chip = document.createElement('span');
+    chip.className = 'at-chip at-chip-theme';
+    chip.title = 'Theme: ' + themeLabel;
+    chip.setAttribute('aria-label', 'Theme: ' + themeLabel);
+    const labelSpan = document.createElement('span');
+    const sw = document.createElement('span');
+    sw.className = 'at-format-swatch at-chip-swatch ' + themeId.replace(/[^a-z0-9_-]/gi, '');
+    labelSpan.appendChild(sw);
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'at-chip-remove';
+    removeBtn.setAttribute('aria-label', 'Reset theme to Default');
+    removeBtn.textContent = '×';
+    removeBtn.onclick = () => {
+      if (typeof choosePDFVisualFormat === 'function') choosePDFVisualFormat('default');
+      else if (typeof applyPDFVisualFormat === 'function') applyPDFVisualFormat('default');
+      if (window.PaperlyMenuPrefs) window.PaperlyMenuPrefs.save({ visual: 'default' });
+      renderSelectedCommandChips();
+      if (AT_MENU_STATE.open) renderAtCommandMenuList();
+    };
+    chip.appendChild(labelSpan);
+    chip.appendChild(removeBtn);
+    wrap.appendChild(chip);
+  }
 
   // Non-default Format (anything other than "Aa" Default) -> show it here too.
   _ensureAtSelXStyle();
@@ -1329,6 +1388,7 @@ function renderAtCommandMenuList() {
     row.onclick = () => {
       if (typeof choosePDFVisualFormat === 'function') choosePDFVisualFormat(f.id);
       if (window.PaperlyMenuPrefs) window.PaperlyMenuPrefs.save({ visual: f.id });
+      renderSelectedCommandChips();
     };
     const sw = document.createElement('span');
     sw.className = 'at-format-swatch ' + f.id;
