@@ -113,6 +113,10 @@ function _resetTransientChatState() {
 //        OFF → AI recreates figures from the text layer (requires
 //              useAIVision = ON to have any effect).
 //
+//   3) showQuotes           (default true)
+//        ON  → the processing modal shows a fresh AI-written quote.
+//        OFF → no quote is shown and no AI request is made for quotes.
+//
 // ocr.js reads the values through these compatibility shims:
 //   window.isOcrKeepImageSwitchOn()        → true  when images should NOT be read
 //   window.isTextFigureRecreateSwitchOn()  → true  only when vision is on AND keepFiguresAsImage is off
@@ -122,6 +126,7 @@ const STUDIO_SETTINGS_KEY = 'paperly_studio_settings_v1';
 const STUDIO_SETTINGS_DEFAULTS = Object.freeze({
   useAIVision: true,
   keepFiguresAsImage: true,
+  showQuotes: true,
 });
 
 function _loadStudioSettings() {
@@ -133,6 +138,7 @@ function _loadStudioSettings() {
     if (!parsed || typeof parsed !== 'object') return out;
     if (typeof parsed.useAIVision === 'boolean') out.useAIVision = parsed.useAIVision;
     if (typeof parsed.keepFiguresAsImage === 'boolean') out.keepFiguresAsImage = parsed.keepFiguresAsImage;
+    if (typeof parsed.showQuotes === 'boolean') out.showQuotes = parsed.showQuotes;
     // Backward compat with the older key scheme
     if (parsed.ocrImagePolicy === 'keep-image' && typeof parsed.useAIVision !== 'boolean') out.useAIVision = false;
     if (parsed.ocrImagePolicy === 'read-vision' && typeof parsed.useAIVision !== 'boolean') out.useAIVision = true;
@@ -148,6 +154,7 @@ function _saveStudioSettings() {
     localStorage.setItem(STUDIO_SETTINGS_KEY, JSON.stringify({
       useAIVision: !!s.useAIVision,
       keepFiguresAsImage: !!s.keepFiguresAsImage,
+      showQuotes: s.showQuotes !== false,
     }));
   } catch (_) {}
 }
@@ -460,6 +467,13 @@ window.renderStudioSwitches = function (containerEl, options) {
     onStatus: 'Figures are cropped from the page and inserted as images.',
     offStatus: 'AI recreates figures from the page text. Results may differ from the original.',
     lockedStatus: 'Locked on while AI Vision is off. Turn on \u201cUse AI Vision\u201d to let AI recreate figures.'
+  }));
+  rows.push(buildSwitch({
+    key: 'showQuotes',
+    label: 'Show quotes',
+    desc: 'Show a short quote in the processing window while your file is being processed.',
+    onStatus: 'A fresh AI-written quote appears in the processing window.',
+    offStatus: 'No quote is shown, and no AI request is made for quotes.'
   }));
 
   // Auto-switch lives here now (moved out of the AI Models panel). Its row is
