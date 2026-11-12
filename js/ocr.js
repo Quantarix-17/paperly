@@ -1,6 +1,7 @@
 // ========================================================================
 // OCR PIPELINE - Local OCR for images and PDFs using Tesseract.js
-// (fixed + faster revision - post-review)
+// (fully integrated with new ProgressUI: Live Activity, Model Badge,
+//  Scope Badge, Page Counter, Per-File Progress, Multi-Stage Flow)
 // ========================================================================
 
 let ocrWorkerPool = [];
@@ -12,7 +13,6 @@ function _figCfg(key, fallback) {
   const v = (typeof APP_CONFIG !== 'undefined' && APP_CONFIG) ? APP_CONFIG[key] : undefined;
   return v === undefined ? fallback : v;
 }
-// numeric config that keeps legitimate 0 values and ignores NaN
 function _ocrNum(key, fallback) {
   const v = Number(_figCfg(key, fallback));
   return Number.isFinite(v) ? v : fallback;
@@ -27,24 +27,22 @@ function _ocrCancelled() {
   } catch (_) { return false; }
 }
 function _ocrSleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
-function _ocrTick() { return new Promise(resolve => setTimeout(resolve, 0)); } // let the UI breathe between heavy steps
+function _ocrTick() { return new Promise(resolve => setTimeout(resolve, 0)); }
 function _ocrFreeCanvas(c) { try { if (c) { c.width = 0; c.height = 0; } } catch (_) {} }
 
-// Shared rotation helper: applies the same transform used by both OCR canvas builders.
-// `w`,`h` are the PRE-rotation (source) dimensions; the target ctx must already be the rotated size.
+// Shared rotation helper
 function _ocrApplyRotate(ctx, w, h, angle) {
   if (angle === 90) { ctx.translate(h, 0); ctx.rotate(Math.PI / 2); }
   else if (angle === 180) { ctx.translate(w, h); ctx.rotate(Math.PI); }
   else if (angle === 270) { ctx.translate(0, w); ctx.rotate(-Math.PI / 2); }
 }
 
-// run fn over items with at most `limit` running at once; aborts early on cancellation
 async function _ocrMapLimit(items, limit, fn) {
   const out = new Array(items.length);
   let next = 0;
   const run = async () => {
     while (true) {
-      if (_ocrCancelled()) return;             // stop consuming new items after cancel
+      if (_ocrCancelled()) return;
       const i = next++;
       if (i >= items.length) return;
       out[i] = await fn(items[i], i);
@@ -59,7 +57,7 @@ function _ocrPoolTarget() {
   return Math.max(1, Math.min(8, Math.floor(_ocrNum('OCR_MAX_PARALLEL_WORKERS', 2)) || 2));
 }
 
-// Progress-bar hide scheduling with a generation counter so a stale timeout cannot hide a newer progress UI.
+// Progress-hide generation counter
 let _progressHideGen = 0;
 function _scheduleHideProgress(ms) {
   const gen = ++_progressHideGen;
@@ -70,13 +68,33 @@ function _scheduleHideProgress(ms) {
 }
 function _cancelScheduledHide() { _progressHideGen++; }
 
+// Small guarded ProgressUI helpers (never throw if UI isn't loaded)
+function _pgLabel(t) {
+  if (typeof ProgressUI !== 'undefined' && ProgressUI.setLabel) ProgressUI.setLabel(t);
+}
+function _pgScope(t) {
+  if (typeof ProgressUI !== 'undefined' && ProgressUI.setScope) ProgressUI.setScope(t);
+}
+function _pgModel(m) {
+  if (typeof ProgressUI !== 'undefined' && ProgressUI.setActiveModel) ProgressUI.setActiveModel(m);
+}
+function _pgStage(label, start, end, opts) {
+  if (typeof ProgressUI !== 'undefined' && ProgressUI.setStage) ProgressUI.setStage(label, start, end, opts || {});
+}
+function _pgPage(cur, total) {
+  if (typeof ProgressUI !== 'undefined' && ProgressUI.updateLivePageNumber) ProgressUI.updateLivePageNumber(cur, total);
+}
+function _pgFileAdd(key, name, phase, meta) {
+  if (typeof ProgressUI !== 'undefined' && ProgressUI.addFileProgress) ProgressUI.addFileProgress(key, name, phase, meta);
+}
+function _pgFileUpd(key, pct, phase, meta, state) {
+  if (typeof ProgressUI !== 'undefined' && ProgressUI.updateFileProgress) ProgressUI.updateFileProgress(key, pct, phase, meta || '', state || 'working');
+}
+
 // ===== OCR WORKER MANAGEMENT =====
 async function createConfiguredOcrWorker() {
   if (typeof Tesseract === 'undefined') throw new Error('OCR engine (Tesseract.js) is not loaded');
-  const languageCandidates = [
-    ['eng', 'ben'],
-    'eng'
-  ];
+  const languageCandidates = [['eng', 'ben'], 'eng'];
   let lastError = null;
   for (const langs of languageCandidates) {
     try {
@@ -101,7 +119,6 @@ async function createConfiguredOcrWorker() {
   throw new Error('OCR engine could not initialize' + (lastError?.message ? `: ${lastError.message}` : ''));
 }
 
-// Returns live slots. Dead slots (failed replacement) are dropped and rebuilt. Workers are created in parallel.
 async function ensureOcrWorkerPool(size) {
   const target = Math.max(1, Math.min(size || 1, _ocrPoolTarget()));
   while (true) {
@@ -117,7 +134,7 @@ async function ensureOcrWorkerPool(size) {
       let firstError = null;
       for (const r of settled) {
         if (r.status !== 'fulfilled') { firstError = firstError || r.reason; continue; }
-        if (generation !== ocrPoolGeneration) {          // cancelled while starting -> do not keep it
+        if (generation !== ocrPoolGeneration) {
           try { await r.value.terminate(); } catch (_) {}
           continue;
         }
@@ -138,14 +155,13 @@ async function ensureOcrWorkerPool(size) {
   }
 }
 
-// Take a free worker slot. Never spins forever: stops on cancellation or after maxWaitMs.
 async function acquireOcrSlot(maxWaitMs) {
   const deadline = Date.now() + (maxWaitMs || 180000);
   while (true) {
     if (_ocrCancelled()) throw new Error('OCR cancelled');
     await ensureOcrWorkerPool(_ocrPoolTarget());
     const slot = ocrWorkerPool.find(s => s && !s.busy && !s.dead);
-    if (slot) { slot.busy = true; return slot; } // find + flag happen in the same tick
+    if (slot) { slot.busy = true; return slot; }
     if (Date.now() > deadline) throw new Error('Timed out waiting for a free OCR worker');
     await _ocrSleep(20);
   }
@@ -169,24 +185,23 @@ async function terminateOcrWorkersForCancellation() {
 async function replaceTimedOutOcrWorker(slot) {
   if (!slot) return;
   const old = slot.worker;
-  slot.dead = true;          // unusable until a replacement exists
+  slot.dead = true;
   slot.psm = null;
   try {
     if (old && typeof old.terminate === 'function') await old.terminate();
   } catch (e) {
     console.warn('Failed to terminate timed-out OCR worker:', e);
   }
-  if (_ocrCancelled() || ocrWorkerPool.indexOf(slot) < 0) { slot.worker = null; return; } // pool was torn down meanwhile
+  if (_ocrCancelled() || ocrWorkerPool.indexOf(slot) < 0) { slot.worker = null; return; }
   try {
     slot.worker = await createConfiguredOcrWorker();
     slot.dead = false;
   } catch (e) {
     console.error('Could not replace OCR worker:', e);
-    slot.worker = null;      // stays dead; ensureOcrWorkerPool will rebuild it for later callers
+    slot.worker = null;
   }
 }
 
-// setParameters only when the page-seg mode actually changes; tolerate params a Tesseract build rejects
 async function _ocrSetPsm(slot, psm) {
   if (slot.psm === psm) return;
   const attempts = [
@@ -200,7 +215,7 @@ async function _ocrSetPsm(slot, psm) {
   slot.psm = null;
 }
 
-// ===== OCR IMAGE PREPROCESSING (single shared engine) =====
+// ===== OCR IMAGE PREPROCESSING =====
 function _ocrOtsu(hist, total) {
   if (!total) return 128;
   let sum = 0;
@@ -220,7 +235,7 @@ function _ocrOtsu(hist, total) {
 }
 
 function _ocrBuildLut(mode, profile, mean, std, hist, total) {
-  const lut = new Uint8ClampedArray(256); // clamps + rounds for us
+  const lut = new Uint8ClampedArray(256);
   const src = profile === 'source';
   if (mode === 'threshold') {
     const t = _ocrOtsu(hist, total);
@@ -234,7 +249,7 @@ function _ocrBuildLut(mode, profile, mean, std, hist, total) {
     for (let g = 0; g < 256; g++) lut[g] = (g - mean) * gain + off;
   } else if (mode === 'fixed') {
     for (let g = 0; g < 256; g++) lut[g] = (g - 128) * 1.28 + 132;
-  } else { // 'base'
+  } else {
     const gain = src ? (std < 34 ? 1.55 : std < 50 ? 1.25 : 1.08) : 1.15;
     const off = src ? 128 : 132;
     for (let g = 0; g < 256; g++) lut[g] = (g - mean) * gain + off;
@@ -242,7 +257,6 @@ function _ocrBuildLut(mode, profile, mean, std, hist, total) {
   return lut;
 }
 
-// grayscale + histogram in one pass, mean/std from the histogram, then one lookup-table pass
 function _ocrPreprocessInPlace(canvas, mode, profile) {
   try {
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
@@ -324,7 +338,6 @@ function createOcrVariantFromCanvas(sourceCanvas, mode = 'base') {
   return _ocrPreprocessInPlace(canvas, mode, 'variant');
 }
 
-// Plain rotation of an already prepared canvas (NO second preprocessing). Optionally downsized for speed.
 function _ocrRotateCanvas(src, angle, maxLongEdge) {
   const k = Math.min(1, (maxLongEdge || 1e9) / Math.max(1, Math.max(src.width, src.height)));
   const w = Math.max(1, Math.round(src.width * k));
@@ -348,7 +361,7 @@ async function recognizeWithTimeout(worker, canvas, timeoutMs) {
   const timeout = Math.max(3000, Number(timeoutMs) || 15000);
   let timer = null;
   const job = worker.recognize(canvas);
-  job.catch(() => {}); // a late rejection (after timeout / terminate) must not become an unhandled rejection
+  job.catch(() => {});
   try {
     return await Promise.race([
       job,
@@ -361,7 +374,6 @@ async function recognizeWithTimeout(worker, canvas, timeoutMs) {
   }
 }
 
-// big canvases legitimately need longer; avoids killing (and rebuilding) workers for no reason
 function _ocrScaledTimeout(baseMs, canvas) {
   const mp = ((canvas && canvas.width) || 0) * ((canvas && canvas.height) || 0) / 2e6;
   return Math.round(baseMs * Math.min(6, Math.max(1, mp)));
@@ -380,10 +392,6 @@ async function _ocrRecognizeOnce(slot, canvas, psm, timeoutMs) {
 }
 
 // ===== TALL MATH DELIMITER DETECTION =====
-// (unchanged detection logic; note: `dy = -2..2` is intentional for brace-fragment merging —
-//  the `aspect < 0.5` filter keeps wide merged components from being treated as brackets)
-// APP_CONFIG.OCR_COMPLEX_MATH_POLICY (old name OCR_TALL_BRACKET_POLICY also works):
-//   'vision-then-image' (default) | 'vision' | 'off'
 function _ocrTallPolicy() {
   const v = String(_figCfg('OCR_COMPLEX_MATH_POLICY', _figCfg('OCR_TALL_BRACKET_POLICY', 'vision-then-image')));
   return (v === 'off' || v === 'vision') ? v : 'vision-then-image';
@@ -413,13 +421,12 @@ function _ocrDetectTallDelimiter(source) {
     const t = _ocrOtsu(hist, n);
     let dark = 0;
     for (let i = 0; i <= t; i++) dark += hist[i];
-    const inkIsDark = dark <= n * 0.5;                    // ink is the minority colour (handles dark-mode screenshots)
+    const inkIsDark = dark <= n * 0.5;
     const ink = new Uint8Array(n);
     for (let j = 0; j < n; j++) ink[j] = (inkIsDark ? gray[j] <= t : gray[j] > t) ? 1 : 0;
 
-    // connected components; a pixel also joins ink up to 2 rows away so a brace broken by thresholding stays in one piece
     const label = new Int32Array(n);
-    const comps = [];                                     // {x0,y0,x1,y1,area}
+    const comps = [];
     const stack = new Int32Array(n);
     for (let start = 0; start < n; start++) {
       if (!ink[start] || label[start]) continue;
@@ -442,11 +449,11 @@ function _ocrDetectTallDelimiter(source) {
         }
       }
       comps.push(cp);
-      if (comps.length > 20000) return null;              // noise / photo: not a clean text picture
+      if (comps.length > 20000) return null;
     }
     const hs = comps.filter(c => c.area >= 6 && (c.y1 - c.y0 + 1) >= 4).map(c => c.y1 - c.y0 + 1).sort((a, b) => a - b);
     if (hs.length < 4) return null;
-    const med = Math.max(6, hs[hs.length >> 1]);          // typical glyph height
+    const med = Math.max(6, hs[hs.length >> 1]);
     const minH = Math.max(3 * med, Math.round(0.03 * Math.max(w, h)), 24);
 
     let tall = null;
@@ -454,9 +461,8 @@ function _ocrDetectTallDelimiter(source) {
       const cw = cp.x1 - cp.x0 + 1, ch = cp.y1 - cp.y0 + 1;
       if (ch < minH || cw < 4) continue;
       const aspect = cw / ch;
-      if (aspect < 0.05 || aspect > 0.5) continue;        // not a thin, tall glyph
-      if (cp.area / (cw * ch) > 0.55) continue;           // solid blob
-      // a bracket CURVES: the ink's mean x moves along the height. A straight rule / table border does not.
+      if (aspect < 0.05 || aspect > 0.5) continue;
+      if (cp.area / (cw * ch) > 0.55) continue;
       let lo = Infinity, hi = -Infinity;
       for (let y = cp.y0; y <= cp.y1; y++) {
         let sum = 0, cnt = 0;
@@ -468,11 +474,9 @@ function _ocrDetectTallDelimiter(source) {
       if (hi - lo >= 0.25 * cw) { tall = { x: cp.x0 / w, y: cp.y0 / h, w: cw / w, h: ch / h, heightRatio: ch / med }; break; }
     }
 
-    // glyph-sized components (for the two checks below)
     const glyphs = comps.filter(c => c.area >= 6 && (c.y1 - c.y0 + 1) >= Math.max(3, 0.3 * med));
     const overlapX = (a, b) => Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0) + 1;
 
-    // FRACTION BAR: a thin horizontal stroke with ink hugging it from above AND below (numerator / denominator).
     let fractionBars = 0;
     for (const cp of comps) {
       const cw = cp.x1 - cp.x0 + 1, ch = cp.y1 - cp.y0 + 1;
@@ -490,7 +494,6 @@ function _ocrDetectTallDelimiter(source) {
       if (above && below) fractionBars++;
     }
 
-    // ACCENT over a letter (x-bar, x-hat, x-tilde)
     let barAccents = 0;
     for (const cp of comps) {
       const cw = cp.x1 - cp.x0 + 1, ch = cp.y1 - cp.y0 + 1;
@@ -513,9 +516,8 @@ function _ocrDetectTallDelimiter(source) {
     return null;
   }
 }
-const _ocrDetectMathLayout = _ocrDetectTallDelimiter;   // same function, clearer name
+const _ocrDetectMathLayout = _ocrDetectTallDelimiter;
 
-// TEXT-level suspicion: things Tesseract tends to get wrong or silently simplify.
 function _ocrTextLooksComplexMath(text) {
   const t = String(text || '');
   const reasons = [];
@@ -611,7 +613,6 @@ async function recognizeImageWithOcr(imageSource, opts = {}) {
     const scoreOf = (c) => (c.confidence || 0) + Math.min(35, Math.log1p((c.text || '').length) * 2.2);
     const stop = () => slot.dead || _ocrCancelled();
 
-    // ---- FAST TRIAGE ----
     for (let i = 0; i < triagePasses && attempts < maxTotalPasses && !stop(); i++) {
       const pass = allPasses[i];
       let cv = imageSource, own = false;
@@ -623,7 +624,6 @@ async function recognizeImageWithOcr(imageSource, opts = {}) {
       }
     }
 
-    // ---- DEEP PASSES (only when triage saw some text) ----
     if (candidates.length) {
       for (let i = triagePasses; i < allPasses.length && attempts < maxTotalPasses && !stop(); i++) {
         const pass = allPasses[i];
@@ -634,7 +634,6 @@ async function recognizeImageWithOcr(imageSource, opts = {}) {
       }
     }
 
-    // ---- ROTATION RECOVERY ----
     const upright = candidates.filter(c => c.group === 0).sort((a, b) => scoreOf(b) - scoreOf(a));
     const bestUp = upright[0] || null;
     const needRotation = allowRotation && !stop() && (!bestUp || bestUp.confidence < 55 || bestUp.lineCount < 2);
@@ -712,12 +711,11 @@ function _parseDataUrl(dataUrl) {
   const match = /^data:([^;]+);base64,(.+)$/s.exec(String(dataUrl || ''));
   if (!match) return null;
   const b64 = match[2];
-  if (!b64 || !b64.trim()) return null;    // reject empty payloads: server would 400 & trip the breaker
+  if (!b64 || !b64.trim()) return null;
   return { mimeType: match[1], base64Data: b64 };
 }
 
 async function callGeminiVisionForOCR(cfg, base64Data, mimeType, promptText, signal) {
-  // The API key goes in a header, never in the URL.
   const baseUrl = String(cfg.apiUrl || '')
     .replace(/([?&])key=[^&]*&?/i, '$1')
     .replace(/[?&]$/, '');
@@ -729,7 +727,6 @@ async function callGeminiVisionForOCR(cfg, base64Data, mimeType, promptText, sig
         { inline_data: { mime_type: mimeType, data: base64Data } }
       ]
     }],
-    // maxOutputTokens prevents huge transcriptions from being silently truncated by the default cap.
     generationConfig: {
       temperature: 0,
       maxOutputTokens: Math.max(2048, _ocrNum('VISION_MAX_OUTPUT_TOKENS', 8192))
@@ -805,20 +802,22 @@ let _visionChain = Promise.resolve();
 const _visionBreaker = { until: 0, notified: false };
 const _visionModelFails = new Map();
 let _visionModelFailsResetAt = 0;
+// NEW: per-run budget so a giant document can't burn unlimited API calls.
+const _visionBudget = { calls: 0, max: 20 };
 
 function resetVisionBreaker() {
   _visionBreaker.until = 0;
   _visionBreaker.notified = false;
   _visionModelFails.clear();
   _visionModelFailsResetAt = Date.now();
+  _visionBudget.calls = 0;
+  _visionBudget.max = Math.max(1, _ocrNum('VISION_MAX_CALLS_PER_RUN', 20));
 }
 window.resetVisionBreaker = resetVisionBreaker;
 
 function _visionBreakerActive() { return Date.now() < _visionBreaker.until; }
 function _visionModelKey(cfg) { return String((cfg && (cfg.id || cfg.modelId || cfg.name)) || 'model'); }
 
-// Transient network/API errors should not permanently disable a model for a long doc.
-// Soft-reset the per-model fail counters every VISION_MODEL_FAILS_RESET_MS (default 60 s).
 function _maybeSoftResetVisionFails() {
   const now = Date.now();
   const interval = Math.max(5000, _ocrNum('VISION_MODEL_FAILS_RESET_MS', 60000));
@@ -848,6 +847,10 @@ async function _callVisionModelOnce(cfg, dataUrl, label, promptText, timeoutMs) 
 async function _runVisionPass(dataUrl, label, promptText) {
   if (_figCfg('VISION_FALLBACK_ENABLED', true) === false) return '';
   if (_visionBreakerActive()) return '';
+  if (_visionBudget.calls >= _visionBudget.max) {
+    _pgScope(`Vision: budget reached (${_visionBudget.calls}/${_visionBudget.max})`);
+    return '';
+  }
   _maybeSoftResetVisionFails();
   const all = getVisionFallbackModelCandidates();
   if (!all.length) return '';
@@ -857,9 +860,22 @@ async function _runVisionPass(dataUrl, label, promptText) {
   const stopOnEmpty = _figCfg('VISION_STOP_ON_EMPTY_ANSWER', true) !== false;
   let failed = 0;
   let answered = false;
-  for (const cfg of models) {
+
+  for (let i = 0; i < models.length; i++) {
     if (_ocrCancelled()) return '';
+    if (_visionBudget.calls >= _visionBudget.max) {
+      _pgScope(`Vision: budget reached (${_visionBudget.calls}/${_visionBudget.max})`);
+      return '';
+    }
+    const cfg = models[i];
     const key = _visionModelKey(cfg);
+    _visionBudget.calls++;
+
+    // NEW: model badge + scope + activity label
+    _pgModel(cfg);
+    _pgScope(`Vision: model ${i + 1}/${models.length} · call ${_visionBudget.calls}/${_visionBudget.max}${label ? ' · ' + label : ''}`);
+    _pgLabel(`AI vision reading${label ? ' ' + label : ''} (model ${i + 1}/${models.length})…`);
+
     try {
       const text = await _callVisionModelOnce(cfg, dataUrl, label, promptText, timeoutMs);
       _visionModelFails.set(key, 0);
@@ -904,6 +920,8 @@ async function runOcrOnImageFile(file) {
     if (tok) return { text: tok, confidence: 0, skipped: false, keptAsImage: true, figureTokens: [tok] };
   }
 
+  _pgLabel(`Preparing "${file.name}"…`);
+
   const objUrl = URL.createObjectURL(file);
   let canvas = null, cleanCanvas = null;
   try {
@@ -916,6 +934,7 @@ async function runOcrOnImageFile(file) {
 
     const tallPolicy = _ocrTallPolicy();
     if (tallPolicy !== 'off' && !_ocrCancelled() && _ocrDetectMathLayout(img)) {
+      _pgLabel(`"${file.name}" has math structure — trying AI vision first…`);
       const tallUrl = await getDataUrl();
       const tallText = await runGeminiVisionOCRFromDataUrl(tallUrl, file.name);
       if (tallText) {
@@ -931,6 +950,8 @@ async function runOcrOnImageFile(file) {
     const targetLongEdge = _ocrNum('OCR_TARGET_LONG_EDGE', 4200);
     const scale = Math.min(3.2, Math.max(1, targetLongEdge / Math.max(1, longEdge)));
     canvas = createOcrCanvasFromImage(img, scale, 'base', 0);
+
+    _pgLabel(`Reading text from "${file.name}"…`);
     let result = await recognizeImageWithOcr(canvas);
 
     const isWeakOcrResult = (candidate) => {
@@ -947,6 +968,7 @@ async function runOcrOnImageFile(file) {
 
     if (hasText(result) && !_ocrCancelled() && !textSuspect.complex) {
       try {
+        _pgLabel(`"${file.name}": weak OCR, retrying on unprocessed image…`);
         cleanCanvas = document.createElement('canvas');
         cleanCanvas.width = canvas.width;
         cleanCanvas.height = canvas.height;
@@ -962,6 +984,7 @@ async function runOcrOnImageFile(file) {
       }
     }
 
+    _pgLabel(`"${file.name}": local OCR unsure — trying AI vision…`);
     const dataUrl = await getDataUrl();
     const visionText = await runGeminiVisionOCRFromDataUrl(dataUrl, file.name);
     if (visionText) {
@@ -977,6 +1000,7 @@ async function runOcrOnImageFile(file) {
 
     const veryWeak = !hasText(result) || (Number(result.confidence) || 0) < 30;
     if (veryWeak) {
+      _pgLabel(`"${file.name}": keeping as original image…`);
       const keptTok = await _keepImageFileAsImage(dataUrl);
       if (keptTok) return { text: keptTok, confidence: 0, skipped: false, keptAsImage: true, figureTokens: [keptTok] };
     }
@@ -1024,7 +1048,6 @@ async function runOCRWithAIFallback(file, options = {}) {
     throw new Error(message);
   }
 }
-// (options retained for API compatibility; the public entry point so external callers can use it)
 window.runOCRWithAIFallback = runOCRWithAIFallback;
 
 // ===== EXTRACT TEXT FROM IMAGES =====
@@ -1043,14 +1066,15 @@ async function extractTextFromImageFilesWithOCR(files, options = {}) {
 
   if (!preservePreview && typeof ProgressUI !== 'undefined' && ProgressUI.clearPreview) ProgressUI.clearPreview();
   files.forEach((file, index) => {
-    if (typeof ProgressUI !== 'undefined' && ProgressUI.addFileProgress) {
-      ProgressUI.addFileProgress(progressKeys[index], file.name, 'Queued', 'Waiting to start');
-    }
+    _pgFileAdd(progressKeys[index], file.name, 'Queued', 'Waiting to start');
   });
-  if (typeof ProgressUI !== 'undefined' && ProgressUI.setLabel) {
-    ProgressUI.setLabel(`OCR reading ${files.length} image(s) — ${parallel} in parallel...`);
+
+  // NEW: stage + step-based progress
+  _pgStage(`OCR reading ${files.length} image(s)`, 0, 95);
+  if (typeof ProgressUI !== 'undefined' && ProgressUI.startStepEstimate) {
     ProgressUI.startStepEstimate(files.length);
   }
+  _pgLabel(`OCR reading ${files.length} image(s) — ${parallel} in parallel...`);
 
   async function worker() {
     while (true) {
@@ -1058,9 +1082,11 @@ async function extractTextFromImageFilesWithOCR(files, options = {}) {
       if (itemIndex >= queue.length || _ocrCancelled()) return;
       const { file, index, progressKey } = queue[itemIndex];
       try {
-        if (typeof ProgressUI !== 'undefined' && ProgressUI.updateFileProgress) {
-          ProgressUI.updateFileProgress(progressKey, 8, 'Reading', 'Loading image and preparing OCR');
-        }
+        // NEW: page/file counter in main badge
+        _pgPage(index + 1, files.length);
+        _pgLabel(`Reading "${file.name}" (${index + 1}/${files.length})…`);
+        _pgFileUpd(progressKey, 8, 'Reading', 'Loading image and preparing OCR');
+
         const ocrResult = await runOcrOnImageFile(file);
         results[index] = {
           file,
@@ -1077,34 +1103,26 @@ async function extractTextFromImageFilesWithOCR(files, options = {}) {
         };
         if (ocrResult?.skipped && !String(ocrResult?.text || '').trim()) {
           const skipMeta = ocrResult?.skipReason || 'No readable text detected; skipped this non-text region.';
-          if (typeof ProgressUI !== 'undefined' && ProgressUI.updateFileProgress) {
-            ProgressUI.updateFileProgress(progressKey, 100, 'Skipped', skipMeta, 'fallback');
-          }
+          _pgFileUpd(progressKey, 100, 'Skipped', skipMeta, 'fallback');
         } else {
           const confidenceText = ocrResult?.keptAsImage
             ? 'Not readable as text — kept as original image'
             : ocrResult?.needsVision
             ? 'OCR uncertain — image will be sent to AI vision when you ask a question'
             : (typeof ocrResult?.confidence === 'number' ? `OCR confidence ${Math.round(ocrResult.confidence)}%` : 'OCR complete');
-          if (typeof ProgressUI !== 'undefined' && ProgressUI.updateFileProgress) {
-            ProgressUI.updateFileProgress(progressKey, 100, 'Done', confidenceText, 'done');
-          }
+          _pgFileUpd(progressKey, 100, 'Done', confidenceText, 'done');
         }
       } catch (error) {
         console.warn(`OCR failed for image ${index + 1} (${file.name}):`, error);
         results[index] = { file, text: '', ai: false, confidence: 0, needsVision: true, error };
         const message = ((error && error.message) || 'OCR failed').slice(0, 140);
-        if (typeof ProgressUI !== 'undefined' && ProgressUI.updateFileProgress) {
-          ProgressUI.updateFileProgress(progressKey, 100, 'Failed', message, 'error');
-        }
+        _pgFileUpd(progressKey, 100, 'Failed', message, 'error');
       } finally {
         completed++;
         if (typeof ProgressUI !== 'undefined' && ProgressUI.reportStepComplete) {
           ProgressUI.reportStepComplete(completed);
         }
-        if (typeof ProgressUI !== 'undefined' && ProgressUI.setLabel) {
-          ProgressUI.setLabel(`OCR: ${completed}/${files.length} files complete — remaining ${files.length - completed}`);
-        }
+        _pgLabel(`OCR: ${completed}/${files.length} files complete — remaining ${files.length - completed}`);
       }
     }
   }
@@ -1117,7 +1135,6 @@ async function extractTextFromImageFilesWithOCR(files, options = {}) {
 function normalizeOcrMathLine(line) {
   let t = String(line || '').trim();
   if (!t) return '';
-  // Accents over a letter. A BAR (x̄ = mean, \bar{x}) and a CAP / HAT (x̂ = estimate, \hat{x}) are different things.
   const ACC = { '\u0304': 'bar', '\u0305': 'bar', '\u00AF': 'bar', '\u02C9': 'bar', '\u203E': 'bar', '\u0302': 'hat', '\u02C6': 'hat',
     '\u0303': 'tilde', '\u02DC': 'tilde', '\u20D7': 'vec', '\u0307': 'dot', '\u02D9': 'dot', '\u0308': 'ddot' };
   t = t.replace(/([A-Za-z])([\u0304\u0305\u00AF\u02C9\u203E\u0302\u02C6\u0303\u02DC\u20D7\u0307\u02D9\u0308])/g, (m, L, a) => `\\${ACC[a]}{${L}}`);
@@ -1162,7 +1179,6 @@ function looksLikeOcrEquation(line) {
   return mathSignals >= 1 && (digits >= 1 || letters >= 2);
 }
 
-// Only meant for OCR output. Do NOT run it on DOCX / TXT text.
 function postProcessOCRTextForMath(text) {
   const raw = String(text || '');
   if (!raw) return '';
@@ -1174,7 +1190,6 @@ function postProcessOCRTextForMath(text) {
     const trimmed = line.trim();
     if (!trimmed) { out.push(''); continue; }
     const wasInside = ddOpen || brOpen || envDepth > 0;
-    // FIX: a line that contains BOTH `\[` and `\]` should close and stay closed, not leak `brOpen = true`.
     const opensBr = /\\\[/.test(trimmed);
     const closesBr = /\\\]/.test(trimmed);
     if (countOf(trimmed, /\$\$/g) % 2 === 1) ddOpen = !ddOpen;
@@ -1352,8 +1367,7 @@ async function _detectPdfFigures(page, textContent) {
     });
     if (!f.hasImage && (sumLen > 220 || maxLen > 45)) continue;
     if (f.hasImage && sumLen > 400) continue;
-    // FIX: absorb short labels against the ORIGINAL bbox, not the growing bbox.
-    // Growing the box while comparing caused a small figure to slowly swallow an entire paragraph.
+    // absorb against ORIGINAL bbox (previous bug fix)
     const bx0 = x0, by0 = y0, bx1 = x1, by1 = y1;
     const ring = 12;
     rects.forEach((r) => {
@@ -1478,8 +1492,6 @@ async function _extractFiguresForTextPage(page, textContent, pageNum, fileTag, b
   if (budget.left <= 0) return null;
   const det = await _detectPdfFigures(page, textContent);
   if (!det.figures.length) return null;
-  // NOTE: budget.left = remaining STORED-IMAGE slots for the whole document; `tokens.length` is subtracted
-  // at the end. Figures that resolve to plain text do not count (they are not stored).
   const figures = det.figures.slice(0, budget.left);
   const canvases = await _cropPdfFigureCanvases(page, figures);
   if (!budget.stats) budget.stats = { ocr: 0, vision: 0, image: 0 };
@@ -1490,13 +1502,17 @@ async function _extractFiguresForTextPage(page, textContent, pageNum, fileTag, b
     if (!canvas) { outcomes.push(null); continue; }
     let o = { kind: 'image' };
     if ((f.hasImage || _figCfg('FIGURE_CASCADE_VECTOR', false)) && !_ocrCancelled()) {
-      if (typeof ProgressUI !== 'undefined' && ProgressUI.setLabel) ProgressUI.setLabel(`Page ${pageNum}: reading picture ${n + 1}/${figures.length} (OCR → AI vision → keep as image)…`);
+      // NEW: scope + label per figure
+      _pgScope(`Page ${pageNum} · Figure ${n + 1}/${figures.length}`);
+      _pgLabel(`Reading picture ${n + 1}/${figures.length} on page ${pageNum}…`);
       o = await _readFigureRegion(canvas, `page ${pageNum} picture ${n + 1}`);
     }
     if (o.kind === 'text') budget.stats[o.source === 'vision' ? 'vision' : 'ocr']++;
     else { o.dataUrl = _encodeFigureCanvas(canvas, f); budget.stats.image++; }
     outcomes.push(o);
   }
+  // Clear figure-specific scope
+  _pgScope('');
   canvases.forEach(c => _ocrFreeCanvas(c));
 
   const items = textContent.items;
@@ -1553,7 +1569,7 @@ async function _extractFiguresForTextPage(page, textContent, pageNum, fileTag, b
   return { text, tokens };
 }
 
-// ---- Persist cropped pictures in IndexedDB so [[FIG_..]] tokens still work after a page reload ----
+// ---- Persist cropped pictures in IndexedDB ----
 const _FIG_DB = { name: 'aiPdfStudio_figures_v1', store: 'figs', dbp: null };
 function _figDb() {
   if (_FIG_DB.dbp) return _FIG_DB.dbp;
@@ -1569,13 +1585,12 @@ function _figDb() {
   });
   return _FIG_DB.dbp;
 }
-// Full scan is throttled to once per day using localStorage, so opening the DB on every page load stays cheap.
 function _figDbPruneOld(db) {
   try {
     const lastKey = 'aiPdfStudio_figureLastPrune';
     const now = Date.now();
     const last = Number((typeof localStorage !== 'undefined' && localStorage.getItem(lastKey)) || 0);
-    if (now - last < 86400000) return; // once per day
+    if (now - last < 86400000) return;
     try { if (typeof localStorage !== 'undefined') localStorage.setItem(lastKey, String(now)); } catch (_) {}
     const maxAge = (_figCfg('FIGURE_DB_MAX_AGE_DAYS', 14)) * 86400000;
     const tx = db.transaction(_FIG_DB.store, 'readwrite');
@@ -1622,7 +1637,6 @@ async function figureDbDelete(tokens) {
 }
 function _storeFigure(token, rec) {
   PDF_FIGURE_STORE.set(token, rec);
-  // Persistence is best-effort but we still surface failures so a reload-loss is diagnosable.
   figureDbPut(token, rec).then(ok => {
     if (!ok) console.warn('Figure persistence failed (reload will lose this picture):', token);
   });
@@ -1732,19 +1746,25 @@ async function extractTextFromPDFWithOCRFallback(file, startPage, endPage, prelo
     const end = Math.min(totalPages, endPage || totalPages);
     const pagesToProcess = end - start + 1;
 
+    // NEW: initial stage setup
     if (typeof ProgressUI !== 'undefined') {
       ProgressUI.clearPreview();
-      ProgressUI.setLabel(`Reading pages ${start}–${end} of ${totalPages}...`);
-      ProgressUI.startStepEstimate(pagesToProcess);
+      _pgStage(`Reading pages ${start}–${end} of ${totalPages}`, 0, 20);
+      _pgLabel(`Reading pages ${start}–${end} of ${totalPages}...`);
     }
 
     const minTextLen = _ocrNum('OCR_MIN_TEXT_LEN_PER_PAGE', 30);
     const minTextItems = _ocrNum('OCR_MIN_TEXT_ITEMS_PER_PAGE', 5);
     const results = new Array(pagesToProcess).fill(null);
     const needsOcr = [];
+
+    // ===== PHASE 1: TEXT EXTRACTION =====
     for (let idx = 0; idx < pagesToProcess; idx++) {
       if (_ocrCancelled()) break;
       const pageNum = start + idx;
+
+      _pgPage(idx + 1, pagesToProcess);
+
       const page = await pdfDoc.getPage(pageNum);
       const textContent = await page.getTextContent();
       const pageText = textContent.items.map(it => it.str).join(' ').trim();
@@ -1760,23 +1780,18 @@ async function extractTextFromPDFWithOCRFallback(file, startPage, endPage, prelo
           console.warn(`Figure extraction skipped on page ${pageNum}:`, figErr);
         }
         results[idx] = { text: pageTextOut, ocr: false };
-        if (typeof ProgressUI !== 'undefined' && ProgressUI.addPagePreview) {
-          ProgressUI.addPagePreview(` Page ${pageNum} (text)`, pageText.slice(0, 120) + (pageText.length > 120 ? '…' : ''), 'done');
-        }
         try { page.cleanup(); } catch (_) {}
       }
     }
 
     let completedSteps = results.filter(Boolean).length;
-    if (typeof ProgressUI !== 'undefined' && ProgressUI.reportStepComplete) {
-      ProgressUI.reportStepComplete(completedSteps);
-    }
 
+    // ===== PHASE 2: OCR SCANNED PAGES =====
     let avgConf = 0;
     if (needsOcr.length > 0 && !_ocrCancelled()) {
-      if (typeof ProgressUI !== 'undefined' && ProgressUI.setLabel) {
-        ProgressUI.setLabel(`OCR reading ${needsOcr.length} scanned page(s) with full pipeline...`);
-      }
+      // NEW: phase transition
+      _pgStage(`OCR ${needsOcr.length} scanned page(s)`, 20, 80);
+      _pgLabel(`OCR reading ${needsOcr.length} scanned page(s)...`);
 
       const keepPageAsImage = async (page, pageNum) => {
         if (_keptPages.kept >= _keptPageMax) { _keptPages.dropped++; return ''; }
@@ -1784,6 +1799,9 @@ async function extractTextFromPDFWithOCRFallback(file, startPage, endPage, prelo
         if (token) { _keptPages.kept++; _figTokens.push(token); } else { _keptPages.dropped++; }
         return token;
       };
+
+      // Cap per-page file progress to 60 to avoid DOM explosion on very large scanned PDFs
+      const showPerPageProgress = needsOcr.length <= 60;
 
       const processScannedPage = async ({ idx, pageNum, page }) => {
         if (_ocrCancelled()) {
@@ -1794,6 +1812,14 @@ async function extractTextFromPDFWithOCRFallback(file, startPage, endPage, prelo
           return { idx, pageNum, text: tok, confidence: 0, skipped: !tok, skipReason: tok ? '' : 'Not kept', keptAsImage: !!tok };
         }
         let canvas = null;
+        const pageKey = `scanned-p${pageNum}`;
+
+        // NEW: per-page file progress
+        if (showPerPageProgress) {
+          _pgFileAdd(pageKey, `Page ${pageNum}`, 'Rendering', '');
+          _pgFileUpd(pageKey, 10, 'Rendering', 'Preparing image');
+        }
+
         try {
           const baseViewport = page.getViewport({ scale: 1 });
           const longEdge = Math.max(baseViewport.width, baseViewport.height);
@@ -1812,20 +1838,28 @@ async function extractTextFromPDFWithOCRFallback(file, startPage, endPage, prelo
           await _ocrTick();
           preprocessCanvasForOcr(canvas);
 
+          if (showPerPageProgress) _pgFileUpd(pageKey, 30, 'Analyzing', 'Checking layout');
+
           const _tallPolicy = _ocrTallPolicy();
           if (_tallPolicy !== 'off' && _ocrDetectMathLayout(canvas)) {
+            _pgLabel(`Page ${pageNum}: math structure detected — trying AI vision…`);
             const cleanTall = _figCfg('VISION_FALLBACK_ENABLED', true) === false ? null
               : await _renderPageDataUrl(page, _ocrNum('VISION_PAGE_LONG_EDGE', 2400), 0.9);
             const tallText = cleanTall ? await runGeminiVisionOCRFromDataUrl(cleanTall.dataUrl, `page ${pageNum}`) : '';
             if (tallText) {
+              if (showPerPageProgress) _pgFileUpd(pageKey, 100, 'Done', 'Read by AI vision', 'done');
               return { idx, pageNum, text: tallText, confidence: 70, skipped: false, skipReason: '', passes: 0, lineCount: getOcrLineCount(tallText), source: 'gemini-vision' };
             }
             if (_tallPolicy === 'vision-then-image') {
               const tallTok = await keepPageAsImage(page, pageNum);
-              if (tallTok) return { idx, pageNum, text: tallTok, confidence: 0, skipped: false, skipReason: '', keptAsImage: true };
+              if (tallTok) {
+                if (showPerPageProgress) _pgFileUpd(pageKey, 100, 'Done', 'Kept as image', 'done');
+                return { idx, pageNum, text: tallTok, confidence: 0, skipped: false, skipReason: '', keptAsImage: true };
+              }
             }
           }
 
+          if (showPerPageProgress) _pgFileUpd(pageKey, 50, 'OCR', 'Reading text');
           const result = await recognizeImageWithOcr(canvas);
           _ocrFreeCanvas(canvas); canvas = null;
 
@@ -1834,6 +1868,7 @@ async function extractTextFromPDFWithOCRFallback(file, startPage, endPage, prelo
           const resultIsWeak = !resultText || ((Number(result?.confidence) || 0) < 50 && resultLines < 2);
           const _suspect = _ocrTallPolicy() !== 'off' ? _ocrTextLooksComplexMath(resultText) : { complex: false, reasons: [] };
           if (resultText && !resultIsWeak && !_suspect.complex) {
+            if (showPerPageProgress) _pgFileUpd(pageKey, 100, 'Done', `Conf ${Math.round(result.confidence || 0)}%`, 'done');
             return {
               idx, pageNum,
               text: result.text || '',
@@ -1845,11 +1880,13 @@ async function extractTextFromPDFWithOCRFallback(file, startPage, endPage, prelo
             };
           }
 
+          if (showPerPageProgress) _pgFileUpd(pageKey, 75, 'Vision', 'AI fallback');
           const clean = _figCfg('VISION_FALLBACK_ENABLED', true) === false ? null
             : await _renderPageDataUrl(page, _ocrNum('VISION_PAGE_LONG_EDGE', 2400), 0.9);
           const visionDataUrl = clean ? clean.dataUrl : '';
           const visionText = visionDataUrl ? await runGeminiVisionOCRFromDataUrl(visionDataUrl, `page ${pageNum}`) : '';
           if (visionText) {
+            if (showPerPageProgress) _pgFileUpd(pageKey, 100, 'Done', 'Read by AI vision', 'done');
             return {
               idx, pageNum,
               text: visionText,
@@ -1862,6 +1899,7 @@ async function extractTextFromPDFWithOCRFallback(file, startPage, endPage, prelo
             };
           }
           if (_suspect.complex && resultText && !resultIsWeak) {
+            if (showPerPageProgress) _pgFileUpd(pageKey, 100, 'Done', 'OCR (vision unavailable)', 'done');
             return {
               idx, pageNum, text: result.text || '', confidence: result.confidence || 0,
               skipped: false, skipReason: '', passes: result.passes || 0, lineCount: result.lineCount,
@@ -1869,6 +1907,7 @@ async function extractTextFromPDFWithOCRFallback(file, startPage, endPage, prelo
             };
           }
           const keptToken = await keepPageAsImage(page, pageNum);
+          if (showPerPageProgress) _pgFileUpd(pageKey, 100, 'Done', 'Kept as image', 'done');
           return {
             idx, pageNum,
             text: keptToken || (result?.text || ''),
@@ -1884,6 +1923,7 @@ async function extractTextFromPDFWithOCRFallback(file, startPage, endPage, prelo
         } catch (err) {
           console.warn(`OCR failed on page ${pageNum}:`, err);
           _ocrFreeCanvas(canvas); canvas = null;
+          if (showPerPageProgress) _pgFileUpd(pageKey, 100, 'Failed', (err?.message || 'error').slice(0, 80), 'error');
           const keptToken = _ocrCancelled() ? '' : await keepPageAsImage(page, pageNum);
           return { idx, pageNum, text: keptToken, confidence: 0, skipped: !keptToken, skipReason: keptToken ? '' : 'OCR error', keptAsImage: !!keptToken };
         } finally {
@@ -1893,7 +1933,7 @@ async function extractTextFromPDFWithOCRFallback(file, startPage, endPage, prelo
       };
 
       const renderLimit = Math.max(1, _ocrNum('OCR_RENDER_CONCURRENCY', _ocrPoolTarget()));
-      // FIX: don't keep an unused `ocrResults` array (previous code had `void ocrResults`).
+      let ocrDoneCount = 0;
       await _ocrMapLimit(needsOcr, renderLimit, async (item) => {
         const res = await processScannedPage(item);
         results[res.idx] = {
@@ -1907,25 +1947,19 @@ async function extractTextFromPDFWithOCRFallback(file, startPage, endPage, prelo
           visionDataUrls: res.visionDataUrl ? [res.visionDataUrl] : []
         };
         completedSteps++;
-        if (typeof ProgressUI !== 'undefined') {
-          const previewContainer = document.getElementById('progress-live-preview');
-          if (previewContainer) {
-            const items = previewContainer.querySelectorAll('.progress-page-thumb');
-            const lastItem = items[items.length - 1];
-            if (lastItem) {
-              lastItem.className = 'progress-page-thumb done';
-              const thumbText = lastItem.querySelector('.thumb-text');
-              const thumbBadge = lastItem.querySelector('.thumb-badge');
-              if (thumbText) { const _pv = _previewText(res.text); thumbText.textContent = _pv ? _pv.slice(0, 140) + (_pv.length > 140 ? '…' : '') : (res.skipReason || 'Skipped'); }
-              if (thumbBadge) thumbBadge.textContent = res.skipped ? 'Skipped' : '';
-            }
-          }
-          ProgressUI.setLabel(`OCR reading page ${res.pageNum} (${completedSteps}/${pagesToProcess}) — ${res.skipped ? 'skipped' : 'complete'}`);
-          ProgressUI.reportStepComplete(completedSteps);
+        ocrDoneCount++;
+
+        // NEW: update page counter for scanned pages
+        _pgPage(ocrDoneCount, needsOcr.length);
+        _pgLabel(`OCR: page ${res.pageNum} (${ocrDoneCount}/${needsOcr.length}) — ${res.skipped ? 'skipped' : res.keptAsImage ? 'kept as image' : 'complete'}`);
+
+        if (typeof ProgressUI !== 'undefined' && ProgressUI.reportStepComplete) {
+          ProgressUI.reportStepComplete(ocrDoneCount);
         }
         return res;
       });
 
+      // Average confidence
       let totalConfidence = 0, confCount = 0;
       for (const r of results) {
         if (r && r.ocr && !r.keptAsImage && r.confidence > 0) {
@@ -1949,25 +1983,29 @@ async function extractTextFromPDFWithOCRFallback(file, startPage, endPage, prelo
       if (r.ocr && !r.keptAsImage) ocrPageCount++;
       if (Array.isArray(r.visionDataUrls)) visionDataUrls.push(...r.visionDataUrls);
       fullText += `\n--- Page ${pageNum}${r.text ? '' : ' (empty)'} ---\n` + r.text;
-      if (typeof ProgressUI !== 'undefined' && r.text) {
-        const _pv2 = _previewText(r.text);
-        ProgressUI.addPagePreview(` Page ${pageNum}${r.ocr ? ' (OCR)' : ''}`, _pv2.slice(0, 120) + (_pv2.length > 120 ? '…' : ''), 'done');
-      }
     }
 
-    if (ocrPageCount > 0) {
-      if (typeof displayToastNotification === 'function') {
-        displayToastNotification(` OCR applied to ${ocrPageCount} scanned page(s)`);
-      }
+    if (ocrPageCount > 0 && typeof displayToastNotification === 'function') {
+      displayToastNotification(` OCR applied to ${ocrPageCount} scanned page(s)`);
       fullText =
         `[OCR Quality: Avg confidence ${avgConf}% on ${ocrPageCount} page(s), ${Math.min(_ocrPoolTarget(), ocrPageCount)} parallel worker(s)]\n` +
         fullText;
     }
 
+    // ===== PHASE 3: POST-PROCESSING =====
+    _pgStage('Post-processing OCR text', 80, 100, { indeterminate: true });
+    _pgLabel('Cleaning up text and math…');
+    _pgScope('');
+
+    const finalText = postProcessOCRTextForMath(fullText);
+
+    // Finish
     if (typeof ProgressUI !== 'undefined') {
-      ProgressUI.setLabel(`OCR finished: ${pagesToProcess}/${pagesToProcess} pages processed${ocrPageCount ? `; ${ocrPageCount} scanned page(s)` : ''}.`);
+      _pgLabel(`OCR finished: ${pagesToProcess}/${pagesToProcess} pages processed${ocrPageCount ? `; ${ocrPageCount} scanned` : ''}`);
       ProgressUI.finish();
     }
+
+    // Repeat-figure drop logic
     let _repeatedDropped = 0;
     if (_figBudget.hashes) {
       const minRepeat = _figCfg('FIGURE_REPEAT_MIN_PAGES', 3);
@@ -1981,7 +2019,6 @@ async function extractTextFromPDFWithOCRFallback(file, startPage, endPage, prelo
         releasePdfFigures(toks);
         _repeatedDropped += toks.length;
       }
-      fullText = fullText.replace(/\n{3,}/g, '\n\n');
     }
     extractTextFromPDFWithOCRFallback.lastVisionDataUrls = visionDataUrls;
     extractTextFromPDFWithOCRFallback.lastFigureTokens = _figTokens;
@@ -1996,7 +2033,8 @@ async function extractTextFromPDFWithOCRFallback(file, startPage, endPage, prelo
       if (_keptPages.kept > 0) displayToastNotification(`🖼️ ${_keptPages.kept} page(s) could not be read as text — kept as original page images`);
       if (_keptPages.dropped > 0) displayToastNotification(`ℹ️ ${_keptPages.dropped} page(s) were left blank (image limit of ${_keptPageMax} reached or page could not be rendered).`);
     }
-    return postProcessOCRTextForMath(fullText);
+
+    return finalText;
   } finally {
     if (ownsDoc) { try { await pdfDoc.destroy(); } catch (_) {} }
   }
@@ -2042,19 +2080,14 @@ async function handleFileUploads(fileList) {
   if (typeof renderAttachmentBar === 'function') renderAttachmentBar();
 
   try {
+    // ---- Image files ----
     if (imageJobs.length) {
       if (typeof ProgressUI !== 'undefined' && ProgressUI.show) {
         ProgressUI.show(
           imageJobs.length > 1 ? `Reading ${imageJobs.length} images with Studio OCR` : `Reading ${imageJobs[0].file.name} with Studio OCR`,
           'Local OCR is extracting text and equations. Gemini Vision is used only if local OCR can\'t read a file.'
         );
-        ProgressUI.clearPreview();
       }
-      imageJobs.forEach(job => {
-        if (typeof ProgressUI !== 'undefined' && ProgressUI.addFileProgress) {
-          ProgressUI.addFileProgress(job.fileId, job.file.name, 'Queued', 'Waiting to start');
-        }
-      });
       const results = await extractTextFromImageFilesWithOCR(
         imageJobs.map(j => j.file),
         { progressKeys: imageJobs.map(j => j.fileId), preservePreview: true }
@@ -2085,12 +2118,13 @@ async function handleFileUploads(fileList) {
         }
       }
       if (typeof ProgressUI !== 'undefined') {
-        ProgressUI.setLabel(`Studio OCR complete: ${imageJobs.length}/${imageJobs.length} image(s) processed.`);
+        _pgLabel(`Studio OCR complete: ${imageJobs.length}/${imageJobs.length} image(s) processed.`);
         ProgressUI.finish();
         _scheduleHideProgress(700);
       }
     }
 
+    // ---- Other files (PDF/DOCX/TXT) ----
     for (const job of otherJobs) {
       const file = job.file;
       let extractedContent = '';
@@ -2108,7 +2142,6 @@ async function handleFileUploads(fileList) {
             if (!range) {
               delete window.APP_STATE.fileObjects[job.fileId];
               delete window.APP_STATE.attachedFiles[job.fileId];
-              // FIX: user should know what happened.
               if (typeof displayToastNotification === 'function') {
                 displayToastNotification(`Cancelled reading "${file.name}"`);
               }
@@ -2116,7 +2149,6 @@ async function handleFileUploads(fileList) {
             }
             if (typeof ProgressUI !== 'undefined' && ProgressUI.show) {
               ProgressUI.show(`Reading ${file.name} with Studio OCR`, `Pages ${range.start}–${range.end}...`);
-              ProgressUI.clearPreview();
             }
             try {
               extractedContent = await extractTextFromPDFWithOCRFallback(file, range.start, range.end, pdfDocForCount);
@@ -2132,11 +2164,7 @@ async function handleFileUploads(fileList) {
           } finally {
             try { await pdfDocForCount.destroy(); } catch (_) {}
           }
-          if (typeof ProgressUI !== 'undefined') {
-            ProgressUI.setLabel('Studio OCR complete.');
-            ProgressUI.finish();
-            _scheduleHideProgress(500);
-          }
+          _scheduleHideProgress(500);
         } else {
           if (typeof ProgressUI !== 'undefined' && ProgressUI.show) {
             ProgressUI.show(`Reading ${file.name}`, 'Reading text locally...');
@@ -2253,7 +2281,6 @@ async function handleFileWithStudioOCR(fileId) {
   }
   const ext = file.name.split('.').pop().toLowerCase();
   const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'webp', 'bmp'];
-  // release old figure tokens only AFTER the new read succeeded, so a failed retry never leaves dangling tokens
   const oldTokens = Array.isArray(fileData.figureTokens) ? fileData.figureTokens.slice() : [];
   try {
     let extractedContent = '';
@@ -2279,7 +2306,6 @@ async function handleFileWithStudioOCR(fileId) {
         if (!range) return;
         if (typeof ProgressUI !== 'undefined' && ProgressUI.show) {
           ProgressUI.show(`Retrying OCR: ${file.name}`, `Pages ${range.start}–${range.end}...`);
-          ProgressUI.clearPreview();
         }
         extractedContent = await extractTextFromPDFWithOCRFallback(file, range.start, range.end, pdfDoc);
       } finally {
@@ -2342,14 +2368,12 @@ async function handleFileWithStudioOCR(fileId) {
   }
 }
 
-// Backward compatibility
 async function handleFileWithAIVision(fileId) {
   return handleFileWithStudioOCR(fileId);
 }
 
 // ===== OCR CONFIDENCE BADGE =====
 function getConfidenceBadge(confidence) {
-  // a11y: the emoji is decorative, the aria-label carries the meaning for screen readers
   if (confidence >= 75) return '<span class="ocr-confidence-badge ocr-conf-high" aria-label="High confidence">High <span aria-hidden="true">✓</span></span>';
   if (confidence >= 45) return '<span class="ocr-confidence-badge ocr-conf-med" aria-label="Medium confidence">Medium <span aria-hidden="true">~</span></span>';
   return '<span class="ocr-confidence-badge ocr-conf-low" aria-label="Low confidence">Low <span aria-hidden="true">⚠</span></span>';
