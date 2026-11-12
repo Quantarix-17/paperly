@@ -265,10 +265,16 @@ window.getTextFigurePolicy = function () {
       '.studio-setting-text{flex:1;min-width:0;}',
       '.studio-setting-label{font-weight:600;font-size:14px;line-height:1.3;}',
       '.studio-setting-row.is-disabled .studio-setting-label{opacity:.55;}',
-      '.studio-details-toggle{display:inline-flex;align-items:center;gap:4px;margin-top:3px;padding:0;border:none;background:none;font:inherit;font-size:12px;color:' + G + ';cursor:pointer;}',
-      '.studio-details-toggle:hover{text-decoration:underline;}',
+      /* ---- "See details" toggle: neutral gray (was green) ---- */
+      '.studio-details-toggle{display:inline-flex;align-items:center;gap:4px;margin-top:3px;padding:0;border:none;background:none;font:inherit;font-size:12px;color:#6b7280;cursor:pointer;transition:color .15s;}',
+      '.studio-details-toggle:hover{text-decoration:underline;color:#4b5563;}',
       '.studio-details-toggle::after{content:"";width:5px;height:5px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg) translateY(-1px);transition:transform .2s;}',
       '.studio-details-toggle[aria-expanded="true"]::after{transform:rotate(225deg);}',
+      /* ---- Dark mode: keep the "See details" toggle gray, never green ---- */
+      'html.dark .studio-details-toggle,body.dark .studio-details-toggle,body.dark-mode .studio-details-toggle,body.theme-dark .studio-details-toggle,body.dark-theme .studio-details-toggle,html.dark-mode .studio-details-toggle,html.theme-dark .studio-details-toggle,html.dark-theme .studio-details-toggle,[data-theme="dark"] .studio-details-toggle,.dark-theme .studio-details-toggle,.dark-mode .studio-details-toggle{color:#9ca3af !important;}',
+      'html.dark .studio-details-toggle:hover,body.dark .studio-details-toggle:hover,body.dark-mode .studio-details-toggle:hover,body.theme-dark .studio-details-toggle:hover,body.dark-theme .studio-details-toggle:hover,html.dark-mode .studio-details-toggle:hover,html.theme-dark .studio-details-toggle:hover,html.dark-theme .studio-details-toggle:hover,[data-theme="dark"] .studio-details-toggle:hover,.dark-theme .studio-details-toggle:hover,.dark-mode .studio-details-toggle:hover{color:#d1d5db !important;}',
+      /* Fallback when the OS prefers dark AND the app hasn't explicitly set light theme */
+      '@media (prefers-color-scheme: dark){html:not([data-theme="light"]):not(.light):not(.light-theme):not(.light-mode) .studio-details-toggle{color:#9ca3af;}html:not([data-theme="light"]):not(.light):not(.light-theme):not(.light-mode) .studio-details-toggle:hover{color:#d1d5db;}}',
       '.studio-setting-details{margin-top:8px;padding:8px 10px;border-left:2px solid ' + G + ';background:rgba(74,222,128,.07);border-radius:0 6px 6px 0;cursor:default;}',
       '.studio-setting-details[hidden]{display:none;}',
       '.studio-setting-desc{font-size:12.5px;opacity:.8;line-height:1.5;}',
@@ -286,7 +292,7 @@ window.getTextFigurePolicy = function () {
       '.studio-reset-btn:hover{background:' + GA + ';border-color:' + G + ';}',
       '.studio-reset-btn[hidden]{display:none;}',
       '@media (pointer:coarse){.studio-switch{width:52px;height:30px;border-radius:15px;}.studio-switch-knob{width:24px;height:24px;}.studio-switch[aria-checked="true"] .studio-switch-knob{transform:translateX(22px);}}',
-      '@media (prefers-reduced-motion:reduce){.studio-switch,.studio-switch-knob,.studio-setting-row,.studio-reset-btn,.studio-details-toggle::after{transition:none;}}'
+      '@media (prefers-reduced-motion:reduce){.studio-switch,.studio-switch-knob,.studio-setting-row,.studio-reset-btn,.studio-details-toggle,.studio-details-toggle::after{transition:none;}}'
     ].join('\n');
     (document.head || document.documentElement).appendChild(st);
   }
