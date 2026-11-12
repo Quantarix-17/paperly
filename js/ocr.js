@@ -43,6 +43,24 @@ function _ocrSleep(ms) { return new Promise(resolve => setTimeout(resolve, ms));
 function _ocrTick() { return new Promise(resolve => setTimeout(resolve, 0)); }
 function _ocrFreeCanvas(c) { try { if (c) { c.width = 0; c.height = 0; } } catch (_) {} }
 
+// ===== OCR SETTINGS SWITCHES (from tab-manager.js STUDIO SETTINGS) =====
+// These helpers read the two switches the user toggles in Settings.
+//   _ocrKeepImageOn()       — true → don't read images, keep them as images
+//   _ocrRecreateFiguresOn() — true → AI recreates text figures; false (default) → crop as image
+// Safe fallback (false) if tab-manager.js hasn't loaded or errored — that
+// preserves the pre-switch behaviour for anything running before settings
+// initialise.
+function _ocrKeepImageOn() {
+  try {
+    return typeof window.isOcrKeepImageSwitchOn === 'function' && !!window.isOcrKeepImageSwitchOn();
+  } catch (_) { return false; }
+}
+function _ocrRecreateFiguresOn() {
+  try {
+    return typeof window.isTextFigureRecreateSwitchOn === 'function' && !!window.isTextFigureRecreateSwitchOn();
+  } catch (_) { return false; }
+}
+
 // Shared rotation helper
 function _ocrApplyRotate(ctx, w, h, angle) {
   if (angle === 90) { ctx.translate(h, 0); ctx.rotate(Math.PI / 2); }
@@ -912,6 +930,29 @@ async function runOcrOnImageFile(file) {
     reader.readAsDataURL(file);
   }));
 
+  // NEW SWITCH: if keep-image mode is ON (default), skip OCR reading entirely
+  // and just return the image as a figure token.
+  if (_ocrKeepImageOn()) {
+    try {
+      const keepUrl = await getDataUrl();
+      const keepTok = await _keepImageFileAsImage(keepUrl);
+      if (keepTok) {
+        return {
+          text: keepTok,
+          confidence: 0,
+          passes: 0,
+          lineCount: 0,
+          skipped: false,
+          keptAsImage: true,
+          figureTokens: [keepTok],
+          source: 'keep-image'
+        };
+      }
+    } catch (e) {
+      console.warn('Keep-image mode failed for image file, falling back to OCR:', e);
+    }
+  }
+
   if (_figCfg('SCANNED_PAGE_POLICY', 'ocr-then-image') === 'image-only') {
     const tok = await _keepImageFileAsImage(await getDataUrl());
     if (tok) return { text: tok, confidence: 0, skipped: false, keptAsImage: true, figureTokens: [tok] };
@@ -1022,6 +1063,12 @@ async function runOCRWithAIFallback(file, options = {}) {
         console.warn('Local OCR failed, trying AI fallback:', localErr);
       }
     }
+    // NEW SWITCH: keep-image mode disables the AI vision fallback too. If
+    // local OCR already gave up, we'd be doing exactly what the user asked
+    // us NOT to do (calling vision on an image). Stop here instead.
+    if (_ocrKeepImageOn()) {
+      throw new Error('Could not read this image file. AI vision is disabled in Settings (keep-image mode).');
+    }
     const dataUrl = await new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(reader.result);
@@ -1094,6 +1141,7 @@ async function extractTextFromImageFilesWithOCR(files, options = {}) {
           visionDataUrls: ocrResult?.visionDataUrl ? [ocrResult.visionDataUrl] : [],
           figureTokens: Array.isArray(ocrResult?.figureTokens) ? ocrResult.figureTokens : [],
           keptAsImage: !!ocrResult?.keptAsImage,
+          source: ocrResult?.source || null,
           error: null
         };
         if (ocrResult?.skipped && !String(ocrResult?.text || '').trim()) {
@@ -1101,7 +1149,9 @@ async function extractTextFromImageFilesWithOCR(files, options = {}) {
           _pgFileUpd(progressKey, 100, 'Skipped', skipMeta, 'fallback');
         } else {
           const confidenceText = ocrResult?.keptAsImage
-            ? 'Not readable as text — kept as original image'
+            ? (ocrResult?.source === 'keep-image'
+                ? 'Kept as image (per Settings)'
+                : 'Not readable as text — kept as original image')
             : ocrResult?.needsVision
             ? 'OCR uncertain — image will be sent to AI vision when you ask a question'
             : (typeof ocrResult?.confidence === 'number' ? `OCR confidence ${Math.round(ocrResult.confidence)}%` : 'OCR complete');
@@ -1473,6 +1523,11 @@ async function _readFigureRegion(canvas, label) {
   } finally {
     _ocrFreeCanvas(copy);
   }
+  // NEW SWITCH: keep-image mode disables vision fallback for figures too.
+  if (_ocrKeepImageOn()) {
+    console.info(`[OCR] keep-image mode: skipping vision for figure "${label}"`);
+    return { kind: 'image' };
+  }
   if (_ocrCancelled()) return { kind: 'image' };
   try {
     const url = canvas.toDataURL('image/jpeg', 0.92);
@@ -1491,12 +1546,16 @@ async function _extractFiguresForTextPage(page, textContent, pageNum, fileTag, b
   const canvases = await _cropPdfFigureCanvases(page, figures);
   if (!budget.stats) budget.stats = { ocr: 0, vision: 0, image: 0 };
 
+  // NEW SWITCH: only try to READ (recreate) figures when the user asked for it.
+  // Default = OFF = crop figures as images.
+  const recreateFigures = _ocrRecreateFiguresOn();
+
   const outcomes = [];
   for (let n = 0; n < figures.length; n++) {
     const f = figures[n], canvas = canvases[n];
     if (!canvas) { outcomes.push(null); continue; }
     let o = { kind: 'image' };
-    if ((f.hasImage || _figCfg('FIGURE_CASCADE_VECTOR', false)) && !_ocrCancelled()) {
+    if (recreateFigures && (f.hasImage || _figCfg('FIGURE_CASCADE_VECTOR', false)) && !_ocrCancelled()) {
       _pgScope(`Page ${pageNum} · Figure ${n + 1}/${figures.length}`);
       _pgLabel(`Reading picture ${n + 1}/${figures.length} on page ${pageNum}…`);
       o = await _readFigureRegion(canvas, `page ${pageNum} picture ${n + 1}`);
@@ -1793,6 +1852,24 @@ async function extractTextFromPDFWithOCRFallback(file, startPage, endPage, prelo
       const processScannedPage = async ({ idx, pageNum, page }) => {
         if (_ocrCancelled()) {
           return { idx, pageNum, text: '', confidence: 0, skipped: true, skipReason: 'Cancelled' };
+        }
+        // NEW SWITCH: keep-image mode (default ON) — skip OCR reading entirely,
+        // just crop the scanned page and keep it as an image token.
+        if (_ocrKeepImageOn()) {
+          if (showPerPageProgress) {
+            const pageKey = `scanned-p${pageNum}`;
+            _pgFileAdd(pageKey, `Page ${pageNum}`, 'Kept as image', 'Per Settings: OCR reading disabled');
+          }
+          const tok = await keepPageAsImage(page, pageNum);
+          return {
+            idx, pageNum,
+            text: tok,
+            confidence: 0,
+            skipped: !tok,
+            skipReason: tok ? '' : 'Page could not be kept as image',
+            keptAsImage: !!tok,
+            source: 'keep-image'
+          };
         }
         if (_scannedPolicy === 'image-only') {
           const tok = await keepPageAsImage(page, pageNum);
@@ -2094,7 +2171,10 @@ async function handleFileUploads(fileList) {
           figureTokens: Array.isArray(result.figureTokens) ? result.figureTokens : []
         };
         if (result.keptAsImage && typeof displayToastNotification === 'function') {
-          displayToastNotification(`🖼️ "${job.file.name}" could not be read as text — kept as the original image`);
+          const reason = result.source === 'keep-image'
+            ? 'kept as image (per Settings: OCR reading disabled)'
+            : 'could not be read as text — kept as the original image';
+          displayToastNotification(`🖼️ "${job.file.name}" ${reason}`);
         }
       }
       if (typeof ProgressUI !== 'undefined') {
@@ -2301,6 +2381,7 @@ async function handleFileWithStudioOCR(fileId) {
     let newTokens = [];
     let newNeedsVision = false;
     let newVisionUrls = [];
+    let resultSource = null;
     if (IMAGE_EXTS.includes(ext)) {
       if (typeof ProgressUI !== 'undefined' && ProgressUI.hide) {
         try { ProgressUI.hide(); } catch (_) {}
@@ -2315,6 +2396,7 @@ async function handleFileWithStudioOCR(fileId) {
       if (result?.confidence != null) fileData.ocrConfidence = result.confidence;
       newNeedsVision = !!result?.needsVision;
       newVisionUrls = result?.visionDataUrl ? [result.visionDataUrl] : [];
+      resultSource = result?.source || null;
     } else if (ext === 'pdf') {
       const pdfDoc = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
       try {
@@ -2389,7 +2471,10 @@ async function handleFileWithStudioOCR(fileId) {
         else setDocumentHTMLAndPaginate(currentHTML + '<br><br>' + newHTML);
       }
       if (typeof displayToastNotification === 'function') {
-        displayToastNotification(`✅ OCR extracted content from "${file.name}"`);
+        const msg = resultSource === 'keep-image'
+          ? `🖼️ "${file.name}" kept as image (per Settings)`
+          : `✅ OCR extracted content from "${file.name}"`;
+        displayToastNotification(msg);
       }
     } else {
       if (typeof displayToastNotification === 'function') {
