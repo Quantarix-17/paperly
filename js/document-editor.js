@@ -1147,11 +1147,35 @@ async function setDocumentHTMLAndPaginate(rawHtml, triggerSave = true) {
   }
 }
 
+// THEME-FLASH FIX: every page is born already wearing the active theme/text format.
+// Before, pagination (run again by the PDF/Word pre-export pass) did docContainer.innerHTML = ''
+// and created pages with a bare "doc-page-canvas" class; the theme was only re-applied at the very
+// end of pagination, after several awaits (fonts, math, timeouts). For that whole time the document
+// showed the Default theme, then snapped back to the chosen one = the visible "bounce".
+function _stampActiveFormatsOnPage(page) {
+  if (!page || page.nodeType !== 1) return page;
+  try {
+    const mono = !!(document.body && document.body.classList.contains('photocopy-mode'));
+    let vis = 'default', txt = 'default';
+    try { vis = (typeof getActivePDFVisualFormat === 'function' && getActivePDFVisualFormat()) || 'default'; } catch (_) {}
+    try { txt = (typeof getActivePDFTextFormat === 'function' && getActivePDFTextFormat()) || 'default'; } catch (_) {}
+    if (typeof PDF_VISUAL_FORMAT_IDS !== 'undefined' && !PDF_VISUAL_FORMAT_IDS.includes(vis)) vis = 'default';
+    if (typeof PDF_TEXT_FORMAT_IDS !== 'undefined' && !PDF_TEXT_FORMAT_IDS.includes(txt)) txt = 'default';
+    if (mono) vis = 'default';
+    if (vis !== 'default') page.classList.add('pdf-format-' + vis);
+    page.dataset.pdfFormatApplied = vis;
+    if (txt !== 'default') page.classList.add('text-format-' + txt);
+    page.dataset.pdfTextFormatApplied = txt;
+  } catch (_) { /* never block page creation */ }
+  return page;
+}
+
 function _renderDocumentHTMLPlainFallback(rawHtml, triggerSave) {
   if (!docContainer) return;
   docContainer.innerHTML = '';
   const page = document.createElement('div');
   page.className = 'doc-page-canvas';
+  _stampActiveFormatsOnPage(page);
   page.setAttribute('contenteditable', 'true');
   page.setAttribute('spellcheck', 'false');
   page.style.height = 'auto';
@@ -1193,6 +1217,7 @@ async function _paginateDocumentHTMLCore(rawHtml, triggerSave = true) {
   function createNewPageElement() {
     const page = document.createElement('div');
     page.className = 'doc-page-canvas';
+    _stampActiveFormatsOnPage(page);
     page.setAttribute('contenteditable', 'true');
     page.setAttribute('spellcheck', 'false');
     page.addEventListener('input', handleCanvasInput);
@@ -1839,6 +1864,7 @@ async function _paginateDocumentCanvasAsyncCoreImpl(rawHtml, triggerSave, scratc
   function createNewPageElement() {
     const page = document.createElement('div');
     page.className = 'doc-page-canvas';
+    _stampActiveFormatsOnPage(page);
     page.setAttribute('contenteditable', 'true');
     page.setAttribute('spellcheck', 'false');
     page.addEventListener('input', handleCanvasInput);
@@ -2367,6 +2393,7 @@ function normalizeAllEditorPagesToA4() {
 function createNewPageAfter(referencePage) {
   const newPage = document.createElement('div');
   newPage.className = 'doc-page-canvas';
+  _stampActiveFormatsOnPage(newPage);
   newPage.setAttribute('contenteditable', 'true');
   newPage.setAttribute('spellcheck', 'false');
   newPage.addEventListener('input', handleCanvasInput);
@@ -4315,7 +4342,8 @@ function applyPDFVisualFormat(formatId) {
   docContainer.querySelectorAll('.doc-page-canvas').forEach(page => {
     const prev = page.dataset.pdfFormatApplied || 'default';
     const want = monochrome ? 'default' : id;
-    if (prev === want) return;
+    // Trust the real class, not only the dataset (cloned/rebuilt pages can disagree with it).
+    if (prev === want && (want === 'default' || page.classList.contains('pdf-format-' + want))) return;
     if (prev !== 'default') page.classList.remove('pdf-format-' + prev);
     if (want !== 'default') page.classList.add('pdf-format-' + want);
     page.dataset.pdfFormatApplied = want;
@@ -4332,7 +4360,7 @@ function applyPDFTextFormat(formatId) {
 
   docContainer.querySelectorAll('.doc-page-canvas').forEach(page => {
     const prev = page.dataset.pdfTextFormatApplied || 'default';
-    if (prev === id) return;
+    if (prev === id && (id === 'default' || page.classList.contains('text-format-' + id))) return;
     if (prev !== 'default') page.classList.remove('text-format-' + prev);
     if (id !== 'default') page.classList.add('text-format-' + id);
     page.dataset.pdfTextFormatApplied = id;
