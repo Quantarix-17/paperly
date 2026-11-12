@@ -228,10 +228,64 @@ window.getTextFigurePolicy = function () {
 // Renders the two switches into the given container. Safe to call any
 // number of times: the previous event subscription is always cleaned up
 // before a new one is installed (avoids double-firing).
+//
+// UX notes:
+//  - Whole text block is clickable, not just the 46px switch.
+//  - The dependent switch ("Keep figures as images") is truly disabled while
+//    AI Vision is off, with a visible reason instead of a hidden tooltip, and
+//    the user's stored choice is preserved (not silently overwritten).
+//  - Each row shows a one-line "what happens now" status for the current state.
+//  - "Reset to defaults" appears only when something differs from defaults.
+//  - Keyboard: native button semantics + visible :focus-visible ring.
+//  - Styles live in one injected stylesheet (theme-neutral colours, reduced
+//    motion respected, 44px touch target on coarse pointers).
+(function _injectStudioSettingsStyle() {
+  if (typeof document === 'undefined') return;
+  function inject() {
+    if (document.getElementById('studio-settings-style')) return;
+    const st = document.createElement('style');
+    st.id = 'studio-settings-style';
+    st.textContent = [
+      '.studio-settings-list{display:flex;flex-direction:column;}',
+      '.studio-setting-row{display:flex;align-items:flex-start;gap:16px;padding:14px 4px;border-bottom:1px solid rgba(148,163,184,.25);cursor:pointer;border-radius:8px;transition:background .15s;}',
+      '.studio-setting-row:hover{background:rgba(148,163,184,.08);}',
+      '.studio-setting-row.is-disabled{cursor:not-allowed;}',
+      '.studio-setting-row.is-disabled:hover{background:transparent;}',
+      '.studio-setting-text{flex:1;min-width:0;}',
+      '.studio-setting-label{font-weight:600;font-size:14px;line-height:1.3;}',
+      '.studio-setting-desc{font-size:12.5px;opacity:.72;margin-top:3px;line-height:1.5;}',
+      '.studio-setting-status{display:flex;align-items:flex-start;gap:6px;font-size:12px;margin-top:8px;line-height:1.45;opacity:.9;}',
+      '.studio-setting-status::before{content:"";flex:0 0 auto;width:6px;height:6px;margin-top:5px;border-radius:50%;background:#94a3b8;}',
+      '.studio-setting-row.is-on .studio-setting-status::before{background:#22c55e;}',
+      '.studio-setting-row.is-disabled .studio-setting-label,.studio-setting-row.is-disabled .studio-setting-desc{opacity:.5;}',
+      '.studio-setting-control{display:flex;flex-direction:column;align-items:center;gap:4px;flex:0 0 auto;}',
+      '.studio-switch{position:relative;width:46px;height:26px;border-radius:13px;border:none;cursor:pointer;background:rgba(148,163,184,.6);transition:background .2s;padding:0;flex:0 0 auto;}',
+      '.studio-switch[aria-checked="true"]{background:#16a34a;}',
+      '.studio-switch[aria-disabled="true"]{cursor:not-allowed;opacity:.5;}',
+      '.studio-switch:focus-visible{outline:2px solid #3b82f6;outline-offset:3px;}',
+      '.studio-switch::after{content:"";position:absolute;inset:-9px -4px;}',
+      '.studio-switch-knob{position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.35);transition:transform .2s;}',
+      '.studio-switch[aria-checked="true"] .studio-switch-knob{transform:translateX(20px);}',
+      '.studio-switch-state{font-size:10.5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;opacity:.6;}',
+      '.studio-settings-footer{display:flex;justify-content:flex-end;padding-top:12px;min-height:34px;}',
+      '.studio-reset-btn{font:inherit;font-size:12.5px;padding:6px 12px;border-radius:8px;border:1px solid rgba(148,163,184,.45);background:transparent;color:inherit;cursor:pointer;transition:background .15s,opacity .15s;}',
+      '.studio-reset-btn:hover{background:rgba(148,163,184,.14);}',
+      '.studio-reset-btn:focus-visible{outline:2px solid #3b82f6;outline-offset:2px;}',
+      '.studio-reset-btn[hidden]{display:none;}',
+      '@media (pointer:coarse){.studio-switch{width:52px;height:30px;border-radius:15px;}.studio-switch-knob{width:24px;height:24px;}.studio-switch[aria-checked="true"] .studio-switch-knob{transform:translateX(22px);}}',
+      '@media (prefers-reduced-motion:reduce){.studio-switch,.studio-switch-knob,.studio-setting-row,.studio-reset-btn{transition:none;}}'
+    ].join('\n');
+    (document.head || document.documentElement).appendChild(st);
+  }
+  if (document.head) inject();
+  else document.addEventListener('DOMContentLoaded', inject);
+})();
+
 window.renderStudioSwitches = function (containerEl, options) {
   if (!containerEl) return function () {};
   const opts = options || {};
   const idPrefix = opts.idPrefix || 'studio-setting';
+  const showReset = opts.showReset !== false;
 
   // Tear down the previous listener if this container was already rendered.
   if (containerEl._studioSwitchUnsubscribe) {
@@ -240,94 +294,157 @@ window.renderStudioSwitches = function (containerEl, options) {
   }
 
   containerEl.textContent = '';
+  const list = document.createElement('div');
+  list.className = 'studio-settings-list';
+  containerEl.appendChild(list);
   const rows = [];
 
-  function buildSwitch(key, labelText, descText) {
+  function buildSwitch(cfg) {
+    const key = cfg.key;
+    const labelId = idPrefix + '-' + key + '-label';
+    const descId = idPrefix + '-' + key + '-desc';
+    const statusId = idPrefix + '-' + key + '-status';
+
     const row = document.createElement('div');
     row.className = 'studio-setting-row';
     row.setAttribute('data-setting-key', key);
-    row.style.cssText = 'display:flex;align-items:flex-start;gap:14px;padding:14px 0;border-bottom:1px solid rgba(148,163,184,.22);';
 
     const text = document.createElement('div');
-    text.style.cssText = 'flex:1;min-width:0;';
+    text.className = 'studio-setting-text';
 
     const label = document.createElement('div');
     label.className = 'studio-setting-label';
-    label.style.cssText = 'font-weight:600;font-size:14px;';
-    label.textContent = labelText;
+    label.id = labelId;
+    label.textContent = cfg.label;
 
     const desc = document.createElement('div');
     desc.className = 'studio-setting-desc';
-    desc.style.cssText = 'font-size:12.5px;opacity:0.72;margin-top:4px;line-height:1.5;';
-    desc.textContent = descText;
+    desc.id = descId;
+    desc.textContent = cfg.desc;
+
+    const status = document.createElement('div');
+    status.className = 'studio-setting-status';
+    status.id = statusId;
 
     text.appendChild(label);
     text.appendChild(desc);
+    text.appendChild(status);
     row.appendChild(text);
+
+    const control = document.createElement('div');
+    control.className = 'studio-setting-control';
 
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.id = idPrefix + '-' + key;
     btn.className = 'studio-switch';
     btn.setAttribute('role', 'switch');
-    btn.style.cssText = 'position:relative;width:46px;height:24px;border-radius:12px;border:none;cursor:pointer;background:#cbd5e1;transition:background 0.2s;flex:0 0 auto;padding:0;margin-top:2px;';
+    btn.setAttribute('aria-labelledby', labelId);
+    btn.setAttribute('aria-describedby', descId + ' ' + statusId);
 
     const knob = document.createElement('span');
     knob.className = 'studio-switch-knob';
-    knob.style.cssText = 'position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:#fff;transition:left 0.2s;box-shadow:0 1px 3px rgba(0,0,0,0.3);';
     btn.appendChild(knob);
-    row.appendChild(btn);
 
-    function render() {
-      const on = !!window.getStudioSetting(key);
-      btn.setAttribute('aria-checked', on ? 'true' : 'false');
-      btn.style.background = on ? '#22c55e' : '#cbd5e1';
-      knob.style.left = on ? '24px' : '2px';
+    const stateText = document.createElement('span');
+    stateText.className = 'studio-switch-state';
+    stateText.setAttribute('aria-hidden', 'true');
 
-      if (key === 'keepFiguresAsImage') {
-        const visionOn = !!window.getStudioSetting('useAIVision');
-        btn.style.opacity = visionOn ? '1' : '0.45';
-        btn.title = visionOn
-          ? (on ? 'Figures will be cropped as images' : 'AI will recreate figures (vision active)')
-          : 'Turn on "Use AI Vision" first to recreate figures';
-      } else {
-        btn.title = on
-          ? 'AI vision is available for fallback reading'
-          : 'AI vision is off; unreadable content is kept as image';
-      }
+    control.appendChild(btn);
+    control.appendChild(stateText);
+    row.appendChild(control);
+
+    function isLocked() {
+      return !!cfg.requires && !window.getStudioSetting(cfg.requires);
     }
 
-    btn.addEventListener('click', function () {
-      if (key === 'keepFiguresAsImage' && !window.getStudioSetting('useAIVision')) {
-        // Vision is off — recreating figures is impossible, so force ON
-        // (crop as image) to keep the user's intent consistent.
-        window.setStudioSetting('keepFiguresAsImage', true);
-      } else {
-        window.setStudioSetting(key, !window.getStudioSetting(key));
-      }
+    function render() {
+      const locked = isLocked();
+      // While locked, show what will actually happen (the locked value),
+      // but never overwrite the user's stored choice.
+      const on = locked ? cfg.lockedValue : !!window.getStudioSetting(key);
+      btn.setAttribute('aria-checked', on ? 'true' : 'false');
+      btn.setAttribute('aria-disabled', locked ? 'true' : 'false');
+      row.classList.toggle('is-on', on);
+      row.classList.toggle('is-disabled', locked);
+      stateText.textContent = on ? 'On' : 'Off';
+      status.textContent = locked ? cfg.lockedStatus : (on ? cfg.onStatus : cfg.offStatus);
+      btn.title = locked ? cfg.lockedStatus : '';
+    }
+
+    function toggle() {
+      if (isLocked()) return;
+      window.setStudioSetting(key, !window.getStudioSetting(key));
+      // setStudioSetting dispatches an event that re-renders every row.
       rows.forEach(function (r) { r.render(); });
+    }
+
+    btn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      toggle();
+    });
+    // Clicking the text area toggles too (bigger target), unless the user is
+    // selecting text.
+    row.addEventListener('click', function (e) {
+      if (e.target.closest('.studio-switch')) return;
+      const sel = window.getSelection && window.getSelection();
+      if (sel && String(sel).length > 0) return;
+      toggle();
     });
 
     render();
+    list.appendChild(row);
     return { row: row, render: render };
   }
 
-  const s1 = buildSwitch(
-    'useAIVision',
-    'Use AI Vision',
-    'When ON, local OCR runs first and AI vision is used as a fallback for images it cannot read. When OFF, AI vision is disabled entirely and unreadable content is kept as-is.'
-  );
-  const s2 = buildSwitch(
-    'keepFiguresAsImage',
-    'Keep figures as image',
-    'When ON, diagrams and figures in text-layer pages are cropped as images. When OFF, AI recreates them from the text layer (requires "Use AI Vision" to be ON).'
-  );
-  containerEl.appendChild(s1.row);
-  containerEl.appendChild(s2.row);
-  rows.push(s1, s2);
+  rows.push(buildSwitch({
+    key: 'useAIVision',
+    label: 'Use AI Vision',
+    desc: 'Read scanned pages and images that local OCR can\u2019t handle.',
+    onStatus: 'Local OCR runs first; AI vision steps in only when it can\u2019t read something.',
+    offStatus: 'AI vision is off. Unreadable images and scans are kept as they are.'
+  }));
+  rows.push(buildSwitch({
+    key: 'keepFiguresAsImage',
+    label: 'Keep figures as images',
+    desc: 'How diagrams and figures on text-based pages are handled.',
+    requires: 'useAIVision',
+    lockedValue: true,
+    onStatus: 'Figures are cropped from the page and inserted as images.',
+    offStatus: 'AI recreates figures from the page text. Results may differ from the original.',
+    lockedStatus: 'Locked on while AI Vision is off. Turn on \u201cUse AI Vision\u201d to let AI recreate figures.'
+  }));
+
+  let resetBtn = null;
+  function renderReset() {
+    if (!resetBtn) return;
+    const cur = window.getStudioSettings();
+    const dirty = Object.keys(STUDIO_SETTINGS_DEFAULTS).some(function (k) {
+      return !!cur[k] !== !!STUDIO_SETTINGS_DEFAULTS[k];
+    });
+    resetBtn.hidden = !dirty;
+  }
+  if (showReset) {
+    const footer = document.createElement('div');
+    footer.className = 'studio-settings-footer';
+    resetBtn = document.createElement('button');
+    resetBtn.type = 'button';
+    resetBtn.className = 'studio-reset-btn';
+    resetBtn.textContent = 'Reset to defaults';
+    resetBtn.addEventListener('click', function () {
+      window.resetStudioSettings();
+      rows.forEach(function (r) { r.render(); });
+      renderReset();
+      if (typeof displayToastNotification === 'function') displayToastNotification('Settings reset to defaults');
+    });
+    footer.appendChild(resetBtn);
+    containerEl.appendChild(footer);
+    renderReset();
+  }
 
   const unsubscribe = window.onStudioSettingChange(function () {
     rows.forEach(function (r) { r.render(); });
+    renderReset();
   });
   containerEl._studioSwitchUnsubscribe = unsubscribe;
   return unsubscribe;
@@ -339,6 +456,28 @@ window.renderStudioSwitches = function (containerEl, options) {
 // elements each with data-panel="<panel-name>". Idempotent: calling it
 // again is a no-op, so both the DOMContentLoaded hook and the modal-open
 // handler can safely call it.
+//
+// UX notes: full ARIA tabs pattern (tablist/tab/tabpanel), roving tabindex,
+// Arrow/Home/End keyboard navigation, and window.showSettingsTab(name) so
+// other code can deep-link to a panel (e.g. from a "Change in Settings" link).
+window.showSettingsTab = function (tabName) {
+  const tabBar = document.querySelector('.settings-tab-bar');
+  if (!tabBar) return false;
+  const tabs = Array.prototype.slice.call(tabBar.querySelectorAll('[data-tab]'));
+  const panels = document.querySelectorAll('.settings-tab-panel');
+  if (!tabs.some(function (b) { return b.dataset.tab === tabName; })) return false;
+  tabs.forEach(function (b) {
+    const isActive = b.dataset.tab === tabName;
+    b.classList.toggle('active', isActive);
+    b.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    b.tabIndex = isActive ? 0 : -1;
+  });
+  panels.forEach(function (p) {
+    p.hidden = p.dataset.panel !== tabName;
+  });
+  return true;
+};
+
 window.initSettingsTabs = function () {
   try {
     const tabBar = document.querySelector('.settings-tab-bar');
@@ -348,26 +487,45 @@ window.initSettingsTabs = function () {
     if (!panels.length) return;
 
     tabBar.dataset.tabsInit = '1';
+    tabBar.setAttribute('role', 'tablist');
 
-    function showTab(tabName) {
-      tabBar.querySelectorAll('[data-tab]').forEach(function (b) {
-        const isActive = b.dataset.tab === tabName;
-        b.classList.toggle('active', isActive);
-        b.setAttribute('aria-selected', isActive ? 'true' : 'false');
-      });
+    // Wire up ARIA ids so screen readers link each tab to its panel.
+    tabBar.querySelectorAll('[data-tab]').forEach(function (b) {
+      const name = b.dataset.tab;
+      b.setAttribute('role', 'tab');
+      if (!b.id) b.id = 'settings-tab-' + name;
       panels.forEach(function (p) {
-        p.hidden = p.dataset.panel !== tabName;
+        if (p.dataset.panel !== name) return;
+        if (!p.id) p.id = 'settings-panel-' + name;
+        p.setAttribute('role', 'tabpanel');
+        p.setAttribute('aria-labelledby', b.id);
+        b.setAttribute('aria-controls', p.id);
       });
-    }
+    });
 
     tabBar.addEventListener('click', function (e) {
       const btn = e.target.closest('[data-tab]');
       if (!btn) return;
-      showTab(btn.dataset.tab);
+      window.showSettingsTab(btn.dataset.tab);
+    });
+
+    tabBar.addEventListener('keydown', function (e) {
+      const tabs = Array.prototype.slice.call(tabBar.querySelectorAll('[data-tab]'));
+      const i = tabs.indexOf(document.activeElement);
+      if (i < 0) return;
+      let next = -1;
+      if (e.key === 'ArrowRight') next = (i + 1) % tabs.length;
+      else if (e.key === 'ArrowLeft') next = (i - 1 + tabs.length) % tabs.length;
+      else if (e.key === 'Home') next = 0;
+      else if (e.key === 'End') next = tabs.length - 1;
+      if (next < 0) return;
+      e.preventDefault();
+      tabs[next].focus();
+      window.showSettingsTab(tabs[next].dataset.tab);
     });
 
     const initial = tabBar.querySelector('[data-tab].active') || tabBar.querySelector('[data-tab]');
-    if (initial) showTab(initial.dataset.tab);
+    if (initial) window.showSettingsTab(initial.dataset.tab);
   } catch (e) {
     console.warn('[StudioSettings] initSettingsTabs failed:', e);
   }
