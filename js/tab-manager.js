@@ -15,34 +15,19 @@ function _compactPendingOutlineForStorage(po) {
 }
 
 // ========================================================================
-// TAB MANAGER - Multi‑tab workspace with isolated state per tab
+// TAB MANAGER - Multi-tab workspace with isolated state per tab
 // ========================================================================
 
-// Per-tab live File object maps (cannot be JSON-serialized to localStorage)
 const TAB_FILE_OBJECTS = new Map();
 
-// ========================================================================
-// BOOT VIEW GUARD (no flash of the blank PDF page on refresh)
-// ------------------------------------------------------------------------
-// index.html always starts with the A4 document editor visible. A slide-deck
-// session only switches to the Slides view once TAB_MANAGER.init() runs, so
-// for ~1 second the blank PDF page was visible and then jumped to the deck.
-// This runs the moment this file loads: if the last session was a slide deck
-// it hides the A4 editor immediately, and init() reveals things again once
-// the right view is in place. A 4s failsafe guarantees it can never stay hidden.
-// ========================================================================
 const BOOT_VIEW_KEY = 'paperly_boot_view';
 function _releaseBootViewGuard() {
-  try {
-    const st = document.getElementById('boot-view-guard');
-    if (st) st.remove();
-  } catch (_) {}
+  try { const st = document.getElementById('boot-view-guard'); if (st) st.remove(); } catch (_) {}
 }
 (function _bootViewGuard() {
   try {
     let view = localStorage.getItem(BOOT_VIEW_KEY);
     if (view === null && typeof TAB_STORAGE_KEY !== 'undefined') {
-      // First load after this update: no flag yet, so peek at the saved tabs.
       const raw = localStorage.getItem(TAB_STORAGE_KEY);
       if (raw) {
         const d = JSON.parse(raw);
@@ -65,39 +50,20 @@ function syncCurrentTabFileObjects() {
     const id = (typeof TAB_MANAGER !== 'undefined' && TAB_MANAGER.activeId) ? TAB_MANAGER.activeId : null;
     if (!id) return;
     TAB_FILE_OBJECTS.set(id, { ...(window.APP_STATE?.fileObjects || {}) });
-  } catch (e) {
-    console.warn('syncCurrentTabFileObjects failed:', e);
-  }
+  } catch (e) { console.warn('syncCurrentTabFileObjects failed:', e); }
 }
 
-// ========================================================================
-// RESET OF TRANSIENT CHAT STATE (behaves like a page refresh)
-// ------------------------------------------------------------------------
-// BUG this fixes: while the AI is showing tap-to-choose options (outline /
-// clarify selection) the chat box is locked (readOnly + disabled Send). Opening
-// a NEW tab wipes the chat bubble that owned those options, but the lock stayed
-// on the textarea -> nothing could be typed. The old code called
-// `unlockChatInputAfterClarify()`, a function that does not exist anywhere,
-// so the unlock was silently skipped. A page refresh worked only because it
-// rebuilt all of this state from scratch. This helper does that same reset
-// explicitly, every time a tab is loaded.
-// ========================================================================
 function _resetTransientChatState() {
   try {
     const S = window.APP_STATE;
     if (S) {
-      S.pendingClarify = null;       // unanswered AI question
-      S.pendingPDFOutline = null;    // PDF outline waiting for approval
-      S.pendingExamOutline = null;   // exam outline waiting for approval
-      S.clarifyInputLock = null;     // option-only input lock
-      S.isAIGenerating = false;      // a stale "busy" flag must not block typing
+      S.pendingClarify = null;
+      S.pendingPDFOutline = null;
+      S.pendingExamOutline = null;
+      S.clarifyInputLock = null;
+      S.isAIGenerating = false;
     }
-    // 1) Real unlock (the function that actually exists in app.js)
-    if (typeof window._unlockChatInput === 'function') {
-      try { window._unlockChatInput(); } catch (_) {}
-    }
-    // 2) Belt and braces: force the DOM back to an editable state even if
-    //    the function above is missing or throws.
+    if (typeof window._unlockChatInput === 'function') { try { window._unlockChatInput(); } catch (_) {} }
     const ta = document.getElementById('chat-input-textarea');
     if (ta) {
       ta.readOnly = false;
@@ -113,40 +79,34 @@ function _resetTransientChatState() {
     }
     const sendBtn = document.getElementById('send-message-btn');
     if (sendBtn) sendBtn.disabled = false;
-  } catch (e) {
-    console.warn('[TabManager] _resetTransientChatState failed:', e);
-  }
+  } catch (e) { console.warn('[TabManager] _resetTransientChatState failed:', e); }
 }
 
 // ========================================================================
 // STUDIO SETTINGS — global user preferences (persisted in localStorage)
 // ------------------------------------------------------------------------
-// দুটি সুইচ, দুটোই Settings panel-এর জন্য:
+// Two user-facing switches (all labels in English):
 //
-//  ১) OCR image policy:
-//       'keep-image'  (DEFAULT — সুইচ ON) → OCR চলাকালীন ফিগার/ছবি শুধু
-//                                            ক্রপ করে ছবি হিসেবে রাখা হবে;
-//                                            AI vision দিয়ে পড়া হবে না।
-//       'read-vision' (সুইচ OFF)          → AI vision দিয়ে ছবি পড়া হবে,
-//                                            টেক্সট/LaTeX-এ রূপান্তর হবে।
+//   1) useAIVision          (default true)
+//        ON  → AI vision is used as a fallback to read images/scanned
+//              pages that local OCR cannot handle.
+//        OFF → vision disabled entirely; content that cannot be read
+//              locally is kept as-is (image).
 //
-//  ২) Text-layer figure policy:
-//       'crop'     (DEFAULT — সুইচ OFF) → PDF-এর text layer-এ থাকা ফিগার
-//                                           ক্রপ করে ছবি হিসেবে রাখা হবে।
-//       'recreate' (সুইচ ON)            → AI নিজের মতো করে ফিগার নতুন করে
-//                                           তৈরি করবে।
+//   2) keepFiguresAsImage   (default true)
+//        ON  → figures in text-layer pages are cropped as images.
+//        OFF → AI recreates figures from the text layer (requires
+//              useAIVision to be ON to have any effect).
 //
-// ocr.js এই getter গুলো দিয়ে current value পড়তে পারবে:
-//   window.getOcrImagePolicy()           → 'keep-image' | 'read-vision'
-//   window.getTextFigurePolicy()         → 'crop' | 'recreate'
-//   window.isOcrKeepImageSwitchOn()      → boolean (ON মানে keep-image)
-//   window.isTextFigureRecreateSwitchOn()→ boolean (ON মানে recreate)
+// ocr.js reads these through the compatibility API:
+//   window.isOcrKeepImageSwitchOn()        → true  when images should NOT be read (vision off)
+//   window.isTextFigureRecreateSwitchOn()  → true  only when vision is on AND keepFiguresAsImage is off
 // ========================================================================
 const STUDIO_SETTINGS_KEY = 'paperly_studio_settings_v1';
 
 const STUDIO_SETTINGS_DEFAULTS = Object.freeze({
-  ocrImagePolicy: 'keep-image',
-  textFigurePolicy: 'crop',
+  useAIVision: true,
+  keepFiguresAsImage: true,
 });
 
 function _loadStudioSettings() {
@@ -156,12 +116,13 @@ function _loadStudioSettings() {
     if (!raw) return out;
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== 'object') return out;
-    if (parsed.ocrImagePolicy === 'keep-image' || parsed.ocrImagePolicy === 'read-vision') {
-      out.ocrImagePolicy = parsed.ocrImagePolicy;
-    }
-    if (parsed.textFigurePolicy === 'crop' || parsed.textFigurePolicy === 'recreate') {
-      out.textFigurePolicy = parsed.textFigurePolicy;
-    }
+    if (typeof parsed.useAIVision === 'boolean') out.useAIVision = parsed.useAIVision;
+    if (typeof parsed.keepFiguresAsImage === 'boolean') out.keepFiguresAsImage = parsed.keepFiguresAsImage;
+    // Backward compat with the previous key scheme
+    if (parsed.ocrImagePolicy === 'keep-image' && typeof parsed.useAIVision !== 'boolean') out.useAIVision = false;
+    if (parsed.ocrImagePolicy === 'read-vision' && typeof parsed.useAIVision !== 'boolean') out.useAIVision = true;
+    if (parsed.textFigurePolicy === 'crop' && typeof parsed.keepFiguresAsImage !== 'boolean') out.keepFiguresAsImage = true;
+    if (parsed.textFigurePolicy === 'recreate' && typeof parsed.keepFiguresAsImage !== 'boolean') out.keepFiguresAsImage = false;
   } catch (_) {}
   return out;
 }
@@ -170,14 +131,12 @@ function _saveStudioSettings() {
   try {
     const s = (window.APP_STATE && window.APP_STATE.studioSettings) || STUDIO_SETTINGS_DEFAULTS;
     localStorage.setItem(STUDIO_SETTINGS_KEY, JSON.stringify({
-      ocrImagePolicy: s.ocrImagePolicy === 'read-vision' ? 'read-vision' : 'keep-image',
-      textFigurePolicy: s.textFigurePolicy === 'recreate' ? 'recreate' : 'crop',
+      useAIVision: !!s.useAIVision,
+      keepFiguresAsImage: !!s.keepFiguresAsImage,
     }));
   } catch (_) {}
 }
 
-// File parse-time-এ sync load করি, যাতে ocr.js যেকোনো সময় getter call করলে
-// মান পাওয়া যায় (init() এর জন্য অপেক্ষা করতে হয় না)।
 (function _initStudioSettings() {
   if (!window.APP_STATE) window.APP_STATE = {};
   window.APP_STATE.studioSettings = _loadStudioSettings();
@@ -187,9 +146,7 @@ window.STUDIO_SETTINGS_DEFAULTS = STUDIO_SETTINGS_DEFAULTS;
 
 window.getStudioSettings = function () {
   if (!window.APP_STATE) window.APP_STATE = {};
-  if (!window.APP_STATE.studioSettings) {
-    window.APP_STATE.studioSettings = _loadStudioSettings();
-  }
+  if (!window.APP_STATE.studioSettings) window.APP_STATE.studioSettings = _loadStudioSettings();
   return Object.assign({}, window.APP_STATE.studioSettings);
 };
 
@@ -203,14 +160,10 @@ window.setStudioSetting = function (key, value) {
     console.warn('[StudioSettings] unknown key:', key);
     return;
   }
-  if (key === 'ocrImagePolicy') {
-    value = value === 'read-vision' ? 'read-vision' : 'keep-image';
-  } else if (key === 'textFigurePolicy') {
-    value = value === 'recreate' ? 'recreate' : 'crop';
-  }
+  value = !!value;
   if (!window.APP_STATE) window.APP_STATE = {};
   if (!window.APP_STATE.studioSettings) window.APP_STATE.studioSettings = _loadStudioSettings();
-  if (window.APP_STATE.studioSettings[key] === value) return;
+  if (!!window.APP_STATE.studioSettings[key] === value) return;
   window.APP_STATE.studioSettings[key] = value;
   _saveStudioSettings();
   try {
@@ -238,27 +191,22 @@ window.onStudioSettingChange = function (callback) {
   return function () { window.removeEventListener('studio-settings-changed', handler); };
 };
 
-// ---- Convenience getters/setters (ocr.js এগুলো ব্যবহার করবে) ----
-window.getOcrImagePolicy = function () {
-  return window.getStudioSetting('ocrImagePolicy') === 'read-vision' ? 'read-vision' : 'keep-image';
-};
-window.setOcrImagePolicy = function (v) {
-  window.setStudioSetting('ocrImagePolicy', v === 'read-vision' ? 'read-vision' : 'keep-image');
-};
+// ---- OCR compatibility API (ocr.js reads these) ----
 window.isOcrKeepImageSwitchOn = function () {
-  return window.getOcrImagePolicy() === 'keep-image';
-};
-window.getTextFigurePolicy = function () {
-  return window.getStudioSetting('textFigurePolicy') === 'recreate' ? 'recreate' : 'crop';
-};
-window.setTextFigurePolicy = function (v) {
-  window.setStudioSetting('textFigurePolicy', v === 'recreate' ? 'recreate' : 'crop');
+  return !window.getStudioSetting('useAIVision');
 };
 window.isTextFigureRecreateSwitchOn = function () {
-  return window.getTextFigurePolicy() === 'recreate';
+  return !!window.getStudioSetting('useAIVision') && !window.getStudioSetting('keepFiguresAsImage');
+};
+// Legacy policy getters kept for older call sites.
+window.getOcrImagePolicy = function () {
+  return window.getStudioSetting('useAIVision') ? 'read-vision' : 'keep-image';
+};
+window.getTextFigurePolicy = function () {
+  return window.getStudioSetting('keepFiguresAsImage') ? 'crop' : 'recreate';
 };
 
-// ---- Settings panel helper: যেকোনো container-এ দুটি switch রেন্ডার ----
+// ---- Settings panel switch renderer (English labels only) ----
 window.renderStudioSwitches = function (containerEl, options) {
   if (!containerEl) return function () {};
   const opts = options || {};
@@ -270,19 +218,19 @@ window.renderStudioSwitches = function (containerEl, options) {
     const row = document.createElement('div');
     row.className = 'studio-setting-row';
     row.setAttribute('data-setting-key', key);
-    row.style.cssText = 'display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid rgba(0,0,0,0.08);';
+    row.style.cssText = 'display:flex;align-items:flex-start;gap:14px;padding:14px 0;border-bottom:1px solid rgba(148,163,184,.22);';
 
     const text = document.createElement('div');
     text.style.cssText = 'flex:1;min-width:0;';
 
     const label = document.createElement('div');
     label.className = 'studio-setting-label';
-    label.style.cssText = 'font-weight:600;';
+    label.style.cssText = 'font-weight:600;font-size:14px;';
     label.textContent = labelText;
 
     const desc = document.createElement('div');
     desc.className = 'studio-setting-desc';
-    desc.style.cssText = 'font-size:12px;opacity:0.72;margin-top:2px;';
+    desc.style.cssText = 'font-size:12.5px;opacity:0.72;margin-top:4px;line-height:1.5;';
     desc.textContent = descText;
 
     text.appendChild(label);
@@ -294,7 +242,7 @@ window.renderStudioSwitches = function (containerEl, options) {
     btn.id = idPrefix + '-' + key;
     btn.className = 'studio-switch';
     btn.setAttribute('role', 'switch');
-    btn.style.cssText = 'position:relative;width:46px;height:24px;border-radius:12px;border:none;cursor:pointer;background:#cbd5e1;transition:background 0.2s;flex:0 0 auto;padding:0;';
+    btn.style.cssText = 'position:relative;width:46px;height:24px;border-radius:12px;border:none;cursor:pointer;background:#cbd5e1;transition:background 0.2s;flex:0 0 auto;padding:0;margin-top:2px;';
 
     const knob = document.createElement('span');
     knob.className = 'studio-switch-knob';
@@ -303,32 +251,33 @@ window.renderStudioSwitches = function (containerEl, options) {
     row.appendChild(btn);
 
     function render() {
-      let on;
-      if (key === 'ocrImagePolicy') {
-        on = window.getOcrImagePolicy() === 'keep-image';
-        btn.title = on
-          ? 'চালু: ছবি ছবি হিসেবে রাখা হবে (AI vision ব্যবহার হবে না)'
-          : 'বন্ধ: AI vision দিয়ে ছবি পড়া হবে';
-      } else {
-        on = window.getTextFigurePolicy() === 'recreate';
-        btn.title = on
-          ? 'চালু: AI দিয়ে ফিগার নতুন করে তৈরি হবে'
-          : 'বন্ধ: ফিগার ছবি হিসেবে ক্রপ হবে';
-      }
+      const on = !!window.getStudioSetting(key);
       btn.setAttribute('aria-checked', on ? 'true' : 'false');
       btn.style.background = on ? '#22c55e' : '#cbd5e1';
       knob.style.left = on ? '24px' : '2px';
+      // Visual hint: "Keep figures as image" has no visible effect unless
+      // vision is ON, so dim it in that case.
+      if (key === 'keepFiguresAsImage') {
+        btn.style.opacity = window.getStudioSetting('useAIVision') ? '1' : '0.45';
+        btn.title = window.getStudioSetting('useAIVision')
+          ? (on ? 'Figures will be cropped as images' : 'AI will recreate figures (vision active)')
+          : 'Turn on "Use AI Vision" first to recreate figures';
+      } else {
+        btn.title = on
+          ? 'AI vision is available for fallback reading'
+          : 'AI vision is off; unreadable content is kept as image';
+      }
     }
 
     btn.addEventListener('click', function () {
-      if (key === 'ocrImagePolicy') {
-        const nowOn = window.getOcrImagePolicy() === 'keep-image';
-        window.setOcrImagePolicy(nowOn ? 'read-vision' : 'keep-image');
+      if (key === 'keepFiguresAsImage' && !window.getStudioSetting('useAIVision')) {
+        // When vision is off, recreating figures is impossible — force ON so
+        // the user's intent (crop as image) stays consistent.
+        window.setStudioSetting('keepFiguresAsImage', true);
       } else {
-        const nowOn = window.getTextFigurePolicy() === 'recreate';
-        window.setTextFigurePolicy(nowOn ? 'crop' : 'recreate');
+        window.setStudioSetting(key, !window.getStudioSetting(key));
       }
-      render();
+      rows.forEach(function (r) { r.render(); });
     });
 
     render();
@@ -336,14 +285,14 @@ window.renderStudioSwitches = function (containerEl, options) {
   }
 
   const s1 = buildSwitch(
-    'ocrImagePolicy',
-    'OCR-এ ছবি/ফিগার: ছবি হিসেবে রাখুন',
-    'চালু থাকলে OCR চলাকালীন ফিগার/ছবি শুধু ক্রপ করে ছবি হিসেবে রাখা হয় (AI vision ব্যবহার হয় না)। বন্ধ করলে AI vision দিয়ে ছবি পড়া হয়।'
+    'useAIVision',
+    'Use AI Vision',
+    'When ON, local OCR runs first and AI vision is used as a fallback for images it cannot read. When OFF, AI vision is disabled entirely and unreadable content is kept as-is.'
   );
   const s2 = buildSwitch(
-    'textFigurePolicy',
-    'টেক্সট-লেয়ার ফিগার AI দিয়ে নতুন করে তৈরি করুন',
-    'চালু থাকলে AI তার নিজের মতো করে ফিগার নতুন করে তৈরি করবে। বন্ধ থাকলে ফিগারগুলো ছবি হিসেবে ক্রপ করে রাখা হয়।'
+    'keepFiguresAsImage',
+    'Keep figures as image',
+    'When ON, diagrams and figures in text-layer pages are cropped as images. When OFF, AI recreates them from the text layer (requires "Use AI Vision" to be ON).'
   );
   containerEl.appendChild(s1.row);
   containerEl.appendChild(s2.row);
@@ -355,15 +304,39 @@ window.renderStudioSwitches = function (containerEl, options) {
   return unsubscribe;
 };
 
+// ---- Horizontal settings tabs (Preference / AI Models / Permissions) ----
+window.initSettingsTabs = function () {
+  const tabBar = document.querySelector('.settings-tab-bar');
+  if (!tabBar) return;
+  const panels = document.querySelectorAll('.settings-tab-panel');
+  if (!panels.length) return;
+
+  function showTab(tabName) {
+    tabBar.querySelectorAll('[data-tab]').forEach(function (b) {
+      const isActive = b.dataset.tab === tabName;
+      b.classList.toggle('active', isActive);
+      b.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    });
+    panels.forEach(function (p) {
+      p.hidden = p.dataset.panel !== tabName;
+    });
+  }
+
+  tabBar.addEventListener('click', function (e) {
+    const btn = e.target.closest('[data-tab]');
+    if (!btn) return;
+    showTab(btn.dataset.tab);
+  });
+
+  const initial = tabBar.querySelector('[data-tab].active') || tabBar.querySelector('[data-tab]');
+  if (initial) showTab(initial.dataset.tab);
+};
+
 // ---- Header rename: "AI Models" → "Settings" (best effort) ----
 window.renameAIModelsHeaderToSettings = function () {
   try {
     let found = false;
-    const selectors = [
-      '#ai-models-btn', '.ai-models-btn',
-      '[data-action="open-ai-models"]',
-      '[data-i18n-key="aiModels"]', '[data-i18n="aiModels"]'
-    ];
+    const selectors = ['#ai-models-btn', '.ai-models-btn', '[data-action="open-ai-models"]', '[data-i18n-key="aiModels"]', '[data-i18n="aiModels"]'];
     selectors.forEach(function (sel) {
       document.querySelectorAll(sel).forEach(function (el) {
         found = true;
@@ -392,83 +365,18 @@ window.renameAIModelsHeaderToSettings = function () {
   }
 };
 
-// ---- Settings panel restructure (best effort, optional) ----
-// এই ফাংশন Settings panel-এর ভেতরে তিনটি section তৈরি করে:
-//   (১) AI যুক্ত করুন  (২) AI মডেল লিস্ট  (৩) সুইচ ও পারমিশন
-// উপরের দুটি section-এর ভেতরের আসল form/list HTML ফাইলে পরে ওয়্যার করবেন;
-// এখানে শুধু switch section-এর দুই switch রেন্ডার হয়ে যায়। Panel না পেলে
-// কোনো ক্ষতি হয় না — false return করে চুপচাপ বেরিয়ে যায়।
-window.restructureSettingsPanel = function (panelElOrSelector) {
-  try {
-    let panel = panelElOrSelector;
-    if (typeof panel === 'string') panel = document.querySelector(panel);
-    if (!panel) {
-      panel = document.getElementById('settings-panel')
-        || document.getElementById('ai-models-panel')
-        || document.getElementById('settings-modal')
-        || document.getElementById('ai-models-modal');
-    }
-    if (!panel) return false;
-    if (panel.querySelector('[data-studio-section]')) return true;
+// Deprecated: the settings panel now uses real HTML tabs, so this is a no-op kept for safety.
+window.restructureSettingsPanel = function () { return true; };
 
-    const contentHost = panel.querySelector('.modal-body, .settings-content, .ai-models-content') || panel;
-    const originalChildren = Array.from(contentHost.children).filter(function (c) {
-      return c.nodeType === 1
-        && !c.classList.contains('modal-close')
-        && !c.classList.contains('close-btn');
-    });
-    if (!originalChildren.length) return false;
-
-    const sections = {};
-    ['add-ai', 'model-list', 'switches'].forEach(function (key, i) {
-      const sec = document.createElement('section');
-      sec.setAttribute('data-studio-section', key);
-      sec.style.cssText = 'margin:12px 0;padding:10px 0;border-top:1px solid rgba(0,0,0,0.08);';
-      if (i === 0) sec.style.borderTop = 'none';
-      const h = document.createElement('h3');
-      h.style.cssText = 'margin:0 0 8px;font-size:14px;font-weight:600;opacity:0.9;';
-      h.textContent = (
-        key === 'add-ai' ? 'AI যুক্ত করুন'
-        : key === 'model-list' ? 'AI মডেল লিস্ট'
-        : 'সুইচ ও পারমিশন'
-      );
-      sec.appendChild(h);
-      const body = document.createElement('div');
-      body.className = 'studio-section-body';
-      sec.appendChild(body);
-      sections[key] = { section: sec, body: body };
-      contentHost.appendChild(sec);
-    });
-
-    // পুরনো কনটেন্ট "AI মডেল লিস্ট" section-এ যায় (আগে এটাই দেখাত)।
-    originalChildren.forEach(function (c) {
-      sections['model-list'].body.appendChild(c);
-    });
-
-    // সুইচ section পূরণ করি।
-    window.renderStudioSwitches(sections['switches'].body);
-
-    // "AI যুক্ত করুন" section-এ একটা hint। আসল form HTML পরে বসবে।
-    const addHint = document.createElement('div');
-    addHint.style.cssText = 'font-size:12px;opacity:0.7;';
-    addHint.textContent = 'নতুন AI মডেল যোগ করার ফর্ম এখানে বসবে।';
-    sections['add-ai'].body.appendChild(addHint);
-
-    return true;
-  } catch (e) {
-    console.warn('[StudioSettings] restructureSettingsPanel failed:', e);
-    return false;
-  }
-};
-
-// DOM ready হলে হেডার রিনেম করি (best-effort)।
 if (typeof document !== 'undefined') {
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', function () {
       try { window.renameAIModelsHeaderToSettings(); } catch (_) {}
+      try { window.initSettingsTabs(); } catch (_) {}
     });
   } else {
     try { window.renameAIModelsHeaderToSettings(); } catch (_) {}
+    try { window.initSettingsTabs(); } catch (_) {}
   }
 }
 
@@ -477,12 +385,8 @@ const TAB_MANAGER = {
   activeId: null,
   nextId: 1,
   _initialized: false,
-  // true while _loadStateIntoUI() is running. During that window APP_STATE is
-  // only half-restored (e.g. APP_STATE.slideDeck is still empty after a page
-  // refresh), so _captureCurrentState() must NOT copy it back into the tab.
   _loading: false,
 
-  // The default blank slide every new / empty slide deck starts with.
   _defaultSlideDeck() {
     return {
       title: 'Untitled Deck',
@@ -490,9 +394,6 @@ const TAB_MANAGER = {
     };
   },
 
-  // A slide deck must always contain at least one slide. If a saved deck came
-  // back with an empty slides list, put the default blank slide back so the
-  // editor never shows "no page". Non-deck tabs (null) are left alone.
   _normalizeSlideDeck(deck) {
     if (!deck || typeof deck !== 'object' || !Array.isArray(deck.slides)) return null;
     if (deck.slides.length === 0) {
@@ -502,13 +403,10 @@ const TAB_MANAGER = {
     return deck;
   },
 
-  _generateId() {
-    return 'tab_' + (this.nextId++);
-  },
+  _generateId() { return 'tab_' + (this.nextId++); },
 
   _getTabNameFromHtml(html) {
     if (!html) return 'Untitled';
-    // The title is always near the top: parse only the first 60 KB instead of the whole (maybe 10 MB) document.
     const head = html.length > 60000 ? html.slice(0, 60000) : html;
     if (this._nameHeadCache === head) return this._nameCache;
     const temp = document.createElement('div');
@@ -538,12 +436,9 @@ const TAB_MANAGER = {
   },
 
   _captureCurrentState(tabId, htmlOverride) {
-    // FIX: never overwrite a tab with half-restored APP_STATE while it is
-    // still being loaded (this was wiping the default blank slide on refresh).
     if (this._loading) return;
     const tab = this.tabs.find(t => t.id === tabId);
     if (!tab) return;
-    // htmlOverride: the caller already built the document HTML a moment ago (see HISTORY.saveState).
     const html = typeof htmlOverride === 'string' ? htmlOverride : (typeof getAllCanvasHTML === 'function' ? getAllCanvasHTML() : '');
     tab.htmlContent = html || tab.htmlContent;
     tab.name = this._getTabNameFromHtml(html);
@@ -567,23 +462,15 @@ const TAB_MANAGER = {
     if (!tab) return;
     this._loading = true;
     try {
-      // Restore the slide deck into APP_STATE FIRST, before anything else
-      // (pagination, preview, persist hooks) can run and read an empty value.
       tab.slideDeck = this._normalizeSlideDeck(tab.slideDeck);
       if (window.APP_STATE) window.APP_STATE.slideDeck = tab.slideDeck || null;
       this._loadStateIntoUIInner(tab);
-    } finally {
-      this._loading = false;
-    }
-    // Everything is restored now; persist the (normalized) tab once so the
-    // saved copy always matches what is on screen.
+    } finally { this._loading = false; }
     try { this._persist(); } catch (_) {}
   },
 
   _loadStateIntoUIInner(tab) {
     if (!tab) return;
-
-    // Clear and restore the chat pane
     const chatHistoryArea = document.getElementById('chat-history');
     if (chatHistoryArea) {
       chatHistoryArea.innerHTML = '';
@@ -597,13 +484,6 @@ const TAB_MANAGER = {
         }
       });
       if (restoredChat.length === 0) {
-        // Keep this in sync with index.html's own #chat-empty-state markup.
-        // This used to be missing the suggestion-chips block that the static
-        // HTML has, so on load the page would briefly show the full empty
-        // state (from index.html) and then, the moment tab restoration ran,
-        // silently swap it for this shorter version — chips popping in and
-        // then disappearing a beat later, which is what looked like
-        // something overlapping/duplicating in the AI panel during refresh.
         chatHistoryArea.innerHTML = `
           <div id="chat-empty-state" class="chat-empty-state">
             <span class="chat-empty-icon" aria-hidden="true">
@@ -617,11 +497,7 @@ const TAB_MANAGER = {
 
     const html = tab.htmlContent || this._createBlankState().htmlContent;
     if (typeof setDocumentHTMLAndPaginate === 'function') {
-      try {
-        setDocumentHTMLAndPaginate(html, false);
-      } catch (e) {
-        console.error('Tab switch: failed to paginate document content', e);
-      }
+      try { setDocumentHTMLAndPaginate(html, false); } catch (e) { console.error('Tab switch: failed to paginate', e); }
     }
     const docContainer = document.getElementById('document-view-container');
     if (docContainer) docContainer.scrollTop = tab.scrollPosition || 0;
@@ -631,16 +507,11 @@ const TAB_MANAGER = {
       window.APP_STATE.fileObjects = TAB_FILE_OBJECTS.has(tab.id) ? TAB_FILE_OBJECTS.get(tab.id) : {};
     }
     if (typeof renderAttachmentBar === 'function') renderAttachmentBar();
-
     if (window.HISTORY) {
       window.HISTORY.undoStack = Array.isArray(tab.undoStack) ? [...tab.undoStack] : [];
       window.HISTORY.redoStack = Array.isArray(tab.redoStack) ? [...tab.redoStack] : [];
     }
-
-    if (window.APP_STATE) {
-      window.APP_STATE.projectVersion = tab.projectVersion || 0;
-    }
-
+    if (window.APP_STATE) window.APP_STATE.projectVersion = tab.projectVersion || 0;
     if (tab.theme && window.APP_STATE) {
       window.APP_STATE.theme = tab.theme;
       if (typeof applyCurrentTheme === 'function') applyCurrentTheme();
@@ -657,20 +528,14 @@ const TAB_MANAGER = {
       window.APP_STATE.pdfLanguageFormat = tab.pdfLanguageFormat;
       applyPDFLanguageFormat(tab.pdfLanguageFormat);
     }
-    if (tab.photocopyMode) {
-      document.body.classList.add('photocopy-mode');
-    } else {
-      document.body.classList.remove('photocopy-mode');
-    }
+    if (tab.photocopyMode) document.body.classList.add('photocopy-mode');
+    else document.body.classList.remove('photocopy-mode');
     if (typeof updateModeButtonText === 'function') updateModeButtonText();
     if (typeof applyMonochromeDocumentStyles === 'function') applyMonochromeDocumentStyles();
 
     if (window.APP_STATE) window.APP_STATE.slideDeck = tab.slideDeck || null;
     if (typeof renderSlideDeckPreview === 'function') renderSlideDeckPreview(tab.slideDeck || null);
 
-    // Keep the slide-outline memory in step with the tab being shown. After a
-    // page reload the chat pane is empty (chat history is not persisted), so
-    // show the pending outline again, with its Generate-deck button.
     if (window.APP_STATE) window.APP_STATE.pendingOutline = tab.pendingOutline || null;
     try {
       const _chatEl = document.getElementById('chat-history');
@@ -684,16 +549,7 @@ const TAB_MANAGER = {
       }
     } catch (e) { console.warn('[TabManager] could not restore pending outline bubble:', e); }
 
-    // A slide-deck tab is slide-shaped (16:9) content, not an A4 document —
-    // switch straight to the Slides view for it, and back to the normal A4
-    // editor for everything else, so the shape of the page always matches
-    // the kind of document this tab actually is.
     const _tabIsSlideDeck = !!(tab.slideDeck && Array.isArray(tab.slideDeck.slides) && tab.slideDeck.slides.length);
-    // FIX (mobile): switchPreviewTab() forces the Editor/Slides panel open on
-    // phones. Closing all tabs (or deleting a tab) reloads a tab through here,
-    // so the person got yanked out of AI Chat into the document editor.
-    // Remember the panel they were on BEFORE and put them back afterwards
-    // (same pattern as _syncBlankActiveTabToCreationMode in app.js).
     const _isMobileLayout = typeof isMobileDeviceLayout === 'function' && isMobileDeviceLayout();
     const _prevMobileView = (window.APP_STATE && window.APP_STATE.currentMobileView) || 'chat';
     if (typeof switchPreviewTab === 'function') switchPreviewTab(_tabIsSlideDeck ? 'slides' : 'editor');
@@ -702,37 +558,24 @@ const TAB_MANAGER = {
     }
 
     if (window.APP_STATE) window.APP_STATE.selectedPage = null;
-    // Selected @ commands (and Canvas / Page / Detailed / Compact ...) are NOT cleared on tab
-    // switch or new tab — they stay until the person removes them by hand.
-    // A different tab means any unanswered AI question no longer applies.
     _resetTransientChatState();
     if (typeof renderSelectedCommandChips === 'function') renderSelectedCommandChips();
     if (typeof closeAtCommandMenu === 'function') closeAtCommandMenu();
     if (typeof forceRenderAllEquations === 'function') forceRenderAllEquations();
-
     if (typeof saveStateToLocalStorage === 'function') saveStateToLocalStorage();
   },
 
   _persist(htmlOverride) {
-    // FIX: a persist before tabs are restored/created would overwrite the
-    // saved workspace with an empty list.
     if (!this.tabs.length) return;
-    // Keep the header's "New document" format lock in sync with the active
-    // tab's real, just-captured content on every persist — this is the one
-    // choke point every generation/edit/tab-switch pipeline already runs
-    // through, so it stays correct without extra hooks scattered everywhere.
     if (this.activeId) {
       this._captureCurrentState(this.activeId, htmlOverride);
       if (typeof updateCreationModeLockUI === 'function') updateCreationModeLockUI();
     }
-    // Remember which view this session opens in, for the boot guard above.
     try {
       const a = this.getActive();
       const isDeck = !!(a && a.slideDeck && Array.isArray(a.slideDeck.slides) && a.slideDeck.slides.length);
       localStorage.setItem(BOOT_VIEW_KEY, isDeck ? 'slides' : 'editor');
     } catch (_) {}
-    // The expensive part (building + writing the big JSON) is postponed and merged: typing or generating
-    // used to rewrite the whole document into localStorage on every single save.
     this._schedulePersistWrite();
   },
 
@@ -746,7 +589,6 @@ const TAB_MANAGER = {
     }, 1500);
   },
 
-  // Writes immediately if a write is still waiting (called when the page is hidden / closed).
   flushPersist() {
     if (!this._persistTimer) return;
     clearTimeout(this._persistTimer);
@@ -756,12 +598,8 @@ const TAB_MANAGER = {
 
   _writeTabsToStorage() {
     if (!this.tabs.length) return;
-    // Very big document: do not even build the full JSON (it could never fit in localStorage anyway).
-    {
-      let totalChars = 0;
-      for (const tb of this.tabs) totalChars += (tb.htmlContent ? tb.htmlContent.length : 0);
-      if (totalChars > 3400000) { this._persistEmergencyMetadata(); return; }
-    }
+    { let totalChars = 0; for (const tb of this.tabs) totalChars += (tb.htmlContent ? tb.htmlContent.length : 0);
+      if (totalChars > 3400000) { this._persistEmergencyMetadata(); return; } }
     try {
       const compactTabs = this.tabs.map(t => {
         const attachedFiles = {};
@@ -781,107 +619,56 @@ const TAB_MANAGER = {
             visionDataUrls: Array.isArray(f.visionDataUrls) ? f.visionDataUrls : []
           };
         });
-
-        // Slide decks can carry inline SVG (charts/diagrams), so cap the
-        // persisted size defensively — same "truncate rather than fail"
-        // approach used above for attachedFiles content. A deck that
-        // exceeds the cap is dropped from persistence (not crashed on);
-        // it still exists live in APP_STATE.slideDeck for the session.
         let slideDeck = null;
         if (t.slideDeck) {
-          try {
-            const serialized = JSON.stringify(t.slideDeck);
-            slideDeck = serialized.length <= 900000 ? t.slideDeck : null;
-          } catch (_) { slideDeck = null; }
+          try { const serialized = JSON.stringify(t.slideDeck); slideDeck = serialized.length <= 900000 ? t.slideDeck : null; }
+          catch (_) { slideDeck = null; }
         }
-
         const pendingOutline = _compactPendingOutlineForStorage(t.pendingOutline);
-
         return {
-          id: t.id,
-          name: t.name || 'Untitled',
-          htmlContent: t.htmlContent || '',
-          attachedFiles,
-          selectedPage: t.selectedPage ?? null,
-          projectVersion: t.projectVersion || 0,
-          scrollPosition: t.scrollPosition || 0,
-          theme: t.theme || 'light',
+          id: t.id, name: t.name || 'Untitled', htmlContent: t.htmlContent || '',
+          attachedFiles, selectedPage: t.selectedPage ?? null, projectVersion: t.projectVersion || 0,
+          scrollPosition: t.scrollPosition || 0, theme: t.theme || 'light',
           pdfVisualFormat: t.pdfVisualFormat || window.APP_STATE?.pdfVisualFormat || 'default',
           pdfTextFormat: t.pdfTextFormat || window.APP_STATE?.pdfTextFormat || 'default',
           pdfLanguageFormat: t.pdfLanguageFormat || window.APP_STATE?.pdfLanguageFormat || 'default',
-          photocopyMode: !!t.photocopyMode,
-          slideDeck,
-          pendingOutline
+          photocopyMode: !!t.photocopyMode, slideDeck, pendingOutline
         };
       });
-
-      const data = {
-        version: 2,
-        compact: true,
-        tabs: compactTabs,
-        activeId: this.activeId,
-        nextId: this.nextId
-      };
-
+      const data = { version: 2, compact: true, tabs: compactTabs, activeId: this.activeId, nextId: this.nextId };
       const payload = JSON.stringify(data);
-      const approxMB = payload.length / (1024 * 1024);
-      if (approxMB > 3.6) {
-        this._persistEmergencyMetadata();
-        return;
-      }
-
+      if (payload.length / (1024 * 1024) > 3.6) { this._persistEmergencyMetadata(); return; }
       localStorage.setItem(TAB_STORAGE_KEY, payload);
       try { localStorage.removeItem(STORAGE_KEY); } catch (_) {}
-    } catch (e) {
-      console.warn('Failed to persist compact tabs:', e);
-      this._persistEmergencyMetadata();
-    }
+    } catch (e) { console.warn('Failed to persist compact tabs:', e); this._persistEmergencyMetadata(); }
   },
 
   _persistEmergencyMetadata() {
     try {
       const data = {
-        version: 3,
-        compact: true,
+        version: 3, compact: true,
         tabs: this.tabs.map(t => {
-          // Even in the emergency (payload-too-large) fallback, keep a
-          // size-capped slideDeck for the ACTIVE tab so a Slides tab
-          // doesn't come back as a blank PDF tab on the next load just
-          // because its saved HTML/attachments were too big — losing the
-          // deck here is exactly what made a Slides tab look like it had
-          // been "converted" to PDF after a refresh.
           let slideDeck = null;
           if (t.id === this.activeId && t.slideDeck) {
-            try {
-              const serialized = JSON.stringify(t.slideDeck);
-              slideDeck = serialized.length <= 300000 ? t.slideDeck : null;
-            } catch (_) { slideDeck = null; }
+            try { const serialized = JSON.stringify(t.slideDeck); slideDeck = serialized.length <= 300000 ? t.slideDeck : null; }
+            catch (_) { slideDeck = null; }
           }
           return {
-            id: t.id,
-            name: t.name || 'Untitled',
+            id: t.id, name: t.name || 'Untitled',
             htmlContent: t.id === this.activeId ? String(t.htmlContent || '').slice(0, 180000) : '',
-            selectedPage: t.selectedPage ?? null,
-            projectVersion: t.projectVersion || 0,
-            scrollPosition: t.scrollPosition || 0,
-            theme: t.theme || 'light',
-            pdfVisualFormat: t.pdfVisualFormat || 'default',
-            pdfTextFormat: t.pdfTextFormat || 'default',
-            pdfLanguageFormat: t.pdfLanguageFormat || 'default',
-            photocopyMode: !!t.photocopyMode,
+            selectedPage: t.selectedPage ?? null, projectVersion: t.projectVersion || 0,
+            scrollPosition: t.scrollPosition || 0, theme: t.theme || 'light',
+            pdfVisualFormat: t.pdfVisualFormat || 'default', pdfTextFormat: t.pdfTextFormat || 'default',
+            pdfLanguageFormat: t.pdfLanguageFormat || 'default', photocopyMode: !!t.photocopyMode,
             slideDeck,
             pendingOutline: t.id === this.activeId ? _compactPendingOutlineForStorage(t.pendingOutline) : null
           };
         }),
-        activeId: this.activeId,
-        nextId: this.nextId
+        activeId: this.activeId, nextId: this.nextId
       };
-      const payload = JSON.stringify(data);
-      localStorage.setItem(TAB_STORAGE_KEY, payload);
+      localStorage.setItem(TAB_STORAGE_KEY, JSON.stringify(data));
       try { localStorage.removeItem(STORAGE_KEY); } catch (_) {}
-    } catch (e2) {
-      console.warn('Emergency tab persistence skipped because browser storage is unavailable:', e2);
-    }
+    } catch (e2) { console.warn('Emergency persistence skipped:', e2); }
   },
 
   _restore() {
@@ -890,27 +677,20 @@ const TAB_MANAGER = {
       if (!raw) return false;
       const data = JSON.parse(raw);
       if (!data.tabs || !Array.isArray(data.tabs) || data.tabs.length === 0) return false;
-
       this.tabs = data.tabs.map(t => ({
-        id: t.id || this._generateId(),
-        name: t.name || 'Untitled',
+        id: t.id || this._generateId(), name: t.name || 'Untitled',
         htmlContent: t.htmlContent || this._createBlankState().htmlContent,
         chatHistory: Array.isArray(t.chatHistory) ? t.chatHistory : [],
         attachedFiles: Object.fromEntries(Object.entries(t.attachedFiles || {}).map(([id, f]) => [id, { ...(f || {}), sourceMode: 'ocr' }])),
-        undoStack: t.undoStack || [],
-        redoStack: t.redoStack || [],
-        selectedPage: t.selectedPage || null,
-        projectVersion: t.projectVersion || 0,
-        scrollPosition: t.scrollPosition || 0,
-        theme: t.theme || 'light',
-        pdfVisualFormat: t.pdfVisualFormat || 'default',
-        pdfTextFormat: t.pdfTextFormat || 'default',
+        undoStack: t.undoStack || [], redoStack: t.redoStack || [],
+        selectedPage: t.selectedPage || null, projectVersion: t.projectVersion || 0,
+        scrollPosition: t.scrollPosition || 0, theme: t.theme || 'light',
+        pdfVisualFormat: t.pdfVisualFormat || 'default', pdfTextFormat: t.pdfTextFormat || 'default',
         pdfLanguageFormat: t.pdfLanguageFormat || 'default',
         photocopyMode: t.photocopyMode !== undefined ? t.photocopyMode : false,
         slideDeck: this._normalizeSlideDeck(t.slideDeck),
         pendingOutline: (t.pendingOutline && t.pendingOutline.outline) ? Object.assign({}, t.pendingOutline, { tabId: t.id, approveNow: false }) : null
       }));
-
       this.activeId = data.activeId || (this.tabs[0] ? this.tabs[0].id : null);
       this.nextId = data.nextId || this.tabs.length + 1;
       return true;
@@ -934,8 +714,6 @@ const TAB_MANAGER = {
       photocopyMode: state.photocopyMode !== undefined ? state.photocopyMode : document.body.classList.contains('photocopy-mode'),
       slideDeck: state.slideDeck || null
     };
-    // SINGLE SESSION MODEL (no multi-tab): starting/opening anything replaces the current session.
-    // The outgoing session is handed to the cloud-history archiver (js/paperly-cloud.js) first.
     if (this.tabs.length) {
       try { if (this.activeId) this._captureCurrentState(this.activeId); } catch (_) {}
       try { if (typeof window.__paperlyArchiveTabs === 'function') window.__paperlyArchiveTabs(this.tabs.slice()); } catch (_) {}
@@ -946,34 +724,17 @@ const TAB_MANAGER = {
   },
 
   duplicateActiveTab() {
-    if (this.tabs.length === 0) {
-      const tab = this.createTab('Untitled');
-      this.switchTo(tab.id);
-      return;
-    }
+    if (this.tabs.length === 0) { const tab = this.createTab('Untitled'); this.switchTo(tab.id); return; }
     const active = this.getActive();
-    if (!active) {
-      const tab = this.createTab('Untitled');
-      this.switchTo(tab.id);
-      return;
-    }
+    if (!active) { const tab = this.createTab('Untitled'); this.switchTo(tab.id); return; }
     this._captureCurrentState(this.activeId);
-    const newTab = this.createTab(
-      active.name + ' (copy)',
-      active.htmlContent, {
-        htmlContent: active.htmlContent,
-        chatHistory: [],
-        attachedFiles: {},
-        undoStack: [],
-        redoStack: [],
-        selectedPage: null,
-        projectVersion: 0,
-        scrollPosition: 0,
-        theme: active.theme || window.APP_STATE?.theme || 'light',
-        photocopyMode: active.photocopyMode !== undefined ? active.photocopyMode : document.body.classList.contains('photocopy-mode'),
-        slideDeck: active.slideDeck || null
-      }
-    );
+    const newTab = this.createTab(active.name + ' (copy)', active.htmlContent, {
+      htmlContent: active.htmlContent, chatHistory: [], attachedFiles: {},
+      undoStack: [], redoStack: [], selectedPage: null, projectVersion: 0,
+      scrollPosition: 0, theme: active.theme || window.APP_STATE?.theme || 'light',
+      photocopyMode: active.photocopyMode !== undefined ? active.photocopyMode : document.body.classList.contains('photocopy-mode'),
+      slideDeck: active.slideDeck || null
+    });
     this.switchTo(newTab.id);
     if (typeof displayToastNotification === 'function') displayToastNotification(`✅ New tab: "${newTab.name}"`);
   },
@@ -987,19 +748,9 @@ const TAB_MANAGER = {
       window.APP_STATE.activeSessionId = (window.APP_STATE.activeSessionId || 0) + 1;
       window.APP_STATE.fileObjects = {};
     }
-
-    // Match startNewProject()'s behavior: whether the fresh tab is a blank
-    // A4 document or a blank slide deck is decided by the header's
-    // creation-mode dropdown (same source of truth used everywhere else).
-    // Previously this always built a plain document state regardless of
-    // that dropdown, so closing all tabs while "Slide Deck" was selected
-    // still landed you back in the document/PDF editor instead of a blank
-    // slide deck.
     const mode = (window.APP_STATE && window.APP_STATE.creationMode === 'slides') ? 'slides' : 'pdf';
     const state = this._createBlankState();
-    if (mode === 'slides') {
-      state.slideDeck = this._defaultSlideDeck();
-    }
+    if (mode === 'slides') state.slideDeck = this._defaultSlideDeck();
     const tab = this.createTab(mode === 'slides' ? 'Untitled Deck' : 'Untitled', state.htmlContent, state, false);
     TAB_FILE_OBJECTS.set(tab.id, {});
     this.activeId = tab.id;
@@ -1024,10 +775,6 @@ const TAB_MANAGER = {
     if (typeof displayToastNotification === 'function') displayToastNotification(`✅ New blank tab`);
   },
 
-  // Same as createBlankTab(), but for the "Slide Deck" creation mode: the
-  // new tab starts with an empty, editable slide deck (one title slide)
-  // instead of a blank A4 document, and switchTo() (via _loadStateIntoUI)
-  // takes care of showing the Slides view automatically.
   createBlankSlideTab() {
     if (window.APP_STATE) {
       window.APP_STATE.activeSessionId = (window.APP_STATE.activeSessionId || 0) + 1;
@@ -1045,15 +792,8 @@ const TAB_MANAGER = {
     if (!tabId) return;
     const tab = this.tabs.find(t => t.id === tabId);
     if (!tab) return;
-
-    if (this.activeId) {
-      this._captureCurrentState(this.activeId);
-    }
-
-    if (window.APP_STATE) {
-      window.APP_STATE.activeSessionId = (window.APP_STATE.activeSessionId || 0) + 1;
-    }
-
+    if (this.activeId) this._captureCurrentState(this.activeId);
+    if (window.APP_STATE) window.APP_STATE.activeSessionId = (window.APP_STATE.activeSessionId || 0) + 1;
     this.activeId = tabId;
     this._loadStateIntoUI(tab);
     this._persist();
@@ -1077,18 +817,13 @@ const TAB_MANAGER = {
     const tab = this.tabs.find(t => t.id === tabId);
     if (!tab) return;
     if (!confirm(`Delete tab "${tab.name}"? This will discard all its content.`)) return;
-
     const wasActive = this.activeId === tabId;
     const index = this.tabs.indexOf(tab);
     this.tabs.splice(index, 1);
-
     if (wasActive) {
       const newActive = this.tabs[Math.min(index, this.tabs.length - 1)];
       this.activeId = newActive.id;
       this._loadStateIntoUI(newActive);
-    } else if (this.activeId === tabId) {
-      this.activeId = this.tabs[0] ? this.tabs[0].id : null;
-      if (this.activeId) this._loadStateIntoUI(this.tabs[0]);
     }
     this._persist();
     this.renderTabBar();
@@ -1115,83 +850,12 @@ const TAB_MANAGER = {
   },
 
   renderTabBar() {
-    // Multi-tab UI removed (single-session model): the tab bar is never drawn.
     const bar = document.getElementById('tab-bar');
     if (bar) { bar.innerHTML = ''; bar.style.display = 'none'; }
     const oldFab = document.getElementById('topbar-newtab-fab-btn');
     if (oldFab) oldFab.style.display = 'none';
-    return;
-    // eslint-disable-next-line no-unreachable
-    if (!bar) return;
-    const active = this.getActive();
-
-    bar.innerHTML = '';
-
-    // "New tab" button - fixed on the left
-    const newBtn = document.createElement('button');
-    newBtn.id = 'tab-new-btn';
-    newBtn.innerHTML = '▢';
-    newBtn.title = 'New tab (duplicate current)';
-    newBtn.setAttribute('aria-label', 'New tab');
-    newBtn.onclick = () => this.duplicateActiveTab();
-    bar.appendChild(newBtn);
-
-    const scrollWrap = document.createElement('div');
-    scrollWrap.id = 'tab-items-scroll';
-
-    this.tabs.forEach(tab => {
-      const isActive = tab.id === (active ? active.id : null);
-      const item = document.createElement('div');
-      item.className = 'tab-item' + (isActive ? ' active' : '');
-      item.setAttribute('data-tab-id', tab.id);
-      item.title = tab.name;
-
-      const dot = document.createElement('span');
-      dot.className = 'tab-dot';
-      item.appendChild(dot);
-
-      const nameSpan = document.createElement('span');
-      nameSpan.className = 'tab-name';
-      nameSpan.textContent = tab.name || 'Untitled';
-      item.appendChild(nameSpan);
-
-      if (this.tabs.length > 1) {
-        const closeBtn = document.createElement('button');
-        closeBtn.type = 'button';
-        closeBtn.className = 'tab-close';
-        closeBtn.innerHTML = typeof renderCommandIcon === 'function' ? renderCommandIcon('close') : '×';
-        closeBtn.setAttribute('aria-label', `Close tab ${tab.name || 'Untitled'}`);
-        closeBtn.title = 'Close tab';
-        closeBtn.onclick = (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          this.deleteTab(tab.id);
-        };
-        item.appendChild(closeBtn);
-      }
-
-      item.onclick = (e) => {
-        if (e.target.closest('.tab-close')) return;
-        if (tab.id !== (active ? active.id : null)) {
-          this.switchTo(tab.id);
-        }
-      };
-
-      scrollWrap.appendChild(item);
-    });
-
-    bar.appendChild(scrollWrap);
-
-    const fab = document.getElementById('topbar-newtab-fab-btn');
-    if (fab) {
-      fab.style.display = (typeof isMobileDeviceLayout === 'function' && isMobileDeviceLayout()) ? 'flex' : 'none';
-    }
   },
 
-  // Safety net: in "Slide Deck" creation mode, a blank tab (placeholder
-  // content, no chat, no attachments) must always have the default blank
-  // slide. If anything left it without a deck (e.g. after a refresh),
-  // put the default deck back and show the Slides view.
   _ensureBlankSlideTabHasDeck() {
     try {
       if (!window.APP_STATE || window.APP_STATE.creationMode !== 'slides') return;
@@ -1203,17 +867,13 @@ const TAB_MANAGER = {
       if (!isBlank) return;
       tab.slideDeck = this._defaultSlideDeck();
       this._loadStateIntoUI(tab);
-    } catch (e) {
-      console.warn('[TabManager] ensure blank slide deck failed:', e);
-    }
+    } catch (e) { console.warn('[TabManager] ensure blank slide deck failed:', e); }
   },
 
   init() {
     if (this._initialized) return;
     this._initialized = true;
-
     const restored = this._restore();
-
     if (!restored || this.tabs.length === 0) {
       const currentHtml = typeof getAllCanvasHTML === 'function' ? getAllCanvasHTML() : '';
       const state = this._createBlankState();
@@ -1225,48 +885,29 @@ const TAB_MANAGER = {
       state.projectVersion = window.APP_STATE?.projectVersion || 0;
       state.theme = window.APP_STATE?.theme || 'light';
       state.photocopyMode = document.body.classList.contains('photocopy-mode');
-
-      const tab = this.createTab(
-        this._getTabNameFromHtml(state.htmlContent) || 'Untitled',
-        state.htmlContent,
-        state,
-        false
-      );
+      const tab = this.createTab(this._getTabNameFromHtml(state.htmlContent) || 'Untitled', state.htmlContent, state, false);
       this.activeId = tab.id;
       this._persist();
       this._loadStateIntoUI(tab);
     } else {
       const active = this.getActive();
-      if (active) {
-        this._loadStateIntoUI(active);
-      } else {
-        const tab = this.tabs[0];
-        this.activeId = tab.id;
-        this._loadStateIntoUI(tab);
-      }
+      if (active) this._loadStateIntoUI(active);
+      else { const tab = this.tabs[0]; this.activeId = tab.id; this._loadStateIntoUI(tab); }
     }
-
     this._ensureBlankSlideTabHasDeck();
-    // The right view (Slides or Editor) is now showing: reveal on the next
-    // painted frame so the A4 page can never flash in between.
     if (typeof requestAnimationFrame === 'function') {
       requestAnimationFrame(() => requestAnimationFrame(_releaseBootViewGuard));
-    } else {
-      _releaseBootViewGuard();
-    }
+    } else { _releaseBootViewGuard(); }
     this.renderTabBar();
     const fab = document.getElementById('topbar-newtab-fab-btn');
-    if (fab) {
-      fab.style.display = (typeof isMobileDeviceLayout === 'function' && isMobileDeviceLayout()) ? 'flex' : 'none';
-    }
+    if (fab) fab.style.display = (typeof isMobileDeviceLayout === 'function' && isMobileDeviceLayout()) ? 'flex' : 'none';
   }
 };
 
-// ===== TAB-AWARE SAVE/LOAD FUNCTIONS =====
-window.saveProjectFile = function() {
+// ===== TAB-AWARE SAVE/LOAD =====
+window.saveProjectFile = function () {
   if (TAB_MANAGER.activeId) TAB_MANAGER._captureCurrentState(TAB_MANAGER.activeId);
   TAB_MANAGER._persist();
-
   const projectData = {
     htmlContent: typeof getAllCanvasHTML === 'function' ? getAllCanvasHTML() : '',
     chatHistory: window.APP_STATE?.chatHistory || [],
@@ -1284,15 +925,13 @@ window.saveProjectFile = function() {
   link.download = (projectData.tabName || 'Document') + '.aipdf';
   link.click();
   URL.revokeObjectURL(link.href);
-  if (typeof displayToastNotification === 'function') {
-    displayToastNotification(`💾 Saved Project (tab: ${projectData.tabName})`);
-  }
+  if (typeof displayToastNotification === 'function') displayToastNotification(`💾 Saved Project (tab: ${projectData.tabName})`);
 };
 
-window.loadProjectFromFile = function(fileList) {
+window.loadProjectFromFile = function (fileList) {
   if (!fileList || fileList.length === 0) return;
   const reader = new FileReader();
-  reader.onload = function(event) {
+  reader.onload = function (event) {
     try {
       const parsedData = JSON.parse(event.target.result);
       const state = TAB_MANAGER._createBlankState();
@@ -1305,20 +944,11 @@ window.loadProjectFromFile = function(fileList) {
       state.photocopyMode = !!parsedData.photocopyMode;
       state.undoStack = [];
       state.redoStack = [];
-
-      const tab = TAB_MANAGER.createTab(
-        parsedData.tabName || 'Loaded',
-        state.htmlContent,
-        state
-      );
+      const tab = TAB_MANAGER.createTab(parsedData.tabName || 'Loaded', state.htmlContent, state);
       TAB_MANAGER.switchTo(tab.id);
-      if (typeof displayToastNotification === 'function') {
-        displayToastNotification(`📂 Loaded project: "${tab.name}"`);
-      }
+      if (typeof displayToastNotification === 'function') displayToastNotification(`📂 Loaded project: "${tab.name}"`);
     } catch (e) {
-      if (typeof displayToastNotification === 'function') {
-        displayToastNotification('Error Invalid project format.');
-      }
+      if (typeof displayToastNotification === 'function') displayToastNotification('Error Invalid project format.');
     }
   };
   if (fileList[0]) reader.readAsText(fileList[0]);
@@ -1326,40 +956,23 @@ window.loadProjectFromFile = function(fileList) {
   if (input) input.value = '';
 };
 
-// ===== START NEW PROJECT =====
 function startNewProject() {
-  // What "New document" (+) actually creates is decided by the header's
-  // creation-mode dropdown (PDF/Document vs Slide Deck) — same source of
-  // truth the @ command menu's "New document" chip already resolves
-  // against, so both entry points agree instead of the header saying
-  // "Slide Deck" while this button keeps making a blank A4 document.
   const mode = (window.APP_STATE && window.APP_STATE.creationMode === 'slides') ? 'slides' : 'pdf';
-  // No confirmation prompt: "New" starts a fresh session immediately.
-  if (mode === 'slides') {
-    TAB_MANAGER.createBlankSlideTab();
-  } else {
-    TAB_MANAGER.createBlankTab();
-  }
+  if (mode === 'slides') TAB_MANAGER.createBlankSlideTab();
+  else TAB_MANAGER.createBlankTab();
   if (typeof requestAnimationFrame === 'function') {
     requestAnimationFrame(() => { if (typeof fitEditorPagesToScreen === 'function') fitEditorPagesToScreen(); });
   }
 }
 
-// ===== LEGACY COMPATIBILITY =====
-window.saveStateToLocalStorage = function() {
-  // Legacy compatibility shim - TAB_MANAGER is the single persistence owner
-  return true;
-};// ============================================================
-// WINDOW EXPOSURE – Tab Manager
-// ============================================================
+window.saveStateToLocalStorage = function () { return true; };
+
 window.TAB_MANAGER = TAB_MANAGER;
 window.startNewProject = startNewProject;
 window.saveProjectFile = saveProjectFile;
 window.loadProjectFromFile = loadProjectFromFile;
-// TAB_MANAGER এর মেথডগুলো ইতিমধ্যেই window.TAB_MANAGER এর মাধ্যমে অ্যাক্সেসযোগ্য
 
-// Make sure a postponed save is never lost when the tab is hidden or closed.
 try {
   window.addEventListener('pagehide', () => { try { TAB_MANAGER.flushPersist(); } catch (_) {} });
   document.addEventListener('visibilitychange', () => { if (document.hidden) { try { TAB_MANAGER.flushPersist(); } catch (_) {} } });
-} catch (_) { /* non-browser environment */ }
+} catch (_) {}
