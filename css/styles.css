@@ -7224,3 +7224,57 @@ body.omr-font-ready .doc-page-canvas .omr-bubble.omr-bubble.omr-bubble.omr-bubbl
     height: 0 !important;
   }
 }
+
+
+/* ============================================================
+   PULL-TO-REFRESH indicator (pull-refresh.js)
+   ============================================================ */
+#ptr-indicator {
+  --ptr-y: 0px;
+  --ptr-p: 0;
+  position: fixed;
+  top: 0;
+  left: 50%;
+  z-index: 10060;
+  pointer-events: none;
+  transform: translate(-50%, calc(var(--ptr-y) - 56px));
+  opacity: var(--ptr-p);
+  display: none;
+}
+@media (max-width: 850px) {
+  #ptr-indicator { display: block; }
+  /* ব্রাউজারের নিজের pull-to-refresh আর বাউন্স বন্ধ, যাতে দুবার রিলোড না হয় */
+  html, body { overscroll-behavior-y: none; }
+}
+#ptr-indicator.ptr-snap,
+#ptr-indicator.ptr-refreshing { transition: transform 0.25s var(--ease), opacity 0.2s ease; }
+#ptr-indicator.ptr-refreshing { opacity: 1; }
+#ptr-indicator .ptr-bubble {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--float-card-bg, #fff);
+  color: var(--primary-color);
+  border: 1px solid var(--float-card-border, var(--border-color));
+  box-shadow: 0 10px 24px -10px rgba(30, 36, 80, 0.45);
+}
+.dark #ptr-indicator .ptr-bubble { box-shadow: 0 10px 24px -8px rgba(0, 0, 0, 0.8); }
+#ptr-indicator .ptr-arrow {
+  transform: rotate(calc(var(--ptr-p) * 180deg - 180deg + 180deg));
+  transition: transform 0.15s ease;
+}
+#ptr-indicator.ptr-ready .ptr-arrow { transform: rotate(180deg); }
+#ptr-indicator .ptr-spinner { display: none; }
+#ptr-indicator.ptr-refreshing .ptr-arrow { display: none; }
+#ptr-indicator.ptr-refreshing .ptr-spinner {
+  display: block;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2.5px solid var(--primary-light);
+  border-top-color: var(--primary-color);
+  animation: pdf-spin 0.7s linear infinite;
+}
