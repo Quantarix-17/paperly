@@ -888,7 +888,13 @@ function _ensureAtSelXStyle() {
     '.at-sel-x:hover{background:rgba(148,163,184,.55)}' +
     '.at-intent-card.selected{position:relative}' +
     '.at-intent-card .at-sel-x{position:absolute;top:4px;right:4px;margin:0}' +
-    '.at-chip-format .at-chip-icon{font-size:10px;font-weight:800;letter-spacing:.2px}';
+    '.at-chip.at-chip-format{background:rgba(148,163,184,.16)!important;color:inherit!important;border:1px solid rgba(255,255,255,.55)!important;' +
+    '-webkit-backdrop-filter:blur(12px) saturate(170%);backdrop-filter:blur(12px) saturate(170%);' +
+    'box-shadow:0 2px 10px rgba(15,23,42,.08),inset 0 1px 0 rgba(255,255,255,.6)!important}' +
+    'html.dark .at-chip.at-chip-format{background:rgba(255,255,255,.08)!important;border-color:rgba(255,255,255,.18)!important;' +
+    'box-shadow:0 2px 10px rgba(0,0,0,.3),inset 0 1px 0 rgba(255,255,255,.14)!important}' +
+    '.at-chip-format .at-chip-format-text{font-size:11px;font-weight:800;letter-spacing:.3px}' +
+    '.at-chip-format .at-chip-remove{background:rgba(148,163,184,.25)!important;color:inherit!important}';
   document.head.appendChild(st);
 }
 function _makeAtSelectedX(id, label) {
@@ -984,7 +990,7 @@ function renderSelectedCommandChips() {
     chip.className = 'at-chip at-chip-format';
     chip.title = 'Format: ' + fmtInfo.label;
     const labelSpan = document.createElement('span');
-    labelSpan.innerHTML = '<span class="at-chip-icon">' + fmtInfo.short + '</span><span>' + fmtInfo.label + '</span>';
+    labelSpan.innerHTML = '<span class="at-chip-format-text">' + fmtInfo.short + '</span>';
     const removeBtn = document.createElement('button');
     removeBtn.type = 'button';
     removeBtn.className = 'at-chip-remove';
