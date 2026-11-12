@@ -225,61 +225,128 @@ window.getTextFigurePolicy = function () {
 };
 
 // ---- Settings panel switch renderer (English labels only) ----
-// Renders the two switches into the given container. Safe to call any
+// Renders the studio switches into the given container. Safe to call any
 // number of times: the previous event subscription is always cleaned up
 // before a new one is installed (avoids double-firing).
 //
 // UX notes:
-//  - Whole text block is clickable, not just the 46px switch.
+//  - Each switch shows only its label + On/Off; the explanation and the
+//    "what happens now" status are tucked behind a "See details" toggle.
+//  - Clicking the label toggles the setting (bigger target than the switch).
 //  - The dependent switch ("Keep figures as images") is truly disabled while
-//    AI Vision is off, with a visible reason instead of a hidden tooltip, and
-//    the user's stored choice is preserved (not silently overwritten).
-//  - Each row shows a one-line "what happens now" status for the current state.
+//    AI Vision is off and the stored choice is preserved, not overwritten.
+//  - Focus / active / selection colours are light green (not browser blue).
 //  - "Reset to defaults" appears only when something differs from defaults.
-//  - Keyboard: native button semantics + visible :focus-visible ring.
-//  - Styles live in one injected stylesheet (theme-neutral colours, reduced
-//    motion respected, 44px touch target on coarse pointers).
 (function _injectStudioSettingsStyle() {
   if (typeof document === 'undefined') return;
   function inject() {
     if (document.getElementById('studio-settings-style')) return;
+    const G = '#4ade80';              // light green accent
+    const GA = 'rgba(74,222,128,.18)'; // soft green fill
     const st = document.createElement('style');
     st.id = 'studio-settings-style';
     st.textContent = [
+      /* ---- layout fix: tab bar must never be squeezed out by tall panels ---- */
+      '.settings-tab-bar{flex:0 0 auto !important;min-height:44px;max-height:none !important;}',
+      '.settings-tab-bar [data-tab]{flex-shrink:0;}',
+      '.settings-tab-panel{min-height:0;}',
+      /* ---- green instead of blue: active tab, focus, selection ---- */
+      '.settings-tab-bar [data-tab].active,.settings-tab-bar [data-tab][aria-selected="true"]{background:' + GA + ' !important;color:inherit !important;border-color:' + G + ' !important;box-shadow:inset 0 -2px 0 ' + G + ' !important;}',
+      '.settings-tab-bar [data-tab]:focus-visible,.settings-tab-panel :is(button,a,input,select,textarea,[role="switch"]):focus-visible{outline:2px solid ' + G + ' !important;outline-offset:2px;}',
+      '.settings-tab-panel :is(input,select,textarea):focus{border-color:' + G + ' !important;box-shadow:0 0 0 3px rgba(74,222,128,.28) !important;outline:none;}',
+      '.settings-tab-panel{accent-color:' + G + ';}',
+      '.settings-tab-panel ::selection{background:rgba(74,222,128,.35);}',
+      /* ---- studio rows ---- */
       '.studio-settings-list{display:flex;flex-direction:column;}',
-      '.studio-setting-row{display:flex;align-items:flex-start;gap:16px;padding:14px 4px;border-bottom:1px solid rgba(148,163,184,.25);cursor:pointer;border-radius:8px;transition:background .15s;}',
-      '.studio-setting-row:hover{background:rgba(148,163,184,.08);}',
+      '.studio-setting-row{display:flex;align-items:center;gap:16px;padding:12px 8px;border-bottom:1px solid rgba(148,163,184,.25);cursor:pointer;border-radius:8px;transition:background .15s;}',
+      '.studio-setting-row:hover,.studio-setting-row:focus-within{background:rgba(74,222,128,.09);}',
       '.studio-setting-row.is-disabled{cursor:not-allowed;}',
       '.studio-setting-row.is-disabled:hover{background:transparent;}',
       '.studio-setting-text{flex:1;min-width:0;}',
       '.studio-setting-label{font-weight:600;font-size:14px;line-height:1.3;}',
-      '.studio-setting-desc{font-size:12.5px;opacity:.72;margin-top:3px;line-height:1.5;}',
-      '.studio-setting-status{display:flex;align-items:flex-start;gap:6px;font-size:12px;margin-top:8px;line-height:1.45;opacity:.9;}',
-      '.studio-setting-status::before{content:"";flex:0 0 auto;width:6px;height:6px;margin-top:5px;border-radius:50%;background:#94a3b8;}',
-      '.studio-setting-row.is-on .studio-setting-status::before{background:#22c55e;}',
-      '.studio-setting-row.is-disabled .studio-setting-label,.studio-setting-row.is-disabled .studio-setting-desc{opacity:.5;}',
+      '.studio-setting-row.is-disabled .studio-setting-label{opacity:.55;}',
+      '.studio-details-toggle{display:inline-flex;align-items:center;gap:4px;margin-top:3px;padding:0;border:none;background:none;font:inherit;font-size:12px;color:' + G + ';cursor:pointer;}',
+      '.studio-details-toggle:hover{text-decoration:underline;}',
+      '.studio-details-toggle::after{content:"";width:5px;height:5px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg) translateY(-1px);transition:transform .2s;}',
+      '.studio-details-toggle[aria-expanded="true"]::after{transform:rotate(225deg);}',
+      '.studio-setting-details{margin-top:8px;padding:8px 10px;border-left:2px solid ' + G + ';background:rgba(74,222,128,.07);border-radius:0 6px 6px 0;cursor:default;}',
+      '.studio-setting-details[hidden]{display:none;}',
+      '.studio-setting-desc{font-size:12.5px;opacity:.8;line-height:1.5;}',
+      '.studio-setting-status{font-size:12px;margin-top:6px;line-height:1.45;opacity:.95;}',
       '.studio-setting-control{display:flex;flex-direction:column;align-items:center;gap:4px;flex:0 0 auto;}',
       '.studio-switch{position:relative;width:46px;height:26px;border-radius:13px;border:none;cursor:pointer;background:rgba(148,163,184,.6);transition:background .2s;padding:0;flex:0 0 auto;}',
       '.studio-switch[aria-checked="true"]{background:#16a34a;}',
       '.studio-switch[aria-disabled="true"]{cursor:not-allowed;opacity:.5;}',
-      '.studio-switch:focus-visible{outline:2px solid #3b82f6;outline-offset:3px;}',
       '.studio-switch::after{content:"";position:absolute;inset:-9px -4px;}',
       '.studio-switch-knob{position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.35);transition:transform .2s;}',
       '.studio-switch[aria-checked="true"] .studio-switch-knob{transform:translateX(20px);}',
       '.studio-switch-state{font-size:10.5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;opacity:.6;}',
       '.studio-settings-footer{display:flex;justify-content:flex-end;padding-top:12px;min-height:34px;}',
-      '.studio-reset-btn{font:inherit;font-size:12.5px;padding:6px 12px;border-radius:8px;border:1px solid rgba(148,163,184,.45);background:transparent;color:inherit;cursor:pointer;transition:background .15s,opacity .15s;}',
-      '.studio-reset-btn:hover{background:rgba(148,163,184,.14);}',
-      '.studio-reset-btn:focus-visible{outline:2px solid #3b82f6;outline-offset:2px;}',
+      '.studio-reset-btn{font:inherit;font-size:12.5px;padding:6px 12px;border-radius:8px;border:1px solid rgba(148,163,184,.45);background:transparent;color:inherit;cursor:pointer;transition:background .15s;}',
+      '.studio-reset-btn:hover{background:' + GA + ';border-color:' + G + ';}',
       '.studio-reset-btn[hidden]{display:none;}',
       '@media (pointer:coarse){.studio-switch{width:52px;height:30px;border-radius:15px;}.studio-switch-knob{width:24px;height:24px;}.studio-switch[aria-checked="true"] .studio-switch-knob{transform:translateX(22px);}}',
-      '@media (prefers-reduced-motion:reduce){.studio-switch,.studio-switch-knob,.studio-setting-row,.studio-reset-btn{transition:none;}}'
+      '@media (prefers-reduced-motion:reduce){.studio-switch,.studio-switch-knob,.studio-setting-row,.studio-reset-btn,.studio-details-toggle::after{transition:none;}}'
     ].join('\n');
     (document.head || document.documentElement).appendChild(st);
   }
   if (document.head) inject();
   else document.addEventListener('DOMContentLoaded', inject);
 })();
+
+// Builds the shared "label + See details + control" row skeleton.
+function _studioBuildRowShell(idBase, labelText, descText) {
+  const row = document.createElement('div');
+  row.className = 'studio-setting-row';
+
+  const text = document.createElement('div');
+  text.className = 'studio-setting-text';
+
+  const label = document.createElement('div');
+  label.className = 'studio-setting-label';
+  label.id = idBase + '-label';
+  label.textContent = labelText;
+
+  const toggle = document.createElement('button');
+  toggle.type = 'button';
+  toggle.className = 'studio-details-toggle';
+  toggle.textContent = 'See details';
+  toggle.setAttribute('aria-expanded', 'false');
+
+  const details = document.createElement('div');
+  details.className = 'studio-setting-details';
+  details.id = idBase + '-details';
+  details.hidden = true;
+  toggle.setAttribute('aria-controls', details.id);
+
+  const desc = document.createElement('div');
+  desc.className = 'studio-setting-desc';
+  desc.textContent = descText;
+
+  const status = document.createElement('div');
+  status.className = 'studio-setting-status';
+  details.appendChild(desc);
+  details.appendChild(status);
+
+  toggle.addEventListener('click', function (e) {
+    e.stopPropagation();
+    const open = toggle.getAttribute('aria-expanded') !== 'true';
+    toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    toggle.textContent = open ? 'Hide details' : 'See details';
+    details.hidden = !open;
+  });
+
+  text.appendChild(label);
+  text.appendChild(toggle);
+  text.appendChild(details);
+  row.appendChild(text);
+
+  const control = document.createElement('div');
+  control.className = 'studio-setting-control';
+  row.appendChild(control);
+
+  return { row: row, label: label, details: details, status: status, control: control };
+}
 
 window.renderStudioSwitches = function (containerEl, options) {
   if (!containerEl) return function () {};
@@ -301,46 +368,17 @@ window.renderStudioSwitches = function (containerEl, options) {
 
   function buildSwitch(cfg) {
     const key = cfg.key;
-    const labelId = idPrefix + '-' + key + '-label';
-    const descId = idPrefix + '-' + key + '-desc';
-    const statusId = idPrefix + '-' + key + '-status';
-
-    const row = document.createElement('div');
-    row.className = 'studio-setting-row';
+    const shell = _studioBuildRowShell(idPrefix + '-' + key, cfg.label, cfg.desc);
+    const row = shell.row;
     row.setAttribute('data-setting-key', key);
-
-    const text = document.createElement('div');
-    text.className = 'studio-setting-text';
-
-    const label = document.createElement('div');
-    label.className = 'studio-setting-label';
-    label.id = labelId;
-    label.textContent = cfg.label;
-
-    const desc = document.createElement('div');
-    desc.className = 'studio-setting-desc';
-    desc.id = descId;
-    desc.textContent = cfg.desc;
-
-    const status = document.createElement('div');
-    status.className = 'studio-setting-status';
-    status.id = statusId;
-
-    text.appendChild(label);
-    text.appendChild(desc);
-    text.appendChild(status);
-    row.appendChild(text);
-
-    const control = document.createElement('div');
-    control.className = 'studio-setting-control';
 
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.id = idPrefix + '-' + key;
     btn.className = 'studio-switch';
     btn.setAttribute('role', 'switch');
-    btn.setAttribute('aria-labelledby', labelId);
-    btn.setAttribute('aria-describedby', descId + ' ' + statusId);
+    btn.setAttribute('aria-labelledby', shell.label.id);
+    btn.setAttribute('aria-describedby', shell.details.id);
 
     const knob = document.createElement('span');
     knob.className = 'studio-switch-knob';
@@ -350,9 +388,8 @@ window.renderStudioSwitches = function (containerEl, options) {
     stateText.className = 'studio-switch-state';
     stateText.setAttribute('aria-hidden', 'true');
 
-    control.appendChild(btn);
-    control.appendChild(stateText);
-    row.appendChild(control);
+    shell.control.appendChild(btn);
+    shell.control.appendChild(stateText);
 
     function isLocked() {
       return !!cfg.requires && !window.getStudioSetting(cfg.requires);
@@ -368,27 +405,19 @@ window.renderStudioSwitches = function (containerEl, options) {
       row.classList.toggle('is-on', on);
       row.classList.toggle('is-disabled', locked);
       stateText.textContent = on ? 'On' : 'Off';
-      status.textContent = locked ? cfg.lockedStatus : (on ? cfg.onStatus : cfg.offStatus);
+      shell.status.textContent = locked ? cfg.lockedStatus : (on ? cfg.onStatus : cfg.offStatus);
       btn.title = locked ? cfg.lockedStatus : '';
     }
 
     function toggle() {
       if (isLocked()) return;
       window.setStudioSetting(key, !window.getStudioSetting(key));
-      // setStudioSetting dispatches an event that re-renders every row.
       rows.forEach(function (r) { r.render(); });
     }
 
-    btn.addEventListener('click', function (e) {
-      e.stopPropagation();
-      toggle();
-    });
-    // Clicking the text area toggles too (bigger target), unless the user is
-    // selecting text.
+    btn.addEventListener('click', function (e) { e.stopPropagation(); toggle(); });
     row.addEventListener('click', function (e) {
-      if (e.target.closest('.studio-switch')) return;
-      const sel = window.getSelection && window.getSelection();
-      if (sel && String(sel).length > 0) return;
+      if (e.target.closest('.studio-switch, .studio-details-toggle, .studio-setting-details')) return;
       toggle();
     });
 
@@ -415,14 +444,17 @@ window.renderStudioSwitches = function (containerEl, options) {
     lockedStatus: 'Locked on while AI Vision is off. Turn on \u201cUse AI Vision\u201d to let AI recreate figures.'
   }));
 
+  // Auto-switch lives here now (moved out of the AI Models panel). Its row is
+  // kept by reference so a re-render re-attaches it instead of losing it.
+  if (window._studioAutoSwitchRow) list.appendChild(window._studioAutoSwitchRow);
+
   let resetBtn = null;
   function renderReset() {
     if (!resetBtn) return;
     const cur = window.getStudioSettings();
-    const dirty = Object.keys(STUDIO_SETTINGS_DEFAULTS).some(function (k) {
+    resetBtn.hidden = !Object.keys(STUDIO_SETTINGS_DEFAULTS).some(function (k) {
       return !!cur[k] !== !!STUDIO_SETTINGS_DEFAULTS[k];
     });
-    resetBtn.hidden = !dirty;
   }
   if (showReset) {
     const footer = document.createElement('div');
@@ -450,16 +482,30 @@ window.renderStudioSwitches = function (containerEl, options) {
   return unsubscribe;
 };
 
-// ---- Horizontal settings tabs (Preference / AI Models / Permissions) ----
+// ---- Backup / restore of the studio switches ----
+// Same JSON-in / JSON-out shape idea as the AI model export: hook these two
+// into the model Export / Import buttons so switches travel with the models.
+window.getStudioSettingsBackup = function () {
+  return { version: 1, studioSettings: window.getStudioSettings() };
+};
+window.restoreStudioSettingsBackup = function (data) {
+  try {
+    const src = data && typeof data === 'object' ? (data.studioSettings || data) : null;
+    if (!src || typeof src !== 'object') return false;
+    let applied = false;
+    Object.keys(STUDIO_SETTINGS_DEFAULTS).forEach(function (k) {
+      if (typeof src[k] === 'boolean') { window.setStudioSetting(k, src[k]); applied = true; }
+    });
+    return applied;
+  } catch (_) { return false; }
+};
+
+// ---- Horizontal settings tabs (Preference / AI Models) ----
 // Matches the markup in index.html: a `.settings-tab-bar` containing
 // buttons with data-tab="<panel-name>", and sibling `.settings-tab-panel`
-// elements each with data-panel="<panel-name>". Idempotent: calling it
-// again is a no-op, so both the DOMContentLoaded hook and the modal-open
-// handler can safely call it.
-//
-// UX notes: full ARIA tabs pattern (tablist/tab/tabpanel), roving tabindex,
-// Arrow/Home/End keyboard navigation, and window.showSettingsTab(name) so
-// other code can deep-link to a panel (e.g. from a "Change in Settings" link).
+// elements each with data-panel="<panel-name>". Idempotent.
+// Full ARIA tabs pattern, roving tabindex, Arrow/Home/End keys, and
+// window.showSettingsTab(name) for deep-linking.
 window.showSettingsTab = function (tabName) {
   const tabBar = document.querySelector('.settings-tab-bar');
   if (!tabBar) return false;
@@ -489,12 +535,15 @@ window.initSettingsTabs = function () {
     tabBar.dataset.tabsInit = '1';
     tabBar.setAttribute('role', 'tablist');
 
-    // Wire up ARIA ids so screen readers link each tab to its panel.
+    // Drop Permissions and rename the middle tab BEFORE wiring ARIA/events.
+    try { window.restructureSettingsPanel(); } catch (e) { console.warn('[StudioSettings] restructure failed:', e); }
+
+    const livePanels = document.querySelectorAll('.settings-tab-panel');
     tabBar.querySelectorAll('[data-tab]').forEach(function (b) {
       const name = b.dataset.tab;
       b.setAttribute('role', 'tab');
       if (!b.id) b.id = 'settings-tab-' + name;
-      panels.forEach(function (p) {
+      livePanels.forEach(function (p) {
         if (p.dataset.panel !== name) return;
         if (!p.id) p.id = 'settings-panel-' + name;
         p.setAttribute('role', 'tabpanel');
@@ -530,6 +579,128 @@ window.initSettingsTabs = function () {
     console.warn('[StudioSettings] initSettingsTabs failed:', e);
   }
 };
+
+// Restructures the settings modal at runtime (idempotent, best effort):
+//  1) removes the "Permissions" tab + panel
+//  2) renames the middle tab ("Settings") to "AI Models"
+//  3) moves the Auto-switch control from the AI Models panel into Preference
+window.restructureSettingsPanel = function () {
+  try {
+    const tabBar = document.querySelector('.settings-tab-bar');
+    if (!tabBar) return false;
+
+    // 1) Remove Permissions
+    Array.prototype.slice.call(tabBar.querySelectorAll('[data-tab]')).forEach(function (b) {
+      if (/permission/i.test(b.dataset.tab || '') || /^\s*permissions?\s*$/i.test(b.textContent || '')) {
+        const name = b.dataset.tab;
+        document.querySelectorAll('.settings-tab-panel').forEach(function (p) {
+          if (p.dataset.panel === name) p.remove();
+        });
+        b.remove();
+      }
+    });
+
+    // 2) Rename the middle tab
+    const tabs = Array.prototype.slice.call(tabBar.querySelectorAll('[data-tab]'));
+    const mid = tabs.slice(1).find(function (b) { return /model/i.test(b.dataset.tab || ''); }) ||
+                tabs.slice(1).find(function (b) { return /setting/i.test(b.dataset.tab || '') || /setting/i.test(b.textContent || ''); }) ||
+                tabs[1];
+    if (mid && mid.dataset.labelFixed !== '1') {
+      mid.dataset.labelFixed = '1';
+      mid.removeAttribute('data-i18n');
+      mid.removeAttribute('data-i18n-key');
+      mid.querySelectorAll('[data-i18n],[data-i18n-key]').forEach(function (el) {
+        el.removeAttribute('data-i18n'); el.removeAttribute('data-i18n-key');
+      });
+      const walker = document.createTreeWalker(mid, NodeFilter.SHOW_TEXT, null);
+      let n, done = false;
+      while ((n = walker.nextNode())) {
+        if (!n.textContent.trim()) continue;
+        n.textContent = done ? '' : 'AI Models';
+        done = true;
+      }
+      if (!done) mid.textContent = 'AI Models';
+      mid.setAttribute('aria-label', 'AI Models');
+    }
+
+    // Make sure something is selected after removals
+    if (!tabBar.querySelector('[data-tab].active')) {
+      const first = tabBar.querySelector('[data-tab]');
+      if (first) window.showSettingsTab(first.dataset.tab);
+    }
+
+    // 3) Move Auto-switch into Preference (retry later if not rendered yet)
+    if (!_studioMoveAutoSwitch()) _studioWatchForAutoSwitch();
+    return true;
+  } catch (e) {
+    console.warn('[StudioSettings] restructureSettingsPanel failed:', e);
+    return false;
+  }
+};
+
+function _studioMoveAutoSwitch() {
+  if (window._studioAutoSwitchRow) return true;
+  const scope = document.querySelectorAll('.settings-tab-panel');
+  let labelEl = null;
+  scope.forEach(function (p) {
+    if (labelEl) return;
+    p.querySelectorAll('*').forEach(function (el) {
+      if (labelEl || el.children.length) return;
+      if (/^\s*auto[\s-]*switch\s*:?\s*$/i.test(el.textContent || '')) labelEl = el;
+    });
+  });
+  if (!labelEl) return false;
+
+  const isCtl = function (el) {
+    return el && (el.matches('input,button,label,[role="switch"],.switch,.toggle') ||
+                  el.querySelector('input,[role="switch"]'));
+  };
+  let ctrl = labelEl.nextElementSibling;
+  if (!isCtl(ctrl)) {
+    const scopeEl = labelEl.parentElement;
+    const inp = scopeEl && scopeEl.querySelector('input[type="checkbox"],[role="switch"]');
+    ctrl = inp ? ((inp.closest('label') && scopeEl.contains(inp.closest('label'))) ? inp.closest('label') : inp) : null;
+  }
+  if (!ctrl) return false;
+
+  const shell = _studioBuildRowShell(
+    'studio-autoswitch',
+    labelEl.textContent.replace(/:\s*$/, '').trim() || 'Auto-switch',
+    'Automatically switches to another working AI model when the current one fails.'
+  );
+  shell.row.setAttribute('data-setting-key', 'autoSwitch');
+  shell.status.remove();
+  shell.control.appendChild(ctrl);        // moves the real node: its listeners survive
+  labelEl.remove();
+  // Clicking the label forwards to the real control.
+  shell.row.addEventListener('click', function (e) {
+    if (e.target.closest('.studio-details-toggle, .studio-setting-details') || shell.control.contains(e.target)) return;
+    const t = ctrl.matches('input,button,[role="switch"]') ? ctrl : ctrl.querySelector('input,button,[role="switch"]');
+    if (t) t.click();
+  });
+  window._studioAutoSwitchRow = shell.row;
+
+  const list = document.querySelector('.studio-settings-list');
+  const pref = document.querySelector('.settings-tab-panel[data-panel*="pref" i]') || document.querySelector('.settings-tab-panel');
+  (list || pref).appendChild(shell.row);
+  return true;
+}
+
+let _studioAutoSwitchObserver = null;
+function _studioWatchForAutoSwitch() {
+  if (_studioAutoSwitchObserver || typeof MutationObserver === 'undefined') return;
+  let t = null;
+  _studioAutoSwitchObserver = new MutationObserver(function () {
+    clearTimeout(t);
+    t = setTimeout(function () {
+      if (_studioMoveAutoSwitch()) {
+        _studioAutoSwitchObserver.disconnect();
+        _studioAutoSwitchObserver = null;
+      }
+    }, 150);
+  });
+  _studioAutoSwitchObserver.observe(document.body, { childList: true, subtree: true });
+}
 
 // ---- Header rename: "AI Models" → "Settings" (best effort) ----
 // In the current index.html the header already says "Settings", so this
@@ -570,10 +741,6 @@ window.renameAIModelsHeaderToSettings = function () {
     return false;
   }
 };
-
-// Kept for backwards compatibility with older callers. The current
-// index.html supplies real tabs, so no restructuring is needed.
-window.restructureSettingsPanel = function () { return true; };
 
 // Wire up header rename + tabs once the DOM is ready. Both are idempotent.
 if (typeof document !== 'undefined') {
