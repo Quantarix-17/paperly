@@ -1,278 +1,2439 @@
 // ========================================================================
-// CONFIGURATION
+// OCR PIPELINE - Local OCR for images and PDFs using Tesseract.js
+// Fully integrated with new ProgressUI (Live Activity, Model Badge,
+// Scope Badge, Page Counter, Per-File Progress, Multi-Stage Flow).
+// NOTE: This file READS APP_CONFIG from config.js (const APP_CONFIG).
+//       It NEVER declares APP_CONFIG itself.
 // ========================================================================
 
-const APP_CONFIG = {
-  TEMPERATURE: 0.3,
-  // Two-temperature policy for Create Slides: a creative DESIGN pass (look, art
-  // direction, outline structure, background redesign) and a precise CONTENT pass
-  // (facts, slide text, edits). Needs callAIAPI to honour options.temperature.
-  DESIGN_TEMPERATURE: 0.85,
-  CONTENT_TEMPERATURE: 0.3,
-  
-  // Token budgets are removed for PDF generation – AI can use as many tokens as needed
-  // (model's own maximum will be used automatically)
-  // Kept only for reference but not used as limits
-  PDF_TOKEN_BUDGETS: Object.freeze({
-    SHORT: undefined,
-    DEFAULT_SINGLE: undefined,
-    STANDARD_BATCH: undefined,
-    LONG_BATCH: undefined,
-    LONG_DIRECT: undefined,
-    EXPANSION: undefined,
-    BEAUTIFY: undefined
-  }),
+let ocrWorkerPool = [];
+let ocrWorkerPoolInitPromise = null;
+let ocrPoolGeneration = 0;
 
-  DEFAULT_SINGLE_MAX_PAGES: 8,
-  DEFAULT_SECTIONED_MIN_PAGES: 9,
-  STEP_MODE_STANDARD_MIN_SECTIONS: 2,
-  STEP_MODE_STANDARD_MAX_SECTIONS: 24,
-  STEP_MODE_SHORT_MIN_SECTIONS: 2,
-  STEP_MODE_SHORT_MAX_SECTIONS: 8,
-  STEP_MODE_SECTIONS_PER_BATCH: 1,
-  STEP_MODE_BATCH_DELAY_MS: 0,
-  LONG_PDF_MIN_SECTIONS: 10,
-  LONG_PDF_MAX_SECTIONS: 48,
-  LONG_PDF_SECTIONS_PER_BATCH: 1,
-  // NOTE: This is NOT a page-count floor the app enforces anymore. It is only used
-  // (a) as a rough starting anchor when the AI planner fails to return a usable
-  // estimate, and (b) as one input the planner sees. Real length is decided by how
-  // much genuine depth (derivations, worked examples, applications) the AI itself
-  // finds for the specific topic — see expandLongDocumentUntilMinimumPages().
-  LONG_PDF_MIN_PAGES: 20,
-  LONG_PDF_MAX_PAGES_SOFT: 90,
-  LONG_PDF_MAX_PAGES_HARD: 100,
-
-  // ---- Hybrid Preservation Mode: cut picture parts out of text-layer PDF pages ----
-  FIGURE_EXTRACT_ENABLED: true,      // false = old behaviour (text only)
-  FIGURE_MIN_SIZE_PT: 36,            // smaller pictures/drawings are ignored (bullets, icons)
-  FIGURE_MERGE_GAP_PT: 10,           // drawing pieces closer than this form ONE figure
-  FIGURE_MIN_VECTOR_SCORE: 3,        // how curvy/diagonal a vector drawing must be (graphs, circuits) to count; raise = stricter
-  FIGURE_RENDER_SCALE: 2.2,          // sharpness of the cut-out (higher = sharper but heavier)
-  // Reading order for a picture inside a TEXT page: local OCR -> AI vision -> keep as cropped image.
-  // (Scanned/image pages never get cropped: OCR -> AI vision -> error.)
-  FIGURE_OCR_MIN_CONFIDENCE: 60,     // OCR counts as 'read' only at/above this confidence ...
-  FIGURE_OCR_MIN_WORDS: 6,           // ... and with at least this many words of running text
-  FIGURE_VISION_MIN_WORDS: 4,        // AI vision counts as 'read' with at least this many words
-  FIGURE_CASCADE_VECTOR: false,      // true = also run OCR/vision on pure vector drawings (not recommended)
-  // Pages with no usable text layer (scanned pages) and image files:
-  //   'ocr-then-image' = OCR -> AI vision -> if both fail keep the ORIGINAL page/image (no read-failure error)
-  //   'image-only'     = skip OCR/AI vision completely, always keep scanned pages/images as pictures
-  SCANNED_PAGE_POLICY: 'ocr-then-image',
-  SCANNED_PAGE_IMAGE_MAX: 120,       // max kept page images per PDF (keeps the saved tab small)
-  SCANNED_PAGE_IMAGE_LONG_EDGE: 1800, // pixel size of a kept page image (higher = sharper but heavier)
-
-  // ---- AI vision step (used by scanned pages, image files AND pictures inside text pages) ----
-  VISION_FALLBACK_ENABLED: true,     // false = NO uploads at all (local-only mode)
-  VISION_MODEL_TIMEOUT_MS: 30000,    // one attempt per model; a model that takes longer counts as failed
-  VISION_MODEL_MAX_FAILS: 3,         // consecutive fails before a model is skipped for the rest of this run
-  VISION_MODEL_FAILS_RESET_MS: 60000, // soft-reset the per-model fail counter every 60s (a transient network blip cannot disable vision for the whole document)
-  VISION_BREAKER_MS: 120000,         // every model failed once -> skip AI vision this long, go straight to the next step
-  VISION_STOP_ON_EMPTY_ANSWER: true, // a model that answers 'no text' is final (the other models are not asked)
-  VISION_MAX_CALLS_PER_RUN: 20,      // per-document vision budget; prevents runaway API cost on very large PDFs
-  VISION_MAX_OUTPUT_TOKENS: 8192,    // truncation guard for long transcripts (Gemini's default cap is smaller)
-  VISION_PAGE_LONG_EDGE: 2400,       // render size for page-level vision (smaller = cheaper upload, slightly less detail)
-
-  FIGURE_REPEAT_MIN_PAGES: 3,        // the same picture on this many pages = logo/watermark -> ignored
-  FIGURE_DB_MAX_AGE_DAYS: 14,        // saved pictures older than this are removed from IndexedDB
-  FIGURE_MAX_PER_PAGE: 8,
-  FIGURE_MAX_PER_DOC: 80,
-
-  // ---- OCR (Tesseract.js) ----
-  OCR_LANGS: 'ben+eng',                             // (kept for backward compat; ocr.js currently hardcodes eng+ben fallback)
-  OCR_RENDER_SCALE: 2.0,                            // (kept for backward compat; ocr.js now uses OCR_TARGET_LONG_EDGE)
-  OCR_MIN_TEXT_LEN_PER_PAGE: 25,
-  OCR_MIN_TEXT_ITEMS_PER_PAGE: 5,
-  OCR_MAX_PARALLEL_WORKERS: Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 4) - 1)), // pool cap in ocr.js is 8; raise this number if you have RAM to spare
-  OCR_HIGH_ACCURACY_PASSES: 4,
-  OCR_MAX_IMAGE_PIXELS: 18000000,
-  OCR_TARGET_LONG_EDGE: 4200,
-  OCR_SMALL_TEXT_SCALE: 3.2,
-  OCR_MIN_CONFIDENCE_FOR_SINGLE_PASS: 82,
-  OCR_MAX_ATTEMPTS_PER_PASS: 1,                     // (kept for backward compat; not used by ocr.js)
-  OCR_PASS_TIMEOUT_MS: 5000,
-  OCR_PDF_PAGE_TIMEOUT_MS: 4500,                    // (kept for backward compat; not used by ocr.js)
-  OCR_FAST_TRIAGE_TIMEOUT_MS: 2200,
-  OCR_FAST_TRIAGE_PASSES: 2,
-  OCR_MAX_TOTAL_PASSES: 4,
-
-  // ---- OCR rotation recovery ----
-  // Sideways scans (rotated 90/270) return nothing upright. When the upright pass
-  // is weak, ocr.js retries the image rotated 90° and 270°.
-  OCR_ROTATION_RECOVERY: true,                      // false = skip rotation retries entirely (faster on clean PDFs)
-  OCR_ROTATION_PASSES: 2,                           // max rotations to try (1 = only 90°, 2 = both 90° and 270°)
-  OCR_ROTATION_MAX_LONG_EDGE: 2600,                 // downsized long edge for the rotation retries (keeps them quick)
-
-  // ---- OCR math post-processing ----
-  // A tall brace spanning several lines (cases/matrix/system) and similar structures
-  // are lost by Tesseract. When detected, ocr.js can send the image to AI vision instead.
-  //   'off'               = never ask vision; trust Tesseract even for tall brackets
-  //   'vision'            = try vision; if vision unavailable, keep Tesseract's output
-  //   'vision-then-image' = try vision; if vision unavailable, keep the picture instead (default)
-  OCR_COMPLEX_MATH_POLICY: 'vision-then-image',
-  // Legacy alias. If both are set, OCR_COMPLEX_MATH_POLICY wins. Kept so older
-  // integrations that only know the old name still work.
-  OCR_TALL_BRACKET_POLICY: 'vision-then-image',
-  // Tesseract cannot tell ℝ (double-struck R) from plain R. In "f: A -> R", "x in R",
-  // "R^n" the letter is the number set. When true, ocr.js rewrites those contexts to
-  // \mathbb{R} in OCR output.
-  OCR_NUMBER_SET_GUESS: true,
-
-  // ---- OCR concurrency override ----
-  // How many scanned PDF pages are rendered/OCR'd at once. Defaults to
-  // OCR_MAX_PARALLEL_WORKERS (the safe choice). Only set this if you want
-  // rendering concurrency to differ from OCR worker count.
-  // OCR_RENDER_CONCURRENCY: 2,
-
-  // Max characters of an uploaded file that are KEPT. Was 100000 (~30-35 pages) — that is what cut
-  // 500-page PDFs. Copy / Copy & Refine now process the whole text in parts, so keep a lot.
-  ATTACHMENT_MAX_TEXT_CHARS: 6000000,
-  // Chat / Create PDF / other features still send at most this much file text to the AI at once.
-  ATTACHMENT_AI_CONTEXT_MAX_CHARS: 100000,
-  // ---- Copy / Copy & Refine for big files ----
-  // Source characters per AI call. Lower (4500-5500) if your model has a small output limit or you copy
-  // Bengali-heavy text; higher (9000+) for big-output models (faster, fewer calls).
-  COPY_CHUNK_CHARS: 7000,
-  // How many parts are restyled at the same time (raise if your API has no rate-limit problems).
-  COPY_CHUNK_PARALLEL: 8, // starts here; the app lowers it by itself if the API says 'rate limit'
-  // If the AI returns fewer than this share of a part's words, the part is split in two and retried.
-  COPY_MIN_WORD_RATIO: 0.85,
-
-  SINGLE_SHOT_ESTIMATED_SECONDS: 16,
-  // Minimum time (ms) the ordinary chat "typing" bubble must stay visible and
-  // animating before the app is allowed to switch to either (a) a clarifying
-  // question or (b) the full "Generating PDF..." overlay, for "Create PDF" /
-  // "Create Slides" requests. Without this, a fast API response can make the
-  // very first AI call feel instantaneous — the person never sees the AI
-  // "think" before either a tick-option question or the generation modal
-  // appears. If the API call itself already took longer than this, no extra
-  // wait is added (this is a floor, not an added delay on top of real work).
-  MIN_AI_THINKING_DELAY_MS: 1100,
-  PLAN_MAX_OUTPUT_TOKENS: 1800,   // only for planning, not for document generation
-  ROUTER_MAX_OUTPUT_TOKENS: 1200,
-  CONTINUATION_MAX_LOOPS: 8,      // still used for truncation recovery
-  // Max number of "does this topic still have genuine depth left?" passes for Long PDF.
-  // Expansion now stops on its own (the AI reports the doc is complete, or two
-  // consecutive rounds add negligible content) rather than at a fixed page count,
-  // so this is just an upper safety bound on how many extra passes can run.
-  LONG_EXPANSION_MAX_ROUNDS: 12,
-  // How many times in a row an expansion round is allowed to return little/no new
-  // content before we conclude the topic is genuinely exhausted and stop.
-  LONG_EXPANSION_MAX_LOW_GROWTH_ROUNDS: 2
-};
-
-// ========================================================================
-// PDF LAYOUT CONSTANTS
-// ========================================================================
-
-const PDF_LAYOUT = Object.freeze({
-  width: 794,
-  height: 1123,
-  padTop: 62,
-  padRight: 58,
-  padBottom: 58,
-  padLeft: 58,
-  footerBottom: 22,
-  gap: 30,
-  contentWidth: 794 - 58 - 58,
-  contentHeight: 1123 - 62 - 58
-});
-
-const EDITOR_A4_WIDTH = 794;
-const EDITOR_A4_HEIGHT = 1123;
-const EDITOR_A4_CONTENT_HEIGHT = 1000;
-// Normal body text is only ever allowed to be 12pt (default, "Word-style") or 11pt
-// (compact fallback) — NOT a continuous scale. The old array here
-// ([1, 0.97, 0.94, ... 0.74] applied against a 12pt base) produced odd in-between sizes
-// like 11.64pt, 10.92pt, down to 8.88pt, which is why normal paragraph text sometimes
-// looked randomly tiny in the middle of a document. Figures/images/tables are handled
-// separately in tightenPageContentToA4() and are still allowed to resize freely.
-const EDITOR_A4_TEXT_SIZES_PT = [12, 11];
-
-// ========================================================================
-// AI THINKING POLICY
-// ========================================================================
-
-const THINKING_POLICY = Object.freeze({
-  MAX_CYCLES: 3,
-  MAX_ATTEMPTS_PER_MODEL: 1,
-  MAX_LOCAL_RETRIES: 0,
-  LOCAL_RETRY_DELAY_MS: 700
-});
-
-const THINKING_COOLDOWN_MS = 60000;
-
-// ========================================================================
-// STORAGE KEYS
-// ========================================================================
-
-const TAB_STORAGE_KEY = 'aiDocTabs_v1';
-const AI_MODELS_STORAGE_KEY = 'aiModelsConfig_v1';
-const AI_MODEL_AUTOSWITCH_KEY = 'aiModelAutoSwitchEnabled_v1';
-const OCR_PREFERRED_MODEL_ID_KEY = 'OCR_PREFERRED_MODEL_ID';
-const PDF_VISUAL_FORMAT_KEY = 'aiPdfStudio.visualFormat';
-const PDF_TEXT_FORMAT_KEY = 'aiPdfStudio.textFormat';
-const PDF_LANGUAGE_FORMAT_KEY = 'aiPdfStudio.languageFormat';
-const STORAGE_KEY = 'aiDocProState_v22';
-
-// Deck design fingerprints (last N decks' theme / main colour / layout mix / bg type)
-const DECK_FINGERPRINT_KEY = 'aiPdfStudio.deckFingerprints_v1';
-const DECK_FINGERPRINT_MAX = 10;
-
-// ========================================================================
-// HELPER FUNCTIONS
-// ========================================================================
-
-function getPDFTokenBudget(lengthMode) {
-  // Returns undefined – no token limit
-  return undefined;
-}
-
-function getGenerationMaxTokens(lengthMode, singleShot = false) {
-  // Returns undefined – no token limit
-  return undefined;
-}
-
-function getDynamicSectionBatchSize(lengthMode, totalSections, estimatedPages = 0) {
-  if (totalSections <= 0) return 1;
-  return 1;
-}
-
-function isMobileDeviceLayout() {
+// ===== SMALL SHARED HELPERS =====
+function _figCfg(key, fallback) {
+  // Reads from config.js's `const APP_CONFIG` first (lexical binding),
+  // then falls back to window.APP_CONFIG (runtime override), then `fallback`.
   try {
-    if (window.innerWidth <= 850 || (document.documentElement.clientWidth || 0) <= 850) return true;
-    return window.matchMedia('(max-width: 850px)').matches;
-  } catch (_) {
-    return window.innerWidth <= 850;
+    if (typeof APP_CONFIG !== 'undefined' && APP_CONFIG && APP_CONFIG[key] !== undefined) {
+      return APP_CONFIG[key];
+    }
+  } catch (_) { /* TDZ while config.js is still parsing — ignore */ }
+  try {
+    if (typeof window !== 'undefined' && window.APP_CONFIG && window.APP_CONFIG[key] !== undefined) {
+      return window.APP_CONFIG[key];
+    }
+  } catch (_) {}
+  return fallback;
+}
+function _ocrNum(key, fallback) {
+  const v = Number(_figCfg(key, fallback));
+  return Number.isFinite(v) ? v : fallback;
+}
+// safe cancellation check: works whether the flag is a boolean OR a function
+function _ocrCancelled() {
+  try {
+    if (typeof isCancellationRequested === 'undefined') return false;
+    return typeof isCancellationRequested === 'function'
+      ? !!isCancellationRequested()
+      : !!isCancellationRequested;
+  } catch (_) { return false; }
+}
+function _ocrSleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+function _ocrTick() { return new Promise(resolve => setTimeout(resolve, 0)); }
+function _ocrFreeCanvas(c) { try { if (c) { c.width = 0; c.height = 0; } } catch (_) {} }
+
+// Shared rotation helper
+function _ocrApplyRotate(ctx, w, h, angle) {
+  if (angle === 90) { ctx.translate(h, 0); ctx.rotate(Math.PI / 2); }
+  else if (angle === 180) { ctx.translate(w, h); ctx.rotate(Math.PI); }
+  else if (angle === 270) { ctx.translate(0, w); ctx.rotate(-Math.PI / 2); }
+}
+
+async function _ocrMapLimit(items, limit, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  const run = async () => {
+    while (true) {
+      if (_ocrCancelled()) return;
+      const i = next++;
+      if (i >= items.length) return;
+      out[i] = await fn(items[i], i);
+    }
+  };
+  const n = Math.max(1, Math.min(Math.floor(limit) || 1, items.length));
+  await Promise.all(Array.from({ length: n }, run));
+  return out;
+}
+
+function _ocrPoolTarget() {
+  return Math.max(1, Math.min(8, Math.floor(_ocrNum('OCR_MAX_PARALLEL_WORKERS', 2)) || 2));
+}
+
+// Progress-hide generation counter
+let _progressHideGen = 0;
+function _scheduleHideProgress(ms) {
+  const gen = ++_progressHideGen;
+  setTimeout(() => {
+    if (gen !== _progressHideGen) return;
+    if (typeof ProgressUI !== 'undefined' && ProgressUI.hide) ProgressUI.hide();
+  }, ms);
+}
+function _cancelScheduledHide() { _progressHideGen++; }
+
+// Guarded ProgressUI helpers (never throw if UI isn't loaded)
+function _pgLabel(t) { if (typeof ProgressUI !== 'undefined' && ProgressUI.setLabel) ProgressUI.setLabel(t); }
+function _pgScope(t) { if (typeof ProgressUI !== 'undefined' && ProgressUI.setScope) ProgressUI.setScope(t); }
+function _pgModel(m) { if (typeof ProgressUI !== 'undefined' && ProgressUI.setActiveModel) ProgressUI.setActiveModel(m); }
+function _pgStage(label, start, end, opts) { if (typeof ProgressUI !== 'undefined' && ProgressUI.setStage) ProgressUI.setStage(label, start, end, opts || {}); }
+function _pgPage(cur, total) { if (typeof ProgressUI !== 'undefined' && ProgressUI.updateLivePageNumber) ProgressUI.updateLivePageNumber(cur, total); }
+function _pgFileAdd(key, name, phase, meta) { if (typeof ProgressUI !== 'undefined' && ProgressUI.addFileProgress) ProgressUI.addFileProgress(key, name, phase, meta); }
+function _pgFileUpd(key, pct, phase, meta, state) { if (typeof ProgressUI !== 'undefined' && ProgressUI.updateFileProgress) ProgressUI.updateFileProgress(key, pct, phase, meta || '', state || 'working'); }
+
+// ===== OCR WORKER MANAGEMENT =====
+async function createConfiguredOcrWorker() {
+  if (typeof Tesseract === 'undefined') throw new Error('OCR engine (Tesseract.js) is not loaded');
+  const languageCandidates = [['eng', 'ben'], 'eng'];
+  let lastError = null;
+  for (const langs of languageCandidates) {
+    try {
+      const worker = await Tesseract.createWorker(langs, 1, {
+        logger: () => {},
+        errorHandler: (e) => console.warn('Tesseract worker error:', e)
+      });
+      try {
+        await worker.setParameters({
+          preserve_interword_spaces: '1',
+          user_defined_dpi: '300'
+        });
+      } catch (e) {
+        console.warn('Tesseract parameter setup skipped:', e);
+      }
+      return worker;
+    } catch (e) {
+      lastError = e;
+      console.warn('Tesseract worker initialization failed for', langs, e);
+    }
+  }
+  throw new Error('OCR engine could not initialize' + (lastError?.message ? `: ${lastError.message}` : ''));
+}
+
+async function ensureOcrWorkerPool(size) {
+  const target = Math.max(1, Math.min(size || 1, _ocrPoolTarget()));
+  while (true) {
+    const live = ocrWorkerPool.filter(s => s && !s.dead);
+    if (live.length >= target) return live.slice(0, target);
+    if (ocrWorkerPoolInitPromise) { await ocrWorkerPoolInitPromise; continue; }
+
+    const generation = ocrPoolGeneration;
+    ocrWorkerPoolInitPromise = (async () => {
+      ocrWorkerPool = ocrWorkerPool.filter(s => s && !s.dead);
+      const need = target - ocrWorkerPool.length;
+      const settled = await Promise.allSettled(Array.from({ length: need }, () => createConfiguredOcrWorker()));
+      let firstError = null;
+      for (const r of settled) {
+        if (r.status !== 'fulfilled') { firstError = firstError || r.reason; continue; }
+        if (generation !== ocrPoolGeneration) {
+          try { await r.value.terminate(); } catch (_) {}
+          continue;
+        }
+        ocrWorkerPool.push({ worker: r.value, busy: false, dead: false, psm: null });
+      }
+      if (!ocrWorkerPool.some(s => s && !s.dead) && generation === ocrPoolGeneration) {
+        throw firstError || new Error('OCR engine could not initialize');
+      }
+    })();
+    try {
+      await ocrWorkerPoolInitPromise;
+    } finally {
+      ocrWorkerPoolInitPromise = null;
+    }
+    const after = ocrWorkerPool.filter(s => s && !s.dead);
+    if (after.length) return after.slice(0, target);
+    if (_ocrCancelled()) throw new Error('OCR cancelled');
   }
 }
 
-function isMobilePreviewMode() {
-  return isMobileDeviceLayout();
+async function acquireOcrSlot(maxWaitMs) {
+  const deadline = Date.now() + (maxWaitMs || 180000);
+  while (true) {
+    if (_ocrCancelled()) throw new Error('OCR cancelled');
+    await ensureOcrWorkerPool(_ocrPoolTarget());
+    const slot = ocrWorkerPool.find(s => s && !s.busy && !s.dead);
+    if (slot) { slot.busy = true; return slot; }
+    if (Date.now() > deadline) throw new Error('Timed out waiting for a free OCR worker');
+    await _ocrSleep(20);
+  }
 }
 
-// ===== TOUCH-ONLY DEVICE DETECTION (phone/tablet virtual keyboard vs. a real keyboard) =====
-// Used to decide whether the chat input's Enter key should send the message
-// (desktop, physical keyboard) or insert a newline/new paragraph (phone or
-// tablet virtual keyboard). `isMobileDeviceLayout()` only looks at CSS
-// viewport WIDTH, so it also fires on a narrow desktop browser window where
-// the person still has a real keyboard and does want Enter to send — that
-// function is not a safe stand-in for "does this device have a real
-// keyboard". This instead checks the device's actual input capability:
-// "(hover: none) and (pointer: coarse)" is true for touch-primary devices
-// (phones, tablets) with no mouse, and false for desktops/laptops — even
-// ones with a touchscreen, as long as they also have a mouse/trackpad —
-// so a touchscreen laptop with a keyboard still sends on Enter as expected.
-function isTouchOnlyDevice() {
+async function terminateOcrWorkersForCancellation() {
   try {
-    if (window.matchMedia && window.matchMedia('(hover: none) and (pointer: coarse)').matches) return true;
-    return false;
-  } catch (_) {
+    ocrPoolGeneration++;
+    const pool = Array.isArray(ocrWorkerPool) ? ocrWorkerPool.slice() : [];
+    ocrWorkerPool = [];
+    await Promise.all(pool.map(async (slot) => {
+      try {
+        if (!slot) return;
+        slot.dead = true;
+        if (slot.worker && typeof slot.worker.terminate === 'function') await slot.worker.terminate();
+      } catch (e) {}
+    }));
+  } catch (e) {}
+}
+
+async function replaceTimedOutOcrWorker(slot) {
+  if (!slot) return;
+  const old = slot.worker;
+  slot.dead = true;
+  slot.psm = null;
+  try {
+    if (old && typeof old.terminate === 'function') await old.terminate();
+  } catch (e) {
+    console.warn('Failed to terminate timed-out OCR worker:', e);
+  }
+  if (_ocrCancelled() || ocrWorkerPool.indexOf(slot) < 0) { slot.worker = null; return; }
+  try {
+    slot.worker = await createConfiguredOcrWorker();
+    slot.dead = false;
+  } catch (e) {
+    console.error('Could not replace OCR worker:', e);
+    slot.worker = null;
+  }
+}
+
+async function _ocrSetPsm(slot, psm) {
+  if (slot.psm === psm) return;
+  const attempts = [
+    { tessedit_pageseg_mode: psm, preserve_interword_spaces: '1', user_defined_dpi: '300' },
+    { tessedit_pageseg_mode: psm, preserve_interword_spaces: '1' },
+    { tessedit_pageseg_mode: psm }
+  ];
+  for (const p of attempts) {
+    try { await slot.worker.setParameters(p); slot.psm = psm; return; } catch (_) {}
+  }
+  slot.psm = null;
+}
+
+// ===== OCR IMAGE PREPROCESSING =====
+function _ocrOtsu(hist, total) {
+  if (!total) return 128;
+  let sum = 0;
+  for (let i = 0; i < 256; i++) sum += i * hist[i];
+  let sB = 0, wB = 0, maxVar = -1, t = 128;
+  for (let i = 0; i < 256; i++) {
+    wB += hist[i];
+    if (!wB) continue;
+    const wF = total - wB;
+    if (!wF) break;
+    sB += i * hist[i];
+    const mB = sB / wB, mF = (sum - sB) / wF;
+    const v = wB * wF * (mB - mF) * (mB - mF);
+    if (v > maxVar) { maxVar = v; t = i; }
+  }
+  return t;
+}
+
+function _ocrBuildLut(mode, profile, mean, std, hist, total) {
+  const lut = new Uint8ClampedArray(256);
+  const src = profile === 'source';
+  if (mode === 'threshold') {
+    const t = _ocrOtsu(hist, total);
+    for (let g = 0; g < 256; g++) lut[g] = g <= t ? 0 : 255;
+  } else if (mode === 'inverted') {
+    const gain = src ? (std < 50 ? 1.15 : 1.0) : 1.2;
+    for (let g = 0; g < 256; g++) lut[g] = (255 - g - 128) * gain + 128;
+  } else if (mode === 'soft') {
+    const gain = src ? 1.18 : (std < 45 ? 1.35 : 1.12);
+    const off = src ? 135 : 132;
+    for (let g = 0; g < 256; g++) lut[g] = (g - mean) * gain + off;
+  } else if (mode === 'fixed') {
+    for (let g = 0; g < 256; g++) lut[g] = (g - 128) * 1.28 + 132;
+  } else {
+    const gain = src ? (std < 34 ? 1.55 : std < 50 ? 1.25 : 1.08) : 1.15;
+    const off = src ? 128 : 132;
+    for (let g = 0; g < 256; g++) lut[g] = (g - mean) * gain + off;
+  }
+  return lut;
+}
+
+function _ocrPreprocessInPlace(canvas, mode, profile) {
+  try {
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const data = imageData.data;
+    const n = data.length >> 2;
+    if (!n) return canvas;
+    const gray = new Uint8Array(n);
+    const hist = new Uint32Array(256);
+    for (let p = 0, j = 0; j < n; p += 4, j++) {
+      const g = (77 * data[p] + 150 * data[p + 1] + 29 * data[p + 2]) >> 8;
+      gray[j] = g;
+      hist[g]++;
+    }
+    let sum = 0;
+    for (let i = 0; i < 256; i++) sum += i * hist[i];
+    const mean = sum / n;
+    let variance = 0;
+    for (let i = 0; i < 256; i++) { const d = i - mean; variance += hist[i] * d * d; }
+    const std = Math.sqrt(variance / n);
+    const lut = _ocrBuildLut(mode, profile, mean, std, hist, n);
+    for (let p = 0, j = 0; j < n; p += 4, j++) {
+      const v = lut[gray[j]];
+      data[p] = data[p + 1] = data[p + 2] = v;
+      data[p + 3] = 255;
+    }
+    ctx.putImageData(imageData, 0, 0);
+  } catch (e) {
+    console.warn('OCR preprocessing skipped:', e);
+  }
+  return canvas;
+}
+
+function createOcrCanvasFromImage(img, scale = 1, mode = 'base', rotateDeg = 0) {
+  const naturalW = Math.max(1, img.naturalWidth || img.width || 1);
+  const naturalH = Math.max(1, img.naturalHeight || img.height || 1);
+  const baseScale = Math.max(0.5, Math.min(4.0, scale));
+  let w = Math.max(1, Math.round(naturalW * baseScale));
+  let h = Math.max(1, Math.round(naturalH * baseScale));
+
+  const maxPixels = _ocrNum('OCR_MAX_IMAGE_PIXELS', 18000000);
+  const pixels = w * h;
+  if (pixels > maxPixels) {
+    const factor = Math.sqrt(maxPixels / pixels);
+    w = Math.max(1, Math.floor(w * factor));
+    h = Math.max(1, Math.floor(h * factor));
+  }
+
+  const angle = ((rotateDeg % 360) + 360) % 360;
+  const canvas = document.createElement('canvas');
+  if (angle === 90 || angle === 270) {
+    canvas.width = h;
+    canvas.height = w;
+  } else {
+    canvas.width = w;
+    canvas.height = h;
+  }
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.save();
+  _ocrApplyRotate(ctx, w, h, angle);
+  ctx.drawImage(img, 0, 0, w, h);
+  ctx.restore();
+
+  return _ocrPreprocessInPlace(canvas, mode, 'source');
+}
+
+function preprocessCanvasForOcr(canvas) {
+  return _ocrPreprocessInPlace(canvas, 'fixed', 'variant');
+}
+
+function createOcrVariantFromCanvas(sourceCanvas, mode = 'base') {
+  const canvas = document.createElement('canvas');
+  canvas.width = sourceCanvas.width;
+  canvas.height = sourceCanvas.height;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(sourceCanvas, 0, 0);
+  return _ocrPreprocessInPlace(canvas, mode, 'variant');
+}
+
+function _ocrRotateCanvas(src, angle, maxLongEdge) {
+  const k = Math.min(1, (maxLongEdge || 1e9) / Math.max(1, Math.max(src.width, src.height)));
+  const w = Math.max(1, Math.round(src.width * k));
+  const h = Math.max(1, Math.round(src.height * k));
+  const swap = angle === 90 || angle === 270;
+  const c = document.createElement('canvas');
+  c.width = swap ? h : w;
+  c.height = swap ? w : h;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, c.width, c.height);
+  ctx.save();
+  _ocrApplyRotate(ctx, w, h, angle);
+  ctx.drawImage(src, 0, 0, w, h);
+  ctx.restore();
+  return c;
+}
+
+// ===== OCR RECOGNITION WITH TIMEOUT =====
+async function recognizeWithTimeout(worker, canvas, timeoutMs) {
+  const timeout = Math.max(3000, Number(timeoutMs) || 15000);
+  let timer = null;
+  const job = worker.recognize(canvas);
+  job.catch(() => {});
+  try {
+    return await Promise.race([
+      job,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`OCR recognition timeout after ${Math.round(timeout / 1000)}s`)), timeout);
+      })
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+function _ocrScaledTimeout(baseMs, canvas) {
+  const mp = ((canvas && canvas.width) || 0) * ((canvas && canvas.height) || 0) / 2e6;
+  return Math.round(baseMs * Math.min(6, Math.max(1, mp)));
+}
+
+async function _ocrRecognizeOnce(slot, canvas, psm, timeoutMs) {
+  if (!slot || slot.dead || !slot.worker) throw new Error('OCR worker unavailable');
+  await _ocrSetPsm(slot, psm);
+  const { data } = await recognizeWithTimeout(slot.worker, canvas, timeoutMs);
+  const text = (data && data.text) ? data.text.trim() : '';
+  return {
+    text,
+    confidence: (data && typeof data.confidence === 'number') ? data.confidence : 0,
+    lineCount: getOcrLineCount(text)
+  };
+}
+
+// ===== TALL MATH DELIMITER DETECTION =====
+function _ocrTallPolicy() {
+  const v = String(_figCfg('OCR_COMPLEX_MATH_POLICY', _figCfg('OCR_TALL_BRACKET_POLICY', 'vision-then-image')));
+  return (v === 'off' || v === 'vision') ? v : 'vision-then-image';
+}
+
+function _ocrDetectTallDelimiter(source) {
+  try {
+    const sw = source.naturalWidth || source.width || 0, sh = source.naturalHeight || source.height || 0;
+    if (!sw || !sh) return null;
+    const k = Math.min(1, 1400 / Math.max(sw, sh));
+    const w = Math.max(1, Math.round(sw * k)), h = Math.max(1, Math.round(sh * k));
+    if (w < 24 || h < 24) return null;
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(source, 0, 0, w, h);
+    const d = ctx.getImageData(0, 0, w, h).data;
+    _ocrFreeCanvas(c);
+
+    const n = w * h;
+    const gray = new Uint8Array(n), hist = new Uint32Array(256);
+    for (let p = 0, j = 0; j < n; p += 4, j++) {
+      const g = (77 * d[p] + 150 * d[p + 1] + 29 * d[p + 2]) >> 8;
+      gray[j] = g; hist[g]++;
+    }
+    const t = _ocrOtsu(hist, n);
+    let dark = 0;
+    for (let i = 0; i <= t; i++) dark += hist[i];
+    const inkIsDark = dark <= n * 0.5;
+    const ink = new Uint8Array(n);
+    for (let j = 0; j < n; j++) ink[j] = (inkIsDark ? gray[j] <= t : gray[j] > t) ? 1 : 0;
+
+    const label = new Int32Array(n);
+    const comps = [];
+    const stack = new Int32Array(n);
+    for (let start = 0; start < n; start++) {
+      if (!ink[start] || label[start]) continue;
+      const id = comps.length + 1;
+      const cp = { x0: w, y0: h, x1: 0, y1: 0, area: 0, id };
+      let sp = 0; stack[sp++] = start; label[start] = id;
+      while (sp) {
+        const p = stack[--sp];
+        const y = (p / w) | 0, x = p - y * w;
+        cp.area++;
+        if (x < cp.x0) cp.x0 = x; if (x > cp.x1) cp.x1 = x;
+        if (y < cp.y0) cp.y0 = y; if (y > cp.y1) cp.y1 = y;
+        for (let dy = -2; dy <= 2; dy++) {
+          const yy = y + dy; if (yy < 0 || yy >= h) continue;
+          for (let dx = -1; dx <= 1; dx++) {
+            const xx = x + dx; if (xx < 0 || xx >= w) continue;
+            const q = yy * w + xx;
+            if (ink[q] && !label[q]) { label[q] = id; stack[sp++] = q; }
+          }
+        }
+      }
+      comps.push(cp);
+      if (comps.length > 20000) return null;
+    }
+    const hs = comps.filter(c => c.area >= 6 && (c.y1 - c.y0 + 1) >= 4).map(c => c.y1 - c.y0 + 1).sort((a, b) => a - b);
+    if (hs.length < 4) return null;
+    const med = Math.max(6, hs[hs.length >> 1]);
+    const minH = Math.max(3 * med, Math.round(0.03 * Math.max(w, h)), 24);
+
+    let tall = null;
+    for (const cp of comps) {
+      const cw = cp.x1 - cp.x0 + 1, ch = cp.y1 - cp.y0 + 1;
+      if (ch < minH || cw < 4) continue;
+      const aspect = cw / ch;
+      if (aspect < 0.05 || aspect > 0.5) continue;
+      if (cp.area / (cw * ch) > 0.55) continue;
+      let lo = Infinity, hi = -Infinity;
+      for (let y = cp.y0; y <= cp.y1; y++) {
+        let sum = 0, cnt = 0;
+        for (let x = cp.x0; x <= cp.x1; x++) if (label[y * w + x] === cp.id) { sum += x; cnt++; }
+        if (!cnt) continue;
+        const m = sum / cnt;
+        if (m < lo) lo = m; if (m > hi) hi = m;
+      }
+      if (hi - lo >= 0.25 * cw) { tall = { x: cp.x0 / w, y: cp.y0 / h, w: cw / w, h: ch / h, heightRatio: ch / med }; break; }
+    }
+
+    const glyphs = comps.filter(c => c.area >= 6 && (c.y1 - c.y0 + 1) >= Math.max(3, 0.3 * med));
+    const overlapX = (a, b) => Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0) + 1;
+
+    let fractionBars = 0;
+    for (const cp of comps) {
+      const cw = cp.x1 - cp.x0 + 1, ch = cp.y1 - cp.y0 + 1;
+      if (cw < Math.max(0.7 * med, 8) || cw > 10 * med || ch > Math.max(3, 0.25 * med) || cw / ch < 5 || cp.area < cw * 0.5) continue;
+      let above = false, below = false;
+      for (const g of glyphs) {
+        if (g === cp) continue;
+        const gw = g.x1 - g.x0 + 1;
+        if (overlapX(cp, g) < 0.5 * Math.min(cw, gw)) continue;
+        const gap1 = cp.y0 - g.y1, gap2 = g.y0 - cp.y1;
+        if (gap1 >= -1 && gap1 <= 0.5 * med) above = true;
+        if (gap2 >= -1 && gap2 <= 0.5 * med) below = true;
+        if (above && below) break;
+      }
+      if (above && below) fractionBars++;
+    }
+
+    let barAccents = 0;
+    for (const cp of comps) {
+      const cw = cp.x1 - cp.x0 + 1, ch = cp.y1 - cp.y0 + 1;
+      if (ch > Math.max(3, 0.4 * med) || cw < 0.4 * med || cw > 1.6 * med || cw / ch < 1.4) continue;
+      for (const g of glyphs) {
+        if (g === cp) continue;
+        const gh = g.y1 - g.y0 + 1, gap = g.y0 - cp.y1;
+        if (gap < 0 || gap > 0.5 * med || gh < 0.5 * med || gh > 1.6 * med) continue;
+        if (overlapX(cp, g) >= 0.6 * Math.min(cw, g.x1 - g.x0 + 1)) { barAccents++; break; }
+      }
+    }
+
+    const reasons = [];
+    if (tall) reasons.push('tall-bracket');
+    if (fractionBars) reasons.push('fraction-bar');
+    if (barAccents) reasons.push('accent-mark');
+    return reasons.length ? { reasons, tall, fractionBars, barAccents } : null;
+  } catch (e) {
+    console.warn('Math layout detection skipped:', e);
+    return null;
+  }
+}
+const _ocrDetectMathLayout = _ocrDetectTallDelimiter;
+
+function _ocrTextLooksComplexMath(text) {
+  const t = String(text || '');
+  const reasons = [];
+  if (!t.trim()) return { complex: false, reasons };
+  const lines = t.split(/\n+/).map(x => x.trim()).filter(Boolean);
+  if (/[∑∏∫∮√∞≤≥≠≈±∓→←⇒⇔↦∈∉⊂⊆⊃⊇∪∩∅∂∇∀∃ℝℕℤℚℂ]/.test(t)) reasons.push('math-symbol');
+  if (/[\u0370-\u03FF]/.test(t)) reasons.push('greek');
+  if (/[\u0300-\u036F\u00AF\u02C9\u203E\u20D7]/.test(t)) reasons.push('accent');
+  if (/\^|\\[A-Za-z]+|_\{?[A-Za-z0-9]/.test(t)) reasons.push('script-marks');
+  if (lines.some(l => /^[{\[(|]\s*\S?$/.test(l) || /^[{\[|]\s*[\dA-Za-z]/.test(l))) reasons.push('bracket-line');
+  for (let i = 0; i < lines.length - 1; i++) {
+    if (/^\d{1,2}$/.test(lines[i]) && /^\d{1,2}(\s|[,;.]|$)/.test(lines[i + 1])) { reasons.push('stacked-fraction'); break; }
+  }
+  if (lines.filter(l => /[,;]\s*[A-Za-z]\s*[=<>≤≥]\s*-?\d/.test(l)).length >= 2 || /\botherwise\b/i.test(t)) reasons.push('piecewise');
+  if (lines.some(l => /=/.test(l) && /\b[A-Za-z]\d{1,2}\b/.test(l))) reasons.push('sub-superscript?');
+  return { complex: reasons.length > 0, reasons };
+}
+
+// ===== OCR LINE NORMALIZATION =====
+function normalizeOcrLineText(text) {
+  return String(text || '')
+    .normalize('NFKC')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase()
+    .replace(/[|¦]/g, 'i');
+}
+
+function getOcrLineCount(text) {
+  return String(text || '').split(/\n+/).map(s => s.trim()).filter(Boolean).length;
+}
+
+function mergeOcrCandidates(primary, secondary) {
+  const primaryText = String(primary?.text || '').trim();
+  const secondaryText = String(secondary?.text || '').trim();
+  if (!primaryText) return secondary || { text: '', confidence: 0 };
+  if (!secondaryText) return primary || { text: '', confidence: 0 };
+
+  const primaryLines = primaryText.split(/\n+/).map(normalizeOcrLineText).filter(Boolean);
+  const seen = new Set(primaryLines);
+  const primaryNorm = primaryLines.join('\n');
+  const extras = [];
+  for (const line of secondaryText.split(/\n+/)) {
+    const n = normalizeOcrLineText(line);
+    if (!n || seen.has(n)) continue;
+    if (!/[\p{L}\p{N}]/u.test(line)) continue;
+    if (primaryNorm.includes(n)) continue;
+    seen.add(n);
+    extras.push(line.trim());
+  }
+  const mergedText = extras.length ? `${primaryText}\n${extras.join('\n')}` : primaryText;
+  return {
+    text: mergedText,
+    confidence: Math.max(primary.confidence || 0, secondary.confidence || 0),
+    lineCount: getOcrLineCount(mergedText)
+  };
+}
+
+// ===== RECOGNIZE IMAGE WITH OCR =====
+async function recognizeImageWithOcr(imageSource, opts = {}) {
+  const slot = await acquireOcrSlot();
+  try {
+    const candidates = [];
+    const allowRotation = opts.allowRotation !== false && _figCfg('OCR_ROTATION_RECOVERY', true) !== false;
+    const allPasses = [
+      { psm: '6', mode: 'base' },
+      { psm: '11', mode: 'soft' },
+      { psm: '12', mode: 'threshold' },
+      { psm: '7', mode: 'base' }
+    ].slice(0, Math.max(1, _ocrNum('OCR_HIGH_ACCURACY_PASSES', 4)));
+    const maxTotalPasses = Math.max(1, Math.min(
+      Math.max(1, _ocrNum('OCR_MAX_TOTAL_PASSES', allPasses.length)),
+      opts.maxPasses || 99
+    ));
+    const triagePasses = Math.max(1, Math.min(_ocrNum('OCR_FAST_TRIAGE_PASSES', 2), allPasses.length, maxTotalPasses));
+    const triageTimeout = Math.max(1200, _ocrNum('OCR_FAST_TRIAGE_TIMEOUT_MS', 2200));
+    const deepTimeout = Math.max(2500, _ocrNum('OCR_PASS_TIMEOUT_MS', 5000));
+    const minConfSingle = _ocrNum('OCR_MIN_CONFIDENCE_FOR_SINGLE_PASS', 82);
+    let attempts = 0;
+
+    const runPass = async (pass, canvas, baseTimeout, group) => {
+      attempts++;
+      try {
+        const cand = await _ocrRecognizeOnce(slot, canvas, pass.psm, _ocrScaledTimeout(baseTimeout, canvas));
+        if (cand.text && (group === 0 || cand.confidence >= 40)) { cand.group = group; candidates.push(cand); }
+        return cand;
+      } catch (err) {
+        console.warn(`OCR pass ${pass.psm}/${pass.mode || 'rot' + group} failed:`, err);
+        if (/timeout/i.test(String(err && err.message || ''))) await replaceTimedOutOcrWorker(slot);
+        return null;
+      }
+    };
+    const scoreOf = (c) => (c.confidence || 0) + Math.min(35, Math.log1p((c.text || '').length) * 2.2);
+    const stop = () => slot.dead || _ocrCancelled();
+
+    for (let i = 0; i < triagePasses && attempts < maxTotalPasses && !stop(); i++) {
+      const pass = allPasses[i];
+      let cv = imageSource, own = false;
+      if (!(i === 0 && pass.mode === 'base')) { await _ocrTick(); cv = createOcrVariantFromCanvas(imageSource, pass.mode); own = true; }
+      const cand = await runPass(pass, cv, triageTimeout, 0);
+      if (own) _ocrFreeCanvas(cv);
+      if (cand && cand.text && cand.confidence >= minConfSingle && cand.lineCount >= 3) {
+        return { text: cand.text, confidence: cand.confidence || 0, passes: attempts, lineCount: cand.lineCount, skipped: false };
+      }
+    }
+
+    if (candidates.length) {
+      for (let i = triagePasses; i < allPasses.length && attempts < maxTotalPasses && !stop(); i++) {
+        const pass = allPasses[i];
+        await _ocrTick();
+        const cv = createOcrVariantFromCanvas(imageSource, pass.mode);
+        await runPass(pass, cv, deepTimeout, 0);
+        _ocrFreeCanvas(cv);
+      }
+    }
+
+    const upright = candidates.filter(c => c.group === 0).sort((a, b) => scoreOf(b) - scoreOf(a));
+    const bestUp = upright[0] || null;
+    const needRotation = allowRotation && !stop() && (!bestUp || bestUp.confidence < 55 || bestUp.lineCount < 2);
+    if (needRotation) {
+      const rotLimit = Math.max(0, _ocrNum('OCR_ROTATION_PASSES', 2));
+      const rotEdge = Math.max(1200, _ocrNum('OCR_ROTATION_MAX_LONG_EDGE', 2600));
+      let tried = 0;
+      for (const angle of [90, 270]) {
+        if (tried >= rotLimit || stop()) break;
+        tried++;
+        let rc = null;
+        try {
+          await _ocrTick();
+          rc = _ocrRotateCanvas(imageSource, angle, rotEdge);
+          const cand = await runPass({ psm: '6' }, rc, deepTimeout, angle);
+          if (cand && cand.confidence >= 60 && cand.lineCount >= 3) break;
+        } finally {
+          _ocrFreeCanvas(rc);
+        }
+      }
+    }
+
+    if (!candidates.length) {
+      return {
+        text: '', confidence: 0, passes: attempts,
+        lineCount: 0, skipped: true, reason: 'no_text',
+        skipReason: 'No readable text detected after bounded OCR attempts; region skipped.'
+      };
+    }
+
+    const groups = new Map();
+    for (const c of candidates) {
+      if (!groups.has(c.group)) groups.set(c.group, []);
+      groups.get(c.group).push(c);
+    }
+    let bestList = null, bestScore = -Infinity;
+    for (const [g, list] of groups) {
+      list.sort((a, b) => scoreOf(b) - scoreOf(a));
+      const s = scoreOf(list[0]) + (g === 0 ? 8 : 0);
+      if (s > bestScore) { bestScore = s; bestList = list; }
+    }
+    let merged = bestList[0];
+    for (let i = 1; i < bestList.length; i++) {
+      const c = bestList[i];
+      if ((c.confidence || 0) >= 35 || ((c.text || '').length > 25 && (c.confidence || 0) >= 20)) {
+        merged = mergeOcrCandidates(merged, c);
+      }
+    }
+    return {
+      text: merged.text,
+      confidence: merged.confidence || 0,
+      passes: attempts,
+      lineCount: merged.lineCount || getOcrLineCount(merged.text),
+      skipped: false
+    };
+  } finally {
+    slot.busy = false;
+  }
+}
+
+// ===== GEMINI VISION OCR FALLBACK =====
+const GEMINI_VISION_OCR_PROMPT =
+  'You are an OCR engine. Transcribe every piece of readable text in this image exactly ' +
+  'as written, preserving line breaks, bullet points, and reading order. Write any ' +
+  'mathematical expressions using LaTeX wrapped in $$...$$. A large brace { that groups several ' +
+  'lines (piecewise function / system of equations) MUST be written as ONE $$...$$ block using ' +
+  '\\begin{cases} ... \\end{cases} (rows separated by \\\\, condition after &), never as separate lines. ' +
+  'A bar/overline over a letter (sample mean) must be \\bar{x} and a caret/hat (estimate) must be \\hat{x} - never swap them. ' +
+  'Blackboard-bold (double-struck) letters such as the real numbers must be written \\mathbb{R}, \\mathbb{N}, \\mathbb{Z}, \\mathbb{Q}, \\mathbb{C} (never a plain R), and an arrow as \\to. ' +
+  'Stacked fractions must be \\frac{a}{b}; matrices must use \\begin{pmatrix}/\\begin{bmatrix}. Do not add commentary, ' +
+  'headers, or explanations of your own — output only the transcribed content. If the ' +
+  'image genuinely has no readable text, respond with exactly: [NO_TEXT_FOUND]';
+
+function _parseDataUrl(dataUrl) {
+  const match = /^data:([^;]+);base64,(.+)$/s.exec(String(dataUrl || ''));
+  if (!match) return null;
+  const b64 = match[2];
+  if (!b64 || !b64.trim()) return null;
+  return { mimeType: match[1], base64Data: b64 };
+}
+
+async function callGeminiVisionForOCR(cfg, base64Data, mimeType, promptText, signal) {
+  const baseUrl = String(cfg.apiUrl || '')
+    .replace(/([?&])key=[^&]*&?/i, '$1')
+    .replace(/[?&]$/, '');
+  const body = {
+    contents: [{
+      role: 'user',
+      parts: [
+        { text: promptText || GEMINI_VISION_OCR_PROMPT },
+        { inline_data: { mime_type: mimeType, data: base64Data } }
+      ]
+    }],
+    generationConfig: {
+      temperature: 0,
+      maxOutputTokens: Math.max(2048, _ocrNum('VISION_MAX_OUTPUT_TOKENS', 8192))
+    }
+  };
+  const response = await fetch(baseUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': cfg.apiKey },
+    body: JSON.stringify(body),
+    signal: signal || undefined
+  });
+  if (!response.ok) {
+    let detail = '';
+    try { const j = await response.json(); detail = j.error?.message || JSON.stringify(j); }
+    catch (_) { try { detail = await response.text(); } catch (_2) {} }
+    throw new Error(`Gemini Vision OCR error (${response.status}): ${detail || 'no further details returned'}`);
+  }
+  const data = await response.json();
+  const text = (data.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || '').trim();
+  if (!text || /^\[NO_TEXT_FOUND\]$/i.test(text)) return '';
+  return text;
+}
+
+function getVisionFallbackModelCandidates() {
+  const state = (typeof AI_MODELS_STATE !== 'undefined') ? AI_MODELS_STATE : null;
+  const models = Array.isArray(state?.models) ? state.models : [];
+  if (!models.length) return [];
+
+  const active = typeof getActiveAIModel === 'function' ? getActiveAIModel() : null;
+  const ordered = [];
+  if (active) ordered.push(active);
+
+  for (const model of models) {
+    if (!ordered.some(m => m.id === model.id)) ordered.push(model);
+  }
+
+  return ordered.filter(model => model && (model.apiType === 'gemini' || model.apiType === 'openai'));
+}
+
+async function callVisionModelForOCR(cfg, dataUrl, label, promptText, signal) {
+  const parsed = _parseDataUrl(dataUrl);
+  if (!parsed) return '';
+
+  if (cfg?.apiType === 'gemini') {
+    return await callGeminiVisionForOCR(cfg, parsed.base64Data, parsed.mimeType, promptText, signal);
+  }
+
+  const messages = [{
+    role: 'user',
+    content: [
+      { type: 'text', text: promptText || GEMINI_VISION_OCR_PROMPT },
+      { type: 'image_url', image_url: { url: dataUrl } }
+    ]
+  }];
+
+  if (typeof callAIAPIRaw !== 'function') {
+    throw new Error('AI vision OCR model driver is unavailable because the raw AI caller is not loaded.');
+  }
+
+  const result = await callAIAPIRaw(messages, {
+    forceJson: false,
+    modelConfig: cfg,
+    bypassThinkingCooldown: true
+  });
+
+  const text = String(result?.content || '').trim();
+  if (!text || /^\[NO_TEXT_FOUND\]$/i.test(text)) return '';
+  return text;
+}
+
+// ---- AI vision step: ONE attempt per configured model, then give up ----------------
+let _visionChain = Promise.resolve();
+const _visionBreaker = { until: 0, notified: false };
+const _visionModelFails = new Map();
+let _visionModelFailsResetAt = 0;
+const _visionBudget = { calls: 0, max: 20 };
+
+function resetVisionBreaker() {
+  _visionBreaker.until = 0;
+  _visionBreaker.notified = false;
+  _visionModelFails.clear();
+  _visionModelFailsResetAt = Date.now();
+  _visionBudget.calls = 0;
+  _visionBudget.max = Math.max(1, _ocrNum('VISION_MAX_CALLS_PER_RUN', 20));
+}
+window.resetVisionBreaker = resetVisionBreaker;
+
+function _visionBreakerActive() { return Date.now() < _visionBreaker.until; }
+function _visionModelKey(cfg) { return String((cfg && (cfg.id || cfg.modelId || cfg.name)) || 'model'); }
+
+function _maybeSoftResetVisionFails() {
+  const now = Date.now();
+  const interval = Math.max(5000, _ocrNum('VISION_MODEL_FAILS_RESET_MS', 60000));
+  if (now - _visionModelFailsResetAt < interval) return;
+  _visionModelFailsResetAt = now;
+  _visionModelFails.clear();
+}
+
+async function _callVisionModelOnce(cfg, dataUrl, label, promptText, timeoutMs) {
+  const controller = new AbortController();
+  let timer = null;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      try { controller.abort(); } catch (_) {}
+      reject(new Error(`AI vision timed out after ${Math.round(timeoutMs / 1000)}s`));
+    }, timeoutMs);
+  });
+  const call = callVisionModelForOCR(cfg, dataUrl, label, promptText, controller.signal);
+  call.catch(() => {});
+  try {
+    return await Promise.race([call, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function _runVisionPass(dataUrl, label, promptText) {
+  if (_figCfg('VISION_FALLBACK_ENABLED', true) === false) return '';
+  if (_visionBreakerActive()) return '';
+  if (_visionBudget.calls >= _visionBudget.max) {
+    _pgScope(`Vision: budget reached (${_visionBudget.calls}/${_visionBudget.max})`);
+    return '';
+  }
+  _maybeSoftResetVisionFails();
+  const all = getVisionFallbackModelCandidates();
+  if (!all.length) return '';
+  const maxFails = Math.max(1, _ocrNum('VISION_MODEL_MAX_FAILS', 3));
+  const models = all.filter(m => (_visionModelFails.get(_visionModelKey(m)) || 0) < maxFails);
+  const timeoutMs = Math.max(5000, _ocrNum('VISION_MODEL_TIMEOUT_MS', 30000));
+  const stopOnEmpty = _figCfg('VISION_STOP_ON_EMPTY_ANSWER', true) !== false;
+  let failed = 0;
+  let answered = false;
+
+  for (let i = 0; i < models.length; i++) {
+    if (_ocrCancelled()) return '';
+    if (_visionBudget.calls >= _visionBudget.max) {
+      _pgScope(`Vision: budget reached (${_visionBudget.calls}/${_visionBudget.max})`);
+      return '';
+    }
+    const cfg = models[i];
+    const key = _visionModelKey(cfg);
+    _visionBudget.calls++;
+
+    _pgModel(cfg);
+    _pgScope(`Vision: model ${i + 1}/${models.length} · call ${_visionBudget.calls}/${_visionBudget.max}${label ? ' · ' + label : ''}`);
+    _pgLabel(`AI vision reading${label ? ' ' + label : ''} (model ${i + 1}/${models.length})…`);
+
     try {
-      return ('ontouchstart' in window || (navigator.maxTouchPoints || 0) > 0) &&
-        !(window.matchMedia && window.matchMedia('(pointer: fine)').matches);
-    } catch (__) {
-      return false;
+      const text = await _callVisionModelOnce(cfg, dataUrl, label, promptText, timeoutMs);
+      _visionModelFails.set(key, 0);
+      if (text && String(text).trim()) return text;
+      answered = true;
+      if (stopOnEmpty) return '';
+    } catch (err) {
+      failed++;
+      _visionModelFails.set(key, (_visionModelFails.get(key) || 0) + 1);
+      console.warn(`AI vision: "${cfg?.name || cfg?.modelId || 'model'}" failed${label ? ` for ${label}` : ''} — trying the next model:`, err && err.message ? err.message : err);
+    }
+  }
+  if (!answered && failed >= models.length) {
+    _visionBreaker.until = Date.now() + Math.max(10000, _ocrNum('VISION_BREAKER_MS', 120000));
+    if (!_visionBreaker.notified) {
+      _visionBreaker.notified = true;
+      console.warn('AI vision: all models failed — skipping AI vision for the rest of this run.');
+      if (typeof displayToastNotification === 'function') displayToastNotification('⚠️ AI vision failed on every model — skipping it and moving on.');
+    }
+  }
+  return '';
+}
+
+function runGeminiVisionOCRFromDataUrl(dataUrl, label, promptText) {
+  const job = _visionChain.then(() => _runVisionPass(dataUrl, label, promptText));
+  _visionChain = job.catch(() => {});
+  return job;
+}
+
+// ===== RUN OCR ON IMAGE FILE =====
+async function runOcrOnImageFile(file) {
+  let dataUrlPromise = null;
+  const getDataUrl = () => dataUrlPromise || (dataUrlPromise = new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error('Could not read the image file'));
+    reader.readAsDataURL(file);
+  }));
+
+  if (_figCfg('SCANNED_PAGE_POLICY', 'ocr-then-image') === 'image-only') {
+    const tok = await _keepImageFileAsImage(await getDataUrl());
+    if (tok) return { text: tok, confidence: 0, skipped: false, keptAsImage: true, figureTokens: [tok] };
+  }
+
+  _pgLabel(`Preparing "${file.name}"…`);
+
+  const objUrl = URL.createObjectURL(file);
+  let canvas = null, cleanCanvas = null;
+  try {
+    const img = await new Promise((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error('Could not decode the image file'));
+      image.src = objUrl;
+    });
+
+    const tallPolicy = _ocrTallPolicy();
+    if (tallPolicy !== 'off' && !_ocrCancelled() && _ocrDetectMathLayout(img)) {
+      _pgLabel(`"${file.name}" has math structure — trying AI vision first…`);
+      const tallUrl = await getDataUrl();
+      const tallText = await runGeminiVisionOCRFromDataUrl(tallUrl, file.name);
+      if (tallText) {
+        return { text: tallText, confidence: 70, passes: 0, lineCount: getOcrLineCount(tallText), skipped: false, source: 'gemini-vision', tallDelimiter: true };
+      }
+      if (tallPolicy === 'vision-then-image') {
+        const tallTok = await _keepImageFileAsImage(tallUrl);
+        if (tallTok) return { text: tallTok, confidence: 0, skipped: false, keptAsImage: true, figureTokens: [tallTok], tallDelimiter: true };
+      }
+    }
+
+    const longEdge = Math.max(img.naturalWidth || 1, img.naturalHeight || 1);
+    const targetLongEdge = _ocrNum('OCR_TARGET_LONG_EDGE', 4200);
+    const scale = Math.min(3.2, Math.max(1, targetLongEdge / Math.max(1, longEdge)));
+    canvas = createOcrCanvasFromImage(img, scale, 'base', 0);
+
+    _pgLabel(`Reading text from "${file.name}"…`);
+    let result = await recognizeImageWithOcr(canvas);
+
+    const isWeakOcrResult = (candidate) => {
+      const text = String(candidate?.text || '').trim();
+      const confidence = Number(candidate?.confidence) || 0;
+      const lineCount = Number(candidate?.lineCount) || getOcrLineCount(text);
+      return !text || (confidence < 50 && lineCount < 2);
+    };
+    const hasText = (r) => !!String(r && r.text || '').trim();
+
+    const textSuspect = tallPolicy !== 'off' ? _ocrTextLooksComplexMath(result && result.text) : { complex: false, reasons: [] };
+    if (textSuspect.complex) console.info('OCR: complex math suspected (' + textSuspect.reasons.join(', ') + ') -> AI vision');
+    if (hasText(result) && !isWeakOcrResult(result) && !textSuspect.complex) return result;
+
+    if (hasText(result) && !_ocrCancelled() && !textSuspect.complex) {
+      try {
+        _pgLabel(`"${file.name}": weak OCR, retrying on unprocessed image…`);
+        cleanCanvas = document.createElement('canvas');
+        cleanCanvas.width = canvas.width;
+        cleanCanvas.height = canvas.height;
+        const cleanCtx = cleanCanvas.getContext('2d');
+        cleanCtx.fillStyle = '#ffffff';
+        cleanCtx.fillRect(0, 0, cleanCanvas.width, cleanCanvas.height);
+        cleanCtx.drawImage(img, 0, 0, cleanCanvas.width, cleanCanvas.height);
+        const retry = await recognizeImageWithOcr(cleanCanvas, { allowRotation: false });
+        if (hasText(retry) && !isWeakOcrResult(retry)) return retry;
+        if (hasText(retry) && (Number(retry.confidence) || 0) >= (Number(result.confidence) || 0)) result = retry;
+      } catch (retryError) {
+        console.warn('Clean-image OCR retry failed:', retryError);
+      }
+    }
+
+    _pgLabel(`"${file.name}": local OCR unsure — trying AI vision…`);
+    const dataUrl = await getDataUrl();
+    const visionText = await runGeminiVisionOCRFromDataUrl(dataUrl, file.name);
+    if (visionText) {
+      return {
+        text: visionText,
+        confidence: 60,
+        passes: (result && result.passes) || 0,
+        lineCount: getOcrLineCount(visionText),
+        skipped: false,
+        source: 'gemini-vision'
+      };
+    }
+
+    const veryWeak = !hasText(result) || (Number(result.confidence) || 0) < 30;
+    if (veryWeak) {
+      _pgLabel(`"${file.name}": keeping as original image…`);
+      const keptTok = await _keepImageFileAsImage(dataUrl);
+      if (keptTok) return { text: keptTok, confidence: 0, skipped: false, keptAsImage: true, figureTokens: [keptTok] };
+    }
+    if (hasText(result)) return { ...result, needsVision: true, visionDataUrl: dataUrl };
+    throw new Error('This image could not be read or decoded.');
+  } finally {
+    try { URL.revokeObjectURL(objUrl); } catch (_) {}
+    _ocrFreeCanvas(canvas);
+    _ocrFreeCanvas(cleanCanvas);
+  }
+}
+
+async function runOCRWithAIFallback(file, options = {}) {
+  const ext = String(file?.name || '').split('.').pop().toLowerCase();
+  const imageExts = ['png', 'jpg', 'jpeg', 'webp', 'bmp'];
+  try {
+    if (imageExts.includes(ext)) {
+      try {
+        const result = await runOcrOnImageFile(file);
+        if (result && String(result.text || '').trim()) return { ...result, source: result.source || 'ocr' };
+      } catch (localErr) {
+        console.warn('Local OCR failed, trying AI fallback:', localErr);
+      }
+    }
+    const dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(new Error('Could not prepare the image for AI fallback.'));
+      reader.readAsDataURL(file);
+    });
+    const text = await runGeminiVisionOCRFromDataUrl(dataUrl, file?.name || 'attachment');
+    if (text && String(text).trim()) {
+      return {
+        text: String(text).trim(),
+        confidence: 60,
+        lineCount: getOcrLineCount(text),
+        source: 'gemini-vision',
+        needsVision: true,
+        visionDataUrl: dataUrl
+      };
+    }
+    throw new Error('OCR and AI fallback both failed to read this file.');
+  } catch (error) {
+    const message = error?.message || 'OCR could not read this file.';
+    throw new Error(message);
+  }
+}
+window.runOCRWithAIFallback = runOCRWithAIFallback;
+
+// ===== EXTRACT TEXT FROM IMAGES =====
+async function extractTextFromImageFilesWithOCR(files, options = {}) {
+  resetVisionBreaker();
+  _cancelScheduledHide();
+  if (!Array.isArray(files) || files.length === 0) return [];
+
+  const progressKeys = Array.isArray(options.progressKeys) ? options.progressKeys : files.map((file, index) => `${file.name}#ocr#${index}`);
+  const preservePreview = !!options.preservePreview;
+  const queue = files.map((file, index) => ({ file, index, progressKey: progressKeys[index] }));
+  const results = new Array(files.length).fill(null);
+  const parallel = Math.max(1, Math.min(_ocrPoolTarget(), queue.length));
+  let nextIndex = 0;
+  let completed = 0;
+
+  if (!preservePreview && typeof ProgressUI !== 'undefined' && ProgressUI.clearPreview) ProgressUI.clearPreview();
+  files.forEach((file, index) => {
+    _pgFileAdd(progressKeys[index], file.name, 'Queued', 'Waiting to start');
+  });
+
+  _pgStage(`OCR reading ${files.length} image(s)`, 0, 95);
+  if (typeof ProgressUI !== 'undefined' && ProgressUI.startStepEstimate) {
+    ProgressUI.startStepEstimate(files.length);
+  }
+  _pgLabel(`OCR reading ${files.length} image(s) — ${parallel} in parallel...`);
+
+  async function worker() {
+    while (true) {
+      const itemIndex = nextIndex++;
+      if (itemIndex >= queue.length || _ocrCancelled()) return;
+      const { file, index, progressKey } = queue[itemIndex];
+      try {
+        _pgPage(index + 1, files.length);
+        _pgLabel(`Reading "${file.name}" (${index + 1}/${files.length})…`);
+        _pgFileUpd(progressKey, 8, 'Reading', 'Loading image and preparing OCR');
+
+        const ocrResult = await runOcrOnImageFile(file);
+        results[index] = {
+          file,
+          text: (ocrResult?.text || '').trim(),
+          ai: false,
+          confidence: typeof ocrResult?.confidence === 'number' ? ocrResult.confidence : 0,
+          skipped: !!ocrResult?.skipped,
+          skipReason: ocrResult?.skipReason || '',
+          needsVision: !!ocrResult?.needsVision,
+          visionDataUrls: ocrResult?.visionDataUrl ? [ocrResult.visionDataUrl] : [],
+          figureTokens: Array.isArray(ocrResult?.figureTokens) ? ocrResult.figureTokens : [],
+          keptAsImage: !!ocrResult?.keptAsImage,
+          error: null
+        };
+        if (ocrResult?.skipped && !String(ocrResult?.text || '').trim()) {
+          const skipMeta = ocrResult?.skipReason || 'No readable text detected; skipped this non-text region.';
+          _pgFileUpd(progressKey, 100, 'Skipped', skipMeta, 'fallback');
+        } else {
+          const confidenceText = ocrResult?.keptAsImage
+            ? 'Not readable as text — kept as original image'
+            : ocrResult?.needsVision
+            ? 'OCR uncertain — image will be sent to AI vision when you ask a question'
+            : (typeof ocrResult?.confidence === 'number' ? `OCR confidence ${Math.round(ocrResult.confidence)}%` : 'OCR complete');
+          _pgFileUpd(progressKey, 100, 'Done', confidenceText, 'done');
+        }
+      } catch (error) {
+        console.warn(`OCR failed for image ${index + 1} (${file.name}):`, error);
+        results[index] = { file, text: '', ai: false, confidence: 0, needsVision: true, error };
+        const message = ((error && error.message) || 'OCR failed').slice(0, 140);
+        _pgFileUpd(progressKey, 100, 'Failed', message, 'error');
+      } finally {
+        completed++;
+        if (typeof ProgressUI !== 'undefined' && ProgressUI.reportStepComplete) {
+          ProgressUI.reportStepComplete(completed);
+        }
+        _pgLabel(`OCR: ${completed}/${files.length} files complete — remaining ${files.length - completed}`);
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: parallel }, () => worker()));
+  return results;
+}
+
+// ===== OCR MATH NORMALIZATION =====
+function normalizeOcrMathLine(line) {
+  let t = String(line || '').trim();
+  if (!t) return '';
+  const ACC = { '\u0304': 'bar', '\u0305': 'bar', '\u00AF': 'bar', '\u02C9': 'bar', '\u203E': 'bar', '\u0302': 'hat', '\u02C6': 'hat',
+    '\u0303': 'tilde', '\u02DC': 'tilde', '\u20D7': 'vec', '\u0307': 'dot', '\u02D9': 'dot', '\u0308': 'ddot' };
+  t = t.replace(/([A-Za-z])([\u0304\u0305\u00AF\u02C9\u203E\u0302\u02C6\u0303\u02DC\u20D7\u0307\u02D9\u0308])/g, (m, L, a) => `\\${ACC[a]}{${L}}`);
+  t = t.replace(/([A-Za-z])\s*\^?\s*[\u00AF\u02C9\u203E\u2015]/g, '\\bar{$1}');
+  t = t.replace(/\b([A-Za-z])\s*\^\s*[-\u2212\u2013](?![0-9A-Za-z{(\\])/g, '\\bar{$1}');
+  t = t.replace(/[−–—]/g, '-').replace(/×/g, '\\times ').replace(/÷/g, '\\div ')
+    .replace(/≤/g, '\\le ').replace(/≥/g, '\\ge ').replace(/≠/g, '\\ne ')
+    .replace(/≈/g, '\\approx ').replace(/∞/g, '\\infty ')
+    .replace(/π/g, '\\pi ').replace(/√/g, '\\sqrt ')
+    .replace(/[→⟶]/g, '\\to ').replace(/∈/g, '\\in ')
+    .replace(/\s+/g, ' ').trim();
+
+  const SETS = { 'ℝ': 'R', 'ℕ': 'N', 'ℤ': 'Z', 'ℚ': 'Q', 'ℂ': 'C' };
+  t = t.replace(/[ℝℕℤℚℂ]/g, ch => `\\mathbb{${SETS[ch]}}`);
+  if (_figCfg('OCR_NUMBER_SET_GUESS', true) !== false) {
+    t = t.replace(/(\\to|\\in|->|\\subset(?:eq)?)\s*[Il|]?([RNZQC])(?![A-Za-z0-9_{])(\s*\^\s*(?:\{[^{}]*\}|[A-Za-z0-9]))?/g,
+      (m, op, L, pw) => `${op} \\mathbb{${L}}${pw ? pw.replace(/\s+/g, '') : ''}`);
+  }
+
+  if (/[=<>]|\\times|\\div|\\sqrt|\^/.test(t)) {
+    t = t.replace(/(^|[^A-Za-z0-9\\])([A-Za-z])(\d{1,2})\b/g, '$1$2_$3');
+  }
+  if (/^[A-Za-z0-9()\s.+\-\\^_]+\/[A-Za-z0-9()\s.+\-\\^_]+$/.test(t)) {
+    t = t.replace(/\b([0-9]+)\s*\/\s*([0-9]+)\b/g, '\\frac{$1}{$2}');
+  }
+  t = t.replace(/\\sqrt\s*\(?\s*([A-Za-z0-9.+\-]+)\s*\)?/g, '\\sqrt{$1}');
+  return t;
+}
+
+function looksLikeOcrEquation(line) {
+  const t = String(line || '').trim();
+  if (!t || t.length > 180) return false;
+  if (/^[-•*\d]+\s*(steps?|example|definition|important)/i.test(t)) return false;
+  if (/https?:\/\/|www\.|\S+@\S+\.\S+/i.test(t)) return false;
+  if (/(?![\p{Script=Latin}\p{Script=Greek}\u2102\u210D\u2115\u2119\u211A\u211D\u2124\u{1D538}-\u{1D56B}])\p{L}/u.test(t)) return false;
+  const stripped = t.replace(/\\[A-Za-z]+/g, ' ')
+    .replace(/\b(sin|cos|tan|cot|sec|csc|log|ln|exp|lim|sqrt|min|max|det|mod|frac)\b/gi, ' ');
+  if ((stripped.match(/[A-Za-z]{4,}/g) || []).length > 0) return false;
+  const mathSignals = (t.match(/(?:=|\\times|\\div|\\sqrt|\\frac|\\to|\\in|\^|≤|≥|≠|≈|∑|∫|π|θ|[×÷√±→⟶∈ℝℕℤℚℂ]|\bcos\b|\bsin\b|\btan\b)/g) || []).length;
+  const digits = (t.match(/\d/g) || []).length;
+  const letters = (t.match(/[A-Za-z]/g) || []).length;
+  return mathSignals >= 1 && (digits >= 1 || letters >= 2);
+}
+
+function postProcessOCRTextForMath(text) {
+  const raw = String(text || '');
+  if (!raw) return '';
+  const lines = raw.split(/\r?\n/);
+  const out = [];
+  let ddOpen = false, brOpen = false, envDepth = 0;
+  const countOf = (str, re) => (str.match(re) || []).length;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) { out.push(''); continue; }
+    const wasInside = ddOpen || brOpen || envDepth > 0;
+    const opensBr = /\\\[/.test(trimmed);
+    const closesBr = /\\\]/.test(trimmed);
+    if (countOf(trimmed, /\$\$/g) % 2 === 1) ddOpen = !ddOpen;
+    if (closesBr) brOpen = false;
+    else if (opensBr) brOpen = true;
+    envDepth = Math.max(0, envDepth + countOf(trimmed, /\\begin\s*\{/g) - countOf(trimmed, /\\end\s*\{/g));
+    if (wasInside || ddOpen || brOpen || envDepth > 0 || /\\begin\s*\{|\\end\s*\{/.test(trimmed)) { out.push(line); continue; }
+    if (/^\s*(\$\$|\\\[|\\\()/.test(trimmed)) { out.push(trimmed); continue; }
+    if (looksLikeOcrEquation(trimmed)) {
+      const math = normalizeOcrMathLine(trimmed);
+      out.push(`$$${math}$$`);
+    } else {
+      out.push(line);
+    }
+  }
+  return out.join('\n');
+}
+
+// ========================================================================
+// SELECTIVE FIGURE EXTRACTION
+// ========================================================================
+const PDF_FIGURE_STORE = new Map();
+const PDF_FIGURE_TOKEN_REGEX = /\[\[FIG_[A-Za-z0-9]+_p\d+_\d+\]\]/g;
+window.PDF_FIGURE_STORE = PDF_FIGURE_STORE;
+window.PDF_FIGURE_TOKEN_REGEX = PDF_FIGURE_TOKEN_REGEX;
+
+function _figMul(m1, m2) {
+  return [
+    m1[0] * m2[0] + m1[2] * m2[1], m1[1] * m2[0] + m1[3] * m2[1],
+    m1[0] * m2[2] + m1[2] * m2[3], m1[1] * m2[2] + m1[3] * m2[3],
+    m1[0] * m2[4] + m1[2] * m2[5] + m1[4], m1[1] * m2[4] + m1[3] * m2[5] + m1[5]
+  ];
+}
+function _figPt(m, x, y) { return [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]]; }
+function _figBox(pts) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const p of pts) { if (p[0] < x0) x0 = p[0]; if (p[0] > x1) x1 = p[0]; if (p[1] < y0) y0 = p[1]; if (p[1] > y1) y1 = p[1]; }
+  return [x0, y0, x1, y1];
+}
+function _figNear(a, b, gap) { return !(a[2] + gap < b[0] || b[2] + gap < a[0] || a[3] + gap < b[1] || b[3] + gap < a[1]); }
+function _figUnion(a, b) { return [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[2], b[2]), Math.max(a[3], b[3])]; }
+
+async function _detectPdfFigures(page, textContent) {
+  const OPS = (typeof pdfjsLib !== 'undefined' && pdfjsLib.OPS) ? pdfjsLib.OPS : null;
+  if (!OPS) return { figures: [], removed: new Set(), rects: [] };
+
+  const view = page.view || [0, 0, 595, 842];
+  const pageW = view[2] - view[0], pageH = view[3] - view[1];
+  const pageArea = pageW * pageH;
+  const minSize = _figCfg('FIGURE_MIN_SIZE_PT', 36);
+  const gap = _figCfg('FIGURE_MERGE_GAP_PT', 10);
+  const minScore = _figCfg('FIGURE_MIN_VECTOR_SCORE', 3);
+
+  const items = textContent.items || [];
+  const rects = items.map(it => {
+    const tr = it.transform || [1, 0, 0, 1, 0, 0];
+    const h = Math.abs(it.height || tr[3] || 0) || 8;
+    const w = Math.abs(it.width || 0);
+    const x0 = tr[4], y0 = tr[5];
+    return { x0, y0, x1: x0 + w, y1: y0 + h, cx: x0 + w / 2, cy: y0 + h / 2, len: String(it.str || '').trim().length };
+  });
+
+  const opList = await page.getOperatorList();
+  const fn = opList.fnArray, args = opList.argsArray;
+  const imageOps = new Set([OPS.paintImageXObject, OPS.paintInlineImageXObject, OPS.paintImageMaskXObject, OPS.paintJpegXObject].filter(v => v !== undefined));
+  const paintOps = new Set([OPS.stroke, OPS.closeStroke, OPS.fill, OPS.eoFill, OPS.fillStroke, OPS.eoFillStroke, OPS.closeFillStroke, OPS.closeEOFillStroke].filter(v => v !== undefined));
+  const dropOps = new Set([OPS.endPath, OPS.clip, OPS.eoClip].filter(v => v !== undefined));
+  const fillOnly = new Set([OPS.fill, OPS.eoFill].filter(v => v !== undefined));
+
+  let ctm = [1, 0, 0, 1, 0, 0];
+  const stack = [];
+  let pending = null;
+  const entries = [];
+
+  const commitPending = (op) => {
+    const p = pending; pending = null;
+    if (!p || !p.pts.length) return;
+    const bbox = _figBox(p.pts);
+    const w = bbox[2] - bbox[0], h = bbox[3] - bbox[1];
+    if (!isFinite(w) || !isFinite(h)) return;
+    if (w * h > 0.85 * pageArea) return;
+    if ((w > 0.6 * pageW && h < 2) || (h > 0.6 * pageH && w < 2)) return;
+    const complexity = p.curves + p.diag;
+    const score = complexity === 0 ? 0 : (complexity >= 6 ? 3 : 1);
+    if (score === 0 && fillOnly.has(op) && w * h > 0.35 * pageArea) return;
+    entries.push({ bbox, img: false, score, thin: (w < 1.5 || h < 1.5) });
+  };
+
+  for (let i = 0; i < fn.length; i++) {
+    const op = fn[i], a = args[i];
+    if (op === OPS.save) { stack.push(ctm); }
+    else if (op === OPS.restore) { if (stack.length) ctm = stack.pop(); }
+    else if (op === OPS.transform) { if (a && a.length >= 6) ctm = _figMul(ctm, a); }
+    else if (op === OPS.paintFormXObjectBegin) { stack.push(ctm); if (a && a[0] && a[0].length >= 6) ctm = _figMul(ctm, a[0]); }
+    else if (op === OPS.paintFormXObjectEnd) { if (stack.length) ctm = stack.pop(); }
+    else if (imageOps.has(op)) {
+      const bbox = _figBox([_figPt(ctm, 0, 0), _figPt(ctm, 1, 0), _figPt(ctm, 0, 1), _figPt(ctm, 1, 1)]);
+      const w = bbox[2] - bbox[0], h = bbox[3] - bbox[1];
+      if (w >= minSize * 0.67 && h >= minSize * 0.67) entries.push({ bbox, img: true, score: 0, thin: false });
+    }
+    else if (op === OPS.constructPath) {
+      const ops = a[0], c = a[1];
+      if (!pending) pending = { pts: [], curves: 0, diag: 0 };
+      let k = 0, cur = null;
+      for (const o of ops) {
+        if (o === OPS.moveTo) { const p = _figPt(ctm, c[k], c[k + 1]); k += 2; pending.pts.push(p); cur = p; }
+        else if (o === OPS.lineTo) {
+          const p = _figPt(ctm, c[k], c[k + 1]); k += 2; pending.pts.push(p);
+          if (cur && Math.abs(p[0] - cur[0]) > 0.8 && Math.abs(p[1] - cur[1]) > 0.8) pending.diag++;
+          cur = p;
+        }
+        else if (o === OPS.curveTo) { for (let j = 0; j < 6; j += 2) pending.pts.push(_figPt(ctm, c[k + j], c[k + j + 1])); k += 6; pending.curves++; cur = pending.pts[pending.pts.length - 1]; }
+        else if (o === OPS.curveTo2 || o === OPS.curveTo3) { for (let j = 0; j < 4; j += 2) pending.pts.push(_figPt(ctm, c[k + j], c[k + j + 1])); k += 4; pending.curves++; cur = pending.pts[pending.pts.length - 1]; }
+        else if (o === OPS.rectangle) {
+          const x = c[k], y = c[k + 1], rw = c[k + 2], rh = c[k + 3]; k += 4;
+          pending.pts.push(_figPt(ctm, x, y), _figPt(ctm, x + rw, y), _figPt(ctm, x, y + rh), _figPt(ctm, x + rw, y + rh));
+          cur = null;
+        }
+      }
+    }
+    else if (paintOps.has(op)) { commitPending(op); }
+    else if (dropOps.has(op)) { pending = null; }
+    if (entries.length > 6000) break;
+  }
+
+  const useful = entries.filter(e => !(e.thin && Math.max(e.bbox[2] - e.bbox[0], e.bbox[3] - e.bbox[1]) > 0.6 * Math.max(pageW, pageH)));
+  const parent = useful.map((_, i) => i);
+  const find = (x) => { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; };
+  const order = useful.map((_, i) => i).sort((p, q) => useful[p].bbox[0] - useful[q].bbox[0]);
+  for (let a = 0; a < order.length; a++) {
+    const i = order[a];
+    for (let b = a + 1; b < order.length; b++) {
+      const j = order[b];
+      if (useful[j].bbox[0] - gap > useful[i].bbox[2]) break;
+      if (_figNear(useful[i].bbox, useful[j].bbox, gap)) parent[find(j)] = find(i);
+    }
+  }
+  for (let pass = 0; pass < 3; pass++) {
+    const gb = new Map();
+    useful.forEach((e, i) => { const r = find(i); gb.set(r, gb.has(r) ? _figUnion(gb.get(r), e.bbox) : e.bbox.slice()); });
+    const roots = Array.from(gb.keys());
+    let changed = false;
+    for (let a = 0; a < roots.length; a++) for (let b = a + 1; b < roots.length; b++) {
+      if (find(roots[a]) !== find(roots[b]) && _figNear(gb.get(roots[a]), gb.get(roots[b]), gap)) { parent[find(roots[b])] = find(roots[a]); changed = true; }
+    }
+    if (!changed) break;
+  }
+  const groups = new Map();
+  useful.forEach((e, i) => {
+    const r = find(i);
+    if (!groups.has(r)) groups.set(r, { bbox: e.bbox.slice(), imgCount: 0, score: 0, n: 0 });
+    const g = groups.get(r);
+    g.bbox = _figUnion(g.bbox, e.bbox); g.n++; g.score += e.score; if (e.img) g.imgCount++;
+  });
+
+  const bandTop = view[3] - 0.06 * pageH, bandBottom = view[1] + 0.06 * pageH;
+  const unrotated = !page.rotate;
+  const figs = [];
+  for (const g of groups.values()) {
+    const [x0, y0, x1, y1] = g.bbox;
+    const w = x1 - x0, h = y1 - y0;
+    if (w < minSize || h < minSize || w * h < 2000) continue;
+    if (w * h > 0.92 * pageArea) continue;
+    if (g.imgCount === 0 && g.score < minScore) continue;
+    if (unrotated && h < 80 && ((y0 + y1) / 2 >= bandTop || (y0 + y1) / 2 <= bandBottom)) continue;
+    figs.push({ bbox: [x0, y0, x1, y1], hasImage: g.imgCount > 0, hasVector: g.imgCount < g.n });
+  }
+
+  const accepted = [];
+  for (const f of figs) {
+    let [x0, y0, x1, y1] = f.bbox;
+    let sumLen = 0, maxLen = 0;
+    rects.forEach((r) => {
+      if (r.cx >= x0 - 2 && r.cx <= x1 + 2 && r.cy >= y0 - 2 && r.cy <= y1 + 2) { sumLen += r.len; if (r.len > maxLen) maxLen = r.len; }
+    });
+    if (!f.hasImage && (sumLen > 220 || maxLen > 45)) continue;
+    if (f.hasImage && sumLen > 400) continue;
+    // absorb against ORIGINAL bbox (previous bug fix)
+    const bx0 = x0, by0 = y0, bx1 = x1, by1 = y1;
+    const ring = 12;
+    rects.forEach((r) => {
+      if (r.len === 0 || r.len > 14) return;
+      if (r.cx >= bx0 - ring && r.cx <= bx1 + ring && r.cy >= by0 - ring && r.cy <= by1 + ring) {
+        x0 = Math.min(x0, r.x0); y0 = Math.min(y0, r.y0 - 1); x1 = Math.max(x1, r.x1); y1 = Math.max(y1, r.y1);
+      }
+    });
+    const pad = 4;
+    f.bbox = [Math.max(view[0], x0 - pad), Math.max(view[1], y0 - pad), Math.min(view[2], x1 + pad), Math.min(view[3], y1 + pad)];
+    accepted.push(f);
+  }
+  let merged = true;
+  while (merged) {
+    merged = false;
+    outer: for (let i = 0; i < accepted.length; i++) for (let j = i + 1; j < accepted.length; j++) {
+      if (_figNear(accepted[i].bbox, accepted[j].bbox, 0)) {
+        accepted[i] = { bbox: _figUnion(accepted[i].bbox, accepted[j].bbox), hasImage: accepted[i].hasImage || accepted[j].hasImage, hasVector: accepted[i].hasVector || accepted[j].hasVector };
+        accepted.splice(j, 1); merged = true; break outer;
+      }
+    }
+  }
+  const area = (f) => (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]);
+  accepted.sort((p, q) => area(q) - area(p));
+  const final = accepted.slice(0, _figCfg('FIGURE_MAX_PER_PAGE', 8));
+  final.sort((p, q) => q.bbox[3] - p.bbox[3]);
+
+  const removed = new Set();
+  rects.forEach((r, idx) => {
+    for (const f of final) {
+      if (r.cx >= f.bbox[0] && r.cx <= f.bbox[2] && r.cy >= f.bbox[1] && r.cy <= f.bbox[3]) { removed.add(idx); break; }
+    }
+  });
+  return { figures: final, removed, rects };
+}
+
+const GEMINI_VISION_FIGURE_PROMPT =
+  'You are an OCR engine reading a picture that was cut out of a document page. ' +
+  'If the picture is mainly TEXT (printed or handwritten sentences, equations, a table of words), transcribe ALL of it exactly as written, ' +
+  'keeping line breaks and reading order, with mathematical expressions as LaTeX wrapped in $$...$$. ' +
+  'If the picture is mainly a drawing, graph, chart, diagram, circuit, map or photo that only carries a few labels, do NOT transcribe the labels: respond with exactly: [NO_TEXT_FOUND]. ' +
+  'Output only the transcription, with no commentary.';
+
+function _figTextStats(text) {
+  const t = String(text || '').trim();
+  const words = (t.match(/[\p{L}\p{M}\p{N}]+/gu) || []).length;
+  const nonSpace = (t.match(/\S/gu) || []).length;
+  const wordy = (t.match(/[\p{L}\p{M}\p{N}]/gu) || []).length;
+  const lines = t.split(/\n+/).filter(l => l.trim());
+  const avgLine = lines.length ? t.replace(/\s+/g, ' ').length / lines.length : 0;
+  return { words, chars: nonSpace, ratio: nonSpace ? wordy / nonSpace : 0, lines: lines.length, avgLine };
+}
+
+function _figLooksReadable(text, confidence, viaVision) {
+  const s = _figTextStats(text);
+  if (viaVision) return s.words >= _figCfg('FIGURE_VISION_MIN_WORDS', 4);
+  return (Number(confidence) || 0) >= _figCfg('FIGURE_OCR_MIN_CONFIDENCE', 60) &&
+    s.words >= _figCfg('FIGURE_OCR_MIN_WORDS', 6) &&
+    s.chars >= 40 &&
+    s.ratio >= 0.6 &&
+    s.avgLine >= 15;
+}
+
+async function _cropPdfFigureCanvases(page, figures) {
+  let scale = Math.max(1, Math.min(4, _figCfg('FIGURE_RENDER_SCALE', 2.2)));
+  const base = page.getViewport({ scale: 1 });
+  const maxPixels = 20000000;
+  if (base.width * base.height * scale * scale > maxPixels) scale = Math.sqrt(maxPixels / (base.width * base.height));
+  const viewport = page.getViewport({ scale });
+  const full = document.createElement('canvas');
+  full.width = Math.ceil(viewport.width); full.height = Math.ceil(viewport.height);
+  const fctx = full.getContext('2d');
+  fctx.fillStyle = '#ffffff'; fctx.fillRect(0, 0, full.width, full.height);
+  await page.render({ canvasContext: fctx, viewport }).promise;
+  const out = [];
+  for (const f of figures) {
+    const r = viewport.convertToViewportRectangle(f.bbox);
+    const x = Math.max(0, Math.floor(Math.min(r[0], r[2]))), y = Math.max(0, Math.floor(Math.min(r[1], r[3])));
+    const w = Math.min(full.width - x, Math.ceil(Math.abs(r[2] - r[0]))), h = Math.min(full.height - y, Math.ceil(Math.abs(r[3] - r[1])));
+    if (w < 8 || h < 8) { out.push(null); continue; }
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    c.getContext('2d').drawImage(full, x, y, w, h, 0, 0, w, h);
+    out.push(c);
+  }
+  _ocrFreeCanvas(full);
+  return out;
+}
+
+function _encodeFigureCanvas(canvas, f) {
+  let dataUrl = (f.hasImage && !f.hasVector) ? canvas.toDataURL('image/jpeg', 0.9) : canvas.toDataURL('image/png');
+  if (dataUrl.length > 1500000 && dataUrl.startsWith('data:image/png')) dataUrl = canvas.toDataURL('image/jpeg', 0.88);
+  return dataUrl;
+}
+
+async function _readFigureRegion(canvas, label) {
+  let copy = null;
+  try {
+    copy = document.createElement('canvas');
+    copy.width = canvas.width; copy.height = canvas.height;
+    copy.getContext('2d', { willReadFrequently: true }).drawImage(canvas, 0, 0);
+    preprocessCanvasForOcr(copy);
+    const r = await recognizeImageWithOcr(copy, { maxPasses: 2, allowRotation: false });
+    const t = String((r && r.text) || '').trim();
+    if (t && _figLooksReadable(t, r && r.confidence, false)) return { kind: 'text', text: t, source: 'ocr' };
+  } catch (e) {
+    console.warn(`Figure OCR failed (${label}):`, e);
+  } finally {
+    _ocrFreeCanvas(copy);
+  }
+  if (_ocrCancelled()) return { kind: 'image' };
+  try {
+    const url = canvas.toDataURL('image/jpeg', 0.92);
+    const v = await runGeminiVisionOCRFromDataUrl(url, label, GEMINI_VISION_FIGURE_PROMPT);
+    if (v && _figLooksReadable(v, 100, true)) return { kind: 'text', text: String(v).trim(), source: 'vision' };
+  } catch (e) { console.warn(`Figure AI vision failed (${label}):`, e); }
+  return { kind: 'image' };
+}
+
+async function _extractFiguresForTextPage(page, textContent, pageNum, fileTag, budget) {
+  if (_figCfg('FIGURE_EXTRACT_ENABLED', true) === false) return null;
+  if (budget.left <= 0) return null;
+  const det = await _detectPdfFigures(page, textContent);
+  if (!det.figures.length) return null;
+  const figures = det.figures.slice(0, budget.left);
+  const canvases = await _cropPdfFigureCanvases(page, figures);
+  if (!budget.stats) budget.stats = { ocr: 0, vision: 0, image: 0 };
+
+  const outcomes = [];
+  for (let n = 0; n < figures.length; n++) {
+    const f = figures[n], canvas = canvases[n];
+    if (!canvas) { outcomes.push(null); continue; }
+    let o = { kind: 'image' };
+    if ((f.hasImage || _figCfg('FIGURE_CASCADE_VECTOR', false)) && !_ocrCancelled()) {
+      _pgScope(`Page ${pageNum} · Figure ${n + 1}/${figures.length}`);
+      _pgLabel(`Reading picture ${n + 1}/${figures.length} on page ${pageNum}…`);
+      o = await _readFigureRegion(canvas, `page ${pageNum} picture ${n + 1}`);
+    }
+    if (o.kind === 'text') budget.stats[o.source === 'vision' ? 'vision' : 'ocr']++;
+    else { o.dataUrl = _encodeFigureCanvas(canvas, f); budget.stats.image++; }
+    outcomes.push(o);
+  }
+  _pgScope('');
+  canvases.forEach(c => _ocrFreeCanvas(c));
+
+  const items = textContent.items;
+  const rects = det.rects;
+  const removed = new Set();
+  rects.forEach((r, idx) => {
+    figures.forEach((f, n) => {
+      if (outcomes[n] && r.cx >= f.bbox[0] && r.cx <= f.bbox[2] && r.cy >= f.bbox[1] && r.cy <= f.bbox[3]) removed.add(idx);
+    });
+  });
+
+  const placed = [];
+  const tokens = [];
+  figures.forEach((f, n) => {
+    const o = outcomes[n];
+    if (!o) return;
+    let payload;
+    if (o.kind === 'text') payload = o.text;
+    else {
+      const token = `[[FIG_${fileTag}_p${pageNum}_${n + 1}]]`;
+      _storeFigure(token, { dataUrl: o.dataUrl, widthPt: f.bbox[2] - f.bbox[0], heightPt: f.bbox[3] - f.bbox[1], page: pageNum, hash: f.hasImage && !f.hasVector ? _figHash(o.dataUrl) : '' });
+      if (f.hasImage && !f.hasVector) { (budget.hashes = budget.hashes || new Map()); const hk = _figHash(o.dataUrl); budget.hashes.set(hk, (budget.hashes.get(hk) || []).concat(token)); }
+      tokens.push(token);
+      payload = token;
+    }
+    const fw = f.bbox[2] - f.bbox[0];
+    const overlapX = (r) => {
+      const ov = Math.min(r.x1, f.bbox[2]) - Math.max(r.x0, f.bbox[0]);
+      const rw = r.x1 - r.x0;
+      return rw <= 1 ? (r.cx >= f.bbox[0] && r.cx <= f.bbox[2]) : ov >= Math.min(rw, fw) * 0.3;
+    };
+    const live = (i) => !removed.has(i) && String(items[i].str || '').trim();
+    let at = -1;
+    for (let i = 0; i < items.length; i++) {
+      if (live(i) && rects[i].cy < f.bbox[3] - 1 && overlapX(rects[i])) { at = i; break; }
+    }
+    if (at < 0) {
+      for (let i = 0; i < items.length; i++) {
+        if (live(i) && rects[i].cy < f.bbox[3] - 1) { at = i; break; }
+      }
+    }
+    if (at < 0) at = items.length;
+    placed.push({ at, payload });
+  });
+  if (!placed.length) return null;
+  budget.left -= tokens.length;
+
+  const pieces = [];
+  for (let i = 0; i <= items.length; i++) {
+    placed.filter(p => p.at === i).forEach(p => pieces.push(`\n\n${p.payload}\n\n`));
+    if (i < items.length && !removed.has(i)) pieces.push(items[i].str);
+  }
+  const text = pieces.join(' ').replace(/[ \t]*\n\n[ \t]*/g, '\n\n').replace(/\n{3,}/g, '\n\n').trim();
+  return { text, tokens };
+}
+
+// ---- Persist cropped pictures in IndexedDB ----
+const _FIG_DB = { name: 'aiPdfStudio_figures_v1', store: 'figs', dbp: null };
+function _figDb() {
+  if (_FIG_DB.dbp) return _FIG_DB.dbp;
+  _FIG_DB.dbp = new Promise((resolve) => {
+    try {
+      if (typeof indexedDB === 'undefined') return resolve(null);
+      const rq = indexedDB.open(_FIG_DB.name, 1);
+      rq.onupgradeneeded = () => { try { rq.result.createObjectStore(_FIG_DB.store); } catch (_) {} };
+      rq.onsuccess = () => { const db = rq.result; resolve(db); _figDbPruneOld(db); };
+      rq.onerror = () => resolve(null);
+      rq.onblocked = () => resolve(null);
+    } catch (_) { resolve(null); }
+  });
+  return _FIG_DB.dbp;
+}
+function _figDbPruneOld(db) {
+  try {
+    const lastKey = 'aiPdfStudio_figureLastPrune';
+    const now = Date.now();
+    const last = Number((typeof localStorage !== 'undefined' && localStorage.getItem(lastKey)) || 0);
+    if (now - last < 86400000) return;
+    try { if (typeof localStorage !== 'undefined') localStorage.setItem(lastKey, String(now)); } catch (_) {}
+    const maxAge = (_figCfg('FIGURE_DB_MAX_AGE_DAYS', 14)) * 86400000;
+    const tx = db.transaction(_FIG_DB.store, 'readwrite');
+    const rq = tx.objectStore(_FIG_DB.store).openCursor();
+    rq.onsuccess = () => {
+      const cur = rq.result;
+      if (!cur) return;
+      const savedAt = cur.value && cur.value.savedAt;
+      if (savedAt && Date.now() - savedAt > maxAge) cur.delete();
+      cur.continue();
+    };
+  } catch (_) {}
+}
+async function figureDbPut(token, rec) {
+  const db = await _figDb();
+  if (!db) return false;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(_FIG_DB.store, 'readwrite');
+      tx.objectStore(_FIG_DB.store).put({ ...rec, savedAt: Date.now() }, token);
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = tx.onabort = () => resolve(false);
+    } catch (_) { resolve(false); }
+  });
+}
+async function figureDbGet(token) {
+  const db = await _figDb();
+  if (!db) return null;
+  return new Promise((resolve) => {
+    try {
+      const rq = db.transaction(_FIG_DB.store, 'readonly').objectStore(_FIG_DB.store).get(token);
+      rq.onsuccess = () => resolve(rq.result || null);
+      rq.onerror = () => resolve(null);
+    } catch (_) { resolve(null); }
+  });
+}
+async function figureDbDelete(tokens) {
+  const db = await _figDb();
+  if (!db || !tokens || !tokens.length) return;
+  try {
+    const tx = db.transaction(_FIG_DB.store, 'readwrite');
+    tokens.forEach(t => tx.objectStore(_FIG_DB.store).delete(t));
+  } catch (_) {}
+}
+function _storeFigure(token, rec) {
+  PDF_FIGURE_STORE.set(token, rec);
+  figureDbPut(token, rec).then(ok => {
+    if (!ok) console.warn('Figure persistence failed (reload will lose this picture):', token);
+  });
+}
+async function loadFigure(token) {
+  if (PDF_FIGURE_STORE.has(token)) return PDF_FIGURE_STORE.get(token);
+  const rec = await figureDbGet(token);
+  if (rec && rec.dataUrl) { PDF_FIGURE_STORE.set(token, rec); return rec; }
+  return null;
+}
+window.figureDbGet = figureDbGet;
+window.loadFigure = loadFigure;
+
+function _figHash(dataUrl) {
+  let h = 2166136261 >>> 0;
+  const str = String(dataUrl);
+  const step = Math.max(1, Math.floor(str.length / 4000));
+  for (let i = 0; i < str.length; i += step) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+  return `${str.length}:${h}`;
+}
+
+function _newFigureTag() {
+  return Math.random().toString(36).replace(/[^a-z0-9]/g, '').slice(2, 8) || 'f0';
+}
+function _keptImageToken(tag, pageNum, dataUrl, widthPt, heightPt) {
+  const token = `[[FIG_${tag}_p${pageNum}_0]]`;
+  _storeFigure(token, { dataUrl, widthPt, heightPt, page: pageNum });
+  return token;
+}
+function _previewText(t) {
+  return String(t || '').replace(new RegExp(PDF_FIGURE_TOKEN_REGEX.source, 'g'), '[image kept]');
+}
+async function _renderPageDataUrl(page, longEdgePx, quality) {
+  let canvas = null;
+  try {
+    const base = page.getViewport({ scale: 1 });
+    const scale = Math.max(0.5, Math.min(3, longEdgePx / Math.max(base.width, base.height)));
+    const viewport = page.getViewport({ scale });
+    canvas = document.createElement('canvas');
+    canvas.width = Math.ceil(viewport.width); canvas.height = Math.ceil(viewport.height);
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    await page.render({ canvasContext: ctx, viewport }).promise;
+    return { dataUrl: canvas.toDataURL('image/jpeg', quality), width: base.width, height: base.height };
+  } catch (e) {
+    console.warn('Could not render page to an image:', e);
+    return null;
+  } finally {
+    _ocrFreeCanvas(canvas);
+  }
+}
+async function _keepPdfPageAsImage(page, tag, pageNum) {
+  const r = await _renderPageDataUrl(page, _figCfg('SCANNED_PAGE_IMAGE_LONG_EDGE', 1800), 0.86);
+  if (!r) return '';
+  return _keptImageToken(tag, pageNum, r.dataUrl, r.width, r.height);
+}
+async function _keepImageFileAsImage(dataUrl) {
+  let canvas = null;
+  try {
+    const img = await new Promise((resolve, reject) => {
+      const im = new Image();
+      im.onload = () => resolve(im); im.onerror = () => reject(new Error('decode failed'));
+      im.src = dataUrl;
+    });
+    const maxEdge = _figCfg('SCANNED_PAGE_IMAGE_LONG_EDGE', 1800);
+    const nw = img.naturalWidth || 1, nh = img.naturalHeight || 1;
+    const k = Math.min(1, maxEdge / Math.max(nw, nh));
+    canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(nw * k)); canvas.height = Math.max(1, Math.round(nh * k));
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    const out = canvas.toDataURL('image/jpeg', 0.88);
+    const w = canvas.width, h = canvas.height;
+    return _keptImageToken(_newFigureTag(), 1, out, w * 0.75, h * 0.75);
+  } catch (e) {
+    console.warn('Could not keep the image file as an image:', e);
+    return '';
+  } finally {
+    _ocrFreeCanvas(canvas);
+  }
+}
+
+function releasePdfFigures(tokens) {
+  (tokens || []).forEach(t => PDF_FIGURE_STORE.delete(t));
+  figureDbDelete(tokens || []);
+}
+window.releasePdfFigures = releasePdfFigures;
+
+// ===== PDF TEXT EXTRACTION WITH OCR =====
+async function extractTextFromPDFWithOCRFallback(file, startPage, endPage, preloadedDoc) {
+  resetVisionBreaker();
+  _cancelScheduledHide();
+  extractTextFromPDFWithOCRFallback.lastVisionDataUrls = [];
+  extractTextFromPDFWithOCRFallback.lastFigureTokens = [];
+  const _figTag = _newFigureTag();
+  const _figBudget = { left: _figCfg('FIGURE_MAX_PER_DOC', 80) };
+  const _figTokens = [];
+  const _keptPages = { kept: 0, dropped: 0 };
+  const _scannedPolicy = _figCfg('SCANNED_PAGE_POLICY', 'ocr-then-image');
+  const _keptPageMax = _figCfg('SCANNED_PAGE_IMAGE_MAX', 120);
+  const ownsDoc = !preloadedDoc;
+  const pdfDoc = preloadedDoc || await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
+  try {
+    const totalPages = pdfDoc.numPages;
+    const start = Math.max(1, startPage || 1);
+    const end = Math.min(totalPages, endPage || totalPages);
+    const pagesToProcess = end - start + 1;
+
+    if (typeof ProgressUI !== 'undefined') {
+      ProgressUI.clearPreview();
+      _pgStage(`Reading pages ${start}–${end} of ${totalPages}`, 0, 20);
+      _pgLabel(`Reading pages ${start}–${end} of ${totalPages}...`);
+    }
+
+    const minTextLen = _ocrNum('OCR_MIN_TEXT_LEN_PER_PAGE', 30);
+    const minTextItems = _ocrNum('OCR_MIN_TEXT_ITEMS_PER_PAGE', 5);
+    const results = new Array(pagesToProcess).fill(null);
+    const needsOcr = [];
+
+    for (let idx = 0; idx < pagesToProcess; idx++) {
+      if (_ocrCancelled()) break;
+      const pageNum = start + idx;
+      _pgPage(idx + 1, pagesToProcess);
+
+      const page = await pdfDoc.getPage(pageNum);
+      const textContent = await page.getTextContent();
+      const pageText = textContent.items.map(it => it.str).join(' ').trim();
+      const isLikelyScanned = pageText.length < minTextLen && textContent.items.length < minTextItems;
+      if (isLikelyScanned) {
+        needsOcr.push({ idx, pageNum, page });
+      } else {
+        let pageTextOut = pageText;
+        try {
+          const fx = await _extractFiguresForTextPage(page, textContent, pageNum, _figTag, _figBudget);
+          if (fx && fx.text) { pageTextOut = fx.text; _figTokens.push(...fx.tokens); }
+        } catch (figErr) {
+          console.warn(`Figure extraction skipped on page ${pageNum}:`, figErr);
+        }
+        results[idx] = { text: pageTextOut, ocr: false };
+        try { page.cleanup(); } catch (_) {}
+      }
+    }
+
+    let completedSteps = results.filter(Boolean).length;
+
+    let avgConf = 0;
+    if (needsOcr.length > 0 && !_ocrCancelled()) {
+      _pgStage(`OCR ${needsOcr.length} scanned page(s)`, 20, 80);
+      _pgLabel(`OCR reading ${needsOcr.length} scanned page(s)...`);
+
+      const keepPageAsImage = async (page, pageNum) => {
+        if (_keptPages.kept >= _keptPageMax) { _keptPages.dropped++; return ''; }
+        const token = await _keepPdfPageAsImage(page, _figTag, pageNum);
+        if (token) { _keptPages.kept++; _figTokens.push(token); } else { _keptPages.dropped++; }
+        return token;
+      };
+
+      const showPerPageProgress = needsOcr.length <= 60;
+
+      const processScannedPage = async ({ idx, pageNum, page }) => {
+        if (_ocrCancelled()) {
+          return { idx, pageNum, text: '', confidence: 0, skipped: true, skipReason: 'Cancelled' };
+        }
+        if (_scannedPolicy === 'image-only') {
+          const tok = await keepPageAsImage(page, pageNum);
+          return { idx, pageNum, text: tok, confidence: 0, skipped: !tok, skipReason: tok ? '' : 'Not kept', keptAsImage: !!tok };
+        }
+        let canvas = null;
+        const pageKey = `scanned-p${pageNum}`;
+
+        if (showPerPageProgress) {
+          _pgFileAdd(pageKey, `Page ${pageNum}`, 'Rendering', '');
+          _pgFileUpd(pageKey, 10, 'Rendering', 'Preparing image');
+        }
+
+        try {
+          const baseViewport = page.getViewport({ scale: 1 });
+          const longEdge = Math.max(baseViewport.width, baseViewport.height);
+          const targetLongEdge = _ocrNum('OCR_TARGET_LONG_EDGE', 4200);
+          const scale = Math.min(3.2, Math.max(1, targetLongEdge / longEdge));
+
+          const viewport = page.getViewport({ scale });
+          canvas = document.createElement('canvas');
+          canvas.width = Math.ceil(viewport.width);
+          canvas.height = Math.ceil(viewport.height);
+          const ctx = canvas.getContext('2d', { willReadFrequently: true });
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          await page.render({ canvasContext: ctx, viewport }).promise;
+
+          await _ocrTick();
+          preprocessCanvasForOcr(canvas);
+
+          if (showPerPageProgress) _pgFileUpd(pageKey, 30, 'Analyzing', 'Checking layout');
+
+          const _tallPolicy = _ocrTallPolicy();
+          if (_tallPolicy !== 'off' && _ocrDetectMathLayout(canvas)) {
+            _pgLabel(`Page ${pageNum}: math structure detected — trying AI vision…`);
+            const cleanTall = _figCfg('VISION_FALLBACK_ENABLED', true) === false ? null
+              : await _renderPageDataUrl(page, _ocrNum('VISION_PAGE_LONG_EDGE', 2400), 0.9);
+            const tallText = cleanTall ? await runGeminiVisionOCRFromDataUrl(cleanTall.dataUrl, `page ${pageNum}`) : '';
+            if (tallText) {
+              if (showPerPageProgress) _pgFileUpd(pageKey, 100, 'Done', 'Read by AI vision', 'done');
+              return { idx, pageNum, text: tallText, confidence: 70, skipped: false, skipReason: '', passes: 0, lineCount: getOcrLineCount(tallText), source: 'gemini-vision' };
+            }
+            if (_tallPolicy === 'vision-then-image') {
+              const tallTok = await keepPageAsImage(page, pageNum);
+              if (tallTok) {
+                if (showPerPageProgress) _pgFileUpd(pageKey, 100, 'Done', 'Kept as image', 'done');
+                return { idx, pageNum, text: tallTok, confidence: 0, skipped: false, skipReason: '', keptAsImage: true };
+              }
+            }
+          }
+
+          if (showPerPageProgress) _pgFileUpd(pageKey, 50, 'OCR', 'Reading text');
+          const result = await recognizeImageWithOcr(canvas);
+          _ocrFreeCanvas(canvas); canvas = null;
+
+          const resultText = String(result?.text || '').trim();
+          const resultLines = Number(result?.lineCount) || getOcrLineCount(resultText);
+          const resultIsWeak = !resultText || ((Number(result?.confidence) || 0) < 50 && resultLines < 2);
+          const _suspect = _ocrTallPolicy() !== 'off' ? _ocrTextLooksComplexMath(resultText) : { complex: false, reasons: [] };
+          if (resultText && !resultIsWeak && !_suspect.complex) {
+            if (showPerPageProgress) _pgFileUpd(pageKey, 100, 'Done', `Conf ${Math.round(result.confidence || 0)}%`, 'done');
+            return {
+              idx, pageNum,
+              text: result.text || '',
+              confidence: result.confidence || 0,
+              skipped: result.skipped || false,
+              skipReason: result.skipReason || '',
+              passes: result?.passes || 0,
+              lineCount: result.lineCount
+            };
+          }
+
+          if (showPerPageProgress) _pgFileUpd(pageKey, 75, 'Vision', 'AI fallback');
+          const clean = _figCfg('VISION_FALLBACK_ENABLED', true) === false ? null
+            : await _renderPageDataUrl(page, _ocrNum('VISION_PAGE_LONG_EDGE', 2400), 0.9);
+          const visionDataUrl = clean ? clean.dataUrl : '';
+          const visionText = visionDataUrl ? await runGeminiVisionOCRFromDataUrl(visionDataUrl, `page ${pageNum}`) : '';
+          if (visionText) {
+            if (showPerPageProgress) _pgFileUpd(pageKey, 100, 'Done', 'Read by AI vision', 'done');
+            return {
+              idx, pageNum,
+              text: visionText,
+              confidence: 60,
+              skipped: false,
+              skipReason: '',
+              passes: result.passes,
+              lineCount: getOcrLineCount(visionText),
+              source: 'gemini-vision'
+            };
+          }
+          if (_suspect.complex && resultText && !resultIsWeak) {
+            if (showPerPageProgress) _pgFileUpd(pageKey, 100, 'Done', 'OCR (vision unavailable)', 'done');
+            return {
+              idx, pageNum, text: result.text || '', confidence: result.confidence || 0,
+              skipped: false, skipReason: '', passes: result.passes || 0, lineCount: result.lineCount,
+              needsVision: !!visionDataUrl, visionDataUrl
+            };
+          }
+          const keptToken = await keepPageAsImage(page, pageNum);
+          if (showPerPageProgress) _pgFileUpd(pageKey, 100, 'Done', 'Kept as image', 'done');
+          return {
+            idx, pageNum,
+            text: keptToken || (result?.text || ''),
+            confidence: result?.confidence || 0,
+            skipped: result?.skipped || false,
+            skipReason: result?.skipReason || '',
+            passes: result?.passes || 0,
+            lineCount: result?.lineCount || 0,
+            needsVision: true,
+            keptAsImage: !!keptToken,
+            visionDataUrl
+          };
+        } catch (err) {
+          console.warn(`OCR failed on page ${pageNum}:`, err);
+          _ocrFreeCanvas(canvas); canvas = null;
+          if (showPerPageProgress) _pgFileUpd(pageKey, 100, 'Failed', (err?.message || 'error').slice(0, 80), 'error');
+          const keptToken = _ocrCancelled() ? '' : await keepPageAsImage(page, pageNum);
+          return { idx, pageNum, text: keptToken, confidence: 0, skipped: !keptToken, skipReason: keptToken ? '' : 'OCR error', keptAsImage: !!keptToken };
+        } finally {
+          _ocrFreeCanvas(canvas);
+          try { page.cleanup(); } catch (_) {}
+        }
+      };
+
+      const renderLimit = Math.max(1, _ocrNum('OCR_RENDER_CONCURRENCY', _ocrPoolTarget()));
+      let ocrDoneCount = 0;
+      await _ocrMapLimit(needsOcr, renderLimit, async (item) => {
+        const res = await processScannedPage(item);
+        results[res.idx] = {
+          text: res.text,
+          ocr: true,
+          confidence: res.confidence,
+          skipped: res.skipped,
+          skipReason: res.skipReason,
+          needsVision: !!res.needsVision,
+          keptAsImage: !!res.keptAsImage,
+          visionDataUrls: res.visionDataUrl ? [res.visionDataUrl] : []
+        };
+        completedSteps++;
+        ocrDoneCount++;
+
+        _pgPage(ocrDoneCount, needsOcr.length);
+        _pgLabel(`OCR: page ${res.pageNum} (${ocrDoneCount}/${needsOcr.length}) — ${res.skipped ? 'skipped' : res.keptAsImage ? 'kept as image' : 'complete'}`);
+
+        if (typeof ProgressUI !== 'undefined' && ProgressUI.reportStepComplete) {
+          ProgressUI.reportStepComplete(ocrDoneCount);
+        }
+        return res;
+      });
+
+      let totalConfidence = 0, confCount = 0;
+      for (const r of results) {
+        if (r && r.ocr && !r.keptAsImage && r.confidence > 0) {
+          totalConfidence += r.confidence;
+          confCount++;
+        }
+      }
+      avgConf = confCount > 0 ? Math.round(totalConfidence / confCount) : 0;
+    }
+
+    if (_ocrCancelled() && typeof displayToastNotification === 'function') {
+      displayToastNotification(`Cancelled — ${completedSteps}/${pagesToProcess} page(s) read, rest saved as blank.`);
+    }
+
+    let fullText = '';
+    let ocrPageCount = 0;
+    const visionDataUrls = [];
+    for (let idx = 0; idx < pagesToProcess; idx++) {
+      const pageNum = start + idx;
+      const r = results[idx] || { text: '', ocr: false };
+      if (r.ocr && !r.keptAsImage) ocrPageCount++;
+      if (Array.isArray(r.visionDataUrls)) visionDataUrls.push(...r.visionDataUrls);
+      fullText += `\n--- Page ${pageNum}${r.text ? '' : ' (empty)'} ---\n` + r.text;
+    }
+
+    if (ocrPageCount > 0 && typeof displayToastNotification === 'function') {
+      displayToastNotification(` OCR applied to ${ocrPageCount} scanned page(s)`);
+      fullText =
+        `[OCR Quality: Avg confidence ${avgConf}% on ${ocrPageCount} page(s), ${Math.min(_ocrPoolTarget(), ocrPageCount)} parallel worker(s)]\n` +
+        fullText;
+    }
+
+    _pgStage('Post-processing OCR text', 80, 100, { indeterminate: true });
+    _pgLabel('Cleaning up text and math…');
+    _pgScope('');
+
+    const finalText = postProcessOCRTextForMath(fullText);
+
+    if (typeof ProgressUI !== 'undefined') {
+      _pgLabel(`OCR finished: ${pagesToProcess}/${pagesToProcess} pages processed${ocrPageCount ? `; ${ocrPageCount} scanned` : ''}`);
+      ProgressUI.finish();
+    }
+
+    let _repeatedDropped = 0;
+    if (_figBudget.hashes) {
+      const minRepeat = _figCfg('FIGURE_REPEAT_MIN_PAGES', 3);
+      for (const toks of _figBudget.hashes.values()) {
+        if (toks.length < minRepeat) continue;
+        toks.forEach(t => {
+          fullText = fullText.split(t).join('');
+          const i = _figTokens.indexOf(t); if (i >= 0) _figTokens.splice(i, 1);
+          if (_figBudget.stats) _figBudget.stats.image = Math.max(0, _figBudget.stats.image - 1);
+        });
+        releasePdfFigures(toks);
+        _repeatedDropped += toks.length;
+      }
+    }
+    extractTextFromPDFWithOCRFallback.lastVisionDataUrls = visionDataUrls;
+    extractTextFromPDFWithOCRFallback.lastFigureTokens = _figTokens;
+    if (_repeatedDropped && typeof displayToastNotification === 'function') {
+      displayToastNotification(`ℹ️ ${_repeatedDropped} repeated picture(s) (logo / watermark on many pages) were ignored`);
+    }
+    if (_figBudget.stats && typeof displayToastNotification === 'function') {
+      const st = _figBudget.stats;
+      displayToastNotification(`🖼️ Pictures in text pages — read by OCR: ${st.ocr}, read by AI vision: ${st.vision}, kept as original image: ${st.image}`);
+    }
+    if (typeof displayToastNotification === 'function') {
+      if (_keptPages.kept > 0) displayToastNotification(`🖼️ ${_keptPages.kept} page(s) could not be read as text — kept as original page images`);
+      if (_keptPages.dropped > 0) displayToastNotification(`ℹ️ ${_keptPages.dropped} page(s) were left blank (image limit of ${_keptPageMax} reached or page could not be rendered).`);
+    }
+
+    return finalText;
+  } finally {
+    if (ownsDoc) { try { await pdfDoc.destroy(); } catch (_) {} }
+  }
+}
+
+// ===== FILE HANDLING =====
+function makeAttachedFileContent(file, extractedContent) {
+  let content = extractedContent || '';
+  const maxChars = _ocrNum('ATTACHMENT_MAX_TEXT_CHARS', 100000);
+  if (content.length > maxChars) {
+    let cut = content.substring(0, maxChars);
+    const open = cut.lastIndexOf('[[FIG_');
+    if (open >= 0 && open > cut.lastIndexOf(']]')) cut = cut.substring(0, open);
+    content = cut + `\n...[ATTACHMENT CONTENT LIMIT: first ${maxChars} characters preserved]`;
+  }
+  return { name: file.name, content, sent: false, sourceMode: 'ocr' };
+}
+
+async function handleFileUploads(fileList) {
+  const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'webp', 'bmp'];
+  const files = Array.from(fileList || []);
+  if (!files.length) return;
+  _cancelScheduledHide();
+
+  const imageJobs = [];
+  const otherJobs = [];
+  const baseStamp = Date.now();
+  files.forEach((file, i) => {
+    const fileId = `f_${baseStamp}_${i}_${Math.random().toString(36).slice(2, 7)}`;
+    if (!window.APP_STATE) window.APP_STATE = {};
+    if (!window.APP_STATE.fileObjects) window.APP_STATE.fileObjects = {};
+    window.APP_STATE.fileObjects[fileId] = file;
+    if (!window.APP_STATE.attachedFiles) window.APP_STATE.attachedFiles = {};
+    window.APP_STATE.attachedFiles[fileId] = {
+      name: file.name, content: '', sent: false, status: 'queued', sourceMode: 'ocr', order: i
+    };
+    const ext = file.name.split('.').pop().toLowerCase();
+    const job = { file, fileId, ext, index: i };
+    if (IMAGE_EXTS.includes(ext)) imageJobs.push(job);
+    else otherJobs.push(job);
+  });
+  if (typeof syncCurrentTabFileObjects === 'function') syncCurrentTabFileObjects();
+  if (typeof renderAttachmentBar === 'function') renderAttachmentBar();
+
+  try {
+    if (imageJobs.length) {
+      if (typeof ProgressUI !== 'undefined' && ProgressUI.show) {
+        ProgressUI.show(
+          imageJobs.length > 1 ? `Reading ${imageJobs.length} images with Studio OCR` : `Reading ${imageJobs[0].file.name} with Studio OCR`,
+          'Local OCR is extracting text and equations. Gemini Vision is used only if local OCR can\'t read a file.'
+        );
+      }
+      const results = await extractTextFromImageFilesWithOCR(
+        imageJobs.map(j => j.file),
+        { progressKeys: imageJobs.map(j => j.fileId), preservePreview: true }
+      );
+      for (let i = 0; i < imageJobs.length; i++) {
+        const job = imageJobs[i];
+        const result = results[i] || { text: '', confidence: 0, error: null };
+        if (result.error) {
+          delete window.APP_STATE.fileObjects[job.fileId];
+          delete window.APP_STATE.attachedFiles[job.fileId];
+          if (typeof displayToastNotification === 'function') {
+            displayToastNotification(`⚠️ Could not read "${job.file.name}". OCR could not extract text, and the AI fallback also failed to read it.`);
+          }
+          continue;
+        }
+        const extractedContent = postProcessOCRTextForMath(String(result.text || '').trim());
+        window.APP_STATE.attachedFiles[job.fileId] = {
+          ...makeAttachedFileContent(job.file, extractedContent),
+          status: extractedContent ? 'ready' : 'skipped',
+          sourceMode: 'ocr', order: job.index,
+          ocrConfidence: result.confidence || 0,
+          needsVision: !!result.needsVision,
+          visionDataUrls: Array.isArray(result.visionDataUrls) ? result.visionDataUrls : [],
+          figureTokens: Array.isArray(result.figureTokens) ? result.figureTokens : []
+        };
+        if (result.keptAsImage && typeof displayToastNotification === 'function') {
+          displayToastNotification(`🖼️ "${job.file.name}" could not be read as text — kept as the original image`);
+        }
+      }
+      if (typeof ProgressUI !== 'undefined') {
+        _pgLabel(`Studio OCR complete: ${imageJobs.length}/${imageJobs.length} image(s) processed.`);
+        ProgressUI.finish();
+        _scheduleHideProgress(700);
+      }
+    }
+
+    for (const job of otherJobs) {
+      const file = job.file;
+      let extractedContent = '';
+      try {
+        if (job.ext === 'docx') {
+          // Hide any leftover ProgressUI before starting fresh
+          if (typeof ProgressUI !== 'undefined' && ProgressUI.hide) {
+            try { ProgressUI.hide(); } catch (_) {}
+          }
+          if (typeof ProgressUI !== 'undefined' && ProgressUI.show) {
+            ProgressUI.show(`Reading ${file.name}`, 'Extracting document text locally...');
+          }
+          extractedContent = (await mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() })).value || '[Empty DOCX]';
+          if (typeof ProgressUI !== 'undefined' && ProgressUI.finish) ProgressUI.finish();
+          _scheduleHideProgress(400);
+        } else if (job.ext === 'pdf') {
+          const pdfDocForCount = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
+          try {
+            const totalPages = pdfDocForCount.numPages;
+
+            // ============================================================
+            // FIX: the page-range modal was rendering BEHIND an active
+            // ProgressUI overlay. Hide ProgressUI + force the modal on top
+            // BEFORE opening it.
+            // ============================================================
+            if (typeof ProgressUI !== 'undefined' && ProgressUI.hide) {
+              try { ProgressUI.hide(); } catch (_) {}
+            }
+            const modalEl = document.getElementById('page-range-modal');
+            if (modalEl) {
+              modalEl.style.display = 'flex';
+              modalEl.style.visibility = 'visible';
+              modalEl.style.opacity = '1';
+              modalEl.style.zIndex = '2147483647';
+            } else {
+              console.error('[OCR] #page-range-modal not found in the DOM. Falling back to full-page range.');
+              if (typeof displayToastNotification === 'function') {
+                displayToastNotification('⚠️ Page-range selector not found — using all pages.');
+              }
+            }
+            await new Promise(r => requestAnimationFrame(() => setTimeout(r, 60)));
+
+            const range = await promptForPageRange(totalPages);
+
+            if (modalEl) modalEl.style.zIndex = '';
+
+            if (!range) {
+              delete window.APP_STATE.fileObjects[job.fileId];
+              delete window.APP_STATE.attachedFiles[job.fileId];
+              if (typeof displayToastNotification === 'function') {
+                displayToastNotification(`Cancelled reading "${file.name}"`);
+              }
+              continue;
+            }
+            if (typeof ProgressUI !== 'undefined' && ProgressUI.show) {
+              ProgressUI.show(`Reading ${file.name} with Studio OCR`, `Pages ${range.start}–${range.end}...`);
+            }
+            try {
+              extractedContent = await extractTextFromPDFWithOCRFallback(file, range.start, range.end, pdfDocForCount);
+            } catch (pdfError) {
+              delete window.APP_STATE.fileObjects[job.fileId];
+              delete window.APP_STATE.attachedFiles[job.fileId];
+              if (typeof ProgressUI !== 'undefined' && ProgressUI.hide) ProgressUI.hide();
+              if (typeof displayToastNotification === 'function') {
+                displayToastNotification(`⚠️ Could not read "${file.name}". OCR could not extract text, and the AI fallback also failed to read it.`);
+              }
+              continue;
+            }
+          } finally {
+            try { await pdfDocForCount.destroy(); } catch (_) {}
+          }
+          _scheduleHideProgress(500);
+        } else {
+          if (typeof ProgressUI !== 'undefined' && ProgressUI.hide) {
+            try { ProgressUI.hide(); } catch (_) {}
+          }
+          if (typeof ProgressUI !== 'undefined' && ProgressUI.show) {
+            ProgressUI.show(`Reading ${file.name}`, 'Reading text locally...');
+          }
+          extractedContent = await file.text();
+          if (typeof ProgressUI !== 'undefined') {
+            ProgressUI.finish();
+            _scheduleHideProgress(400);
+          }
+        }
+        window.APP_STATE.attachedFiles[job.fileId] = {
+          ...makeAttachedFileContent(file, extractedContent),
+          status: extractedContent ? 'ready' : 'skipped', sourceMode: 'ocr', order: job.index,
+          needsVision: job.ext === 'pdf' && Array.isArray(extractTextFromPDFWithOCRFallback.lastVisionDataUrls) && extractTextFromPDFWithOCRFallback.lastVisionDataUrls.length > 0,
+          visionDataUrls: job.ext === 'pdf' && Array.isArray(extractTextFromPDFWithOCRFallback.lastVisionDataUrls) ? extractTextFromPDFWithOCRFallback.lastVisionDataUrls : [],
+          figureTokens: job.ext === 'pdf' && Array.isArray(extractTextFromPDFWithOCRFallback.lastFigureTokens) ? extractTextFromPDFWithOCRFallback.lastFigureTokens : []
+        };
+        if (typeof displayToastNotification === 'function') {
+          displayToastNotification(`✅ Loaded: ${file.name} — Studio OCR/local extraction complete`);
+        }
+      } catch (error) {
+        console.error(`Attachment read failed for ${file.name}:`, error);
+        try { if (typeof ProgressUI !== 'undefined' && ProgressUI.hide) ProgressUI.hide(); } catch (e) {}
+        window.APP_STATE.attachedFiles[job.fileId] = {
+          name: file.name, content: '', sent: false, status: 'error', sourceMode: 'ocr', order: job.index
+        };
+        if (typeof displayToastNotification === 'function') {
+          displayToastNotification(`Error reading ${file.name}: ${error.message}`);
+        }
+      }
+    }
+  } finally {
+    const input = document.getElementById('file-upload-input');
+    if (input) input.value = '';
+    if (typeof renderAttachmentBar === 'function') renderAttachmentBar();
+    if (typeof syncCurrentTabFileObjects === 'function') syncCurrentTabFileObjects();
+    if (typeof TAB_MANAGER !== 'undefined' && TAB_MANAGER.activeId) {
+      TAB_MANAGER._captureCurrentState(TAB_MANAGER.activeId);
+      TAB_MANAGER._persist();
     }
   }
 }
+
+// ===== ATTACHMENT BAR =====
+function renderAttachmentBar() {
+  const bar = document.getElementById('attachment-bar');
+  if (!bar) return;
+  bar.textContent = '';
+  if (!window.APP_STATE || !window.APP_STATE.attachedFiles) return;
+  for (const [id, fileData] of Object.entries(window.APP_STATE.attachedFiles)) {
+    const tag = document.createElement('div');
+    tag.className = 'file-tag';
+    tag.setAttribute('data-id', id);
+
+    const nameEl = document.createElement('span');
+    nameEl.className = 'file-tag-name';
+    nameEl.textContent = fileData.name || 'file';
+    tag.appendChild(nameEl);
+
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'file-tag-remove';
+    removeBtn.textContent = '×';
+    removeBtn.addEventListener('click', (e) => { e.stopPropagation(); removeAttachedFile(id); });
+    tag.appendChild(removeBtn);
+
+    const hasContent = fileData.content && fileData.content.length > 0;
+    if (!hasContent) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'ai-vision-btn';
+      btn.textContent = ' Retry OCR';
+      btn.title = 'Read this file again using local OCR only';
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        handleFileWithStudioOCR(id);
+      });
+      tag.appendChild(btn);
+    }
+    bar.appendChild(tag);
+  }
+}
+
+function removeAttachedFile(fileId) {
+  if (!window.APP_STATE) return;
+  try { releasePdfFigures(window.APP_STATE.attachedFiles[fileId] && window.APP_STATE.attachedFiles[fileId].figureTokens); } catch (_) {}
+  delete window.APP_STATE.attachedFiles[fileId];
+  delete window.APP_STATE.fileObjects[fileId];
+  renderAttachmentBar();
+  if (typeof TAB_MANAGER !== 'undefined' && TAB_MANAGER.activeId) {
+    TAB_MANAGER._captureCurrentState(TAB_MANAGER.activeId);
+    TAB_MANAGER._persist();
+  }
+}
+
+function handleSidebarFileDrop(event) {
+  event.preventDefault();
+  const sidebar = document.getElementById('sidebar');
+  if (sidebar) sidebar.classList.remove('drag-over');
+  const files = event.dataTransfer?.files;
+  if (files && files.length) handleFileUploads(files);
+}
+
+async function handleFileWithStudioOCR(fileId) {
+  if (!window.APP_STATE) return;
+  _cancelScheduledHide();
+  const fileData = window.APP_STATE.attachedFiles[fileId];
+  const file = window.APP_STATE.fileObjects && window.APP_STATE.fileObjects[fileId];
+  if (!fileData || !file) {
+    if (typeof displayToastNotification === 'function') {
+      displayToastNotification('⚠️ File data not available. Please re-upload the file.');
+    }
+    return;
+  }
+  const ext = file.name.split('.').pop().toLowerCase();
+  const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'webp', 'bmp'];
+  const oldTokens = Array.isArray(fileData.figureTokens) ? fileData.figureTokens.slice() : [];
+  try {
+    let extractedContent = '';
+    let newTokens = [];
+    let newNeedsVision = false;
+    let newVisionUrls = [];
+    if (IMAGE_EXTS.includes(ext)) {
+      if (typeof ProgressUI !== 'undefined' && ProgressUI.hide) {
+        try { ProgressUI.hide(); } catch (_) {}
+      }
+      if (typeof ProgressUI !== 'undefined' && ProgressUI.show) {
+        ProgressUI.show(`Retrying OCR: ${file.name}`, 'Local OCR is reading the image again...');
+      }
+      resetVisionBreaker();
+      const result = await runOcrOnImageFile(file);
+      extractedContent = postProcessOCRTextForMath(String(result?.text || '').trim());
+      newTokens = Array.isArray(result?.figureTokens) ? result.figureTokens : [];
+      if (result?.confidence != null) fileData.ocrConfidence = result.confidence;
+      newNeedsVision = !!result?.needsVision;
+      newVisionUrls = result?.visionDataUrl ? [result.visionDataUrl] : [];
+    } else if (ext === 'pdf') {
+      const pdfDoc = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
+      try {
+        const totalPages = pdfDoc.numPages;
+
+        if (typeof ProgressUI !== 'undefined' && ProgressUI.hide) {
+          try { ProgressUI.hide(); } catch (_) {}
+        }
+        const modalEl = document.getElementById('page-range-modal');
+        if (modalEl) {
+          modalEl.style.display = 'flex';
+          modalEl.style.visibility = 'visible';
+          modalEl.style.opacity = '1';
+          modalEl.style.zIndex = '2147483647';
+        } else {
+          console.error('[OCR] #page-range-modal not found. Falling back to full-page range.');
+          if (typeof displayToastNotification === 'function') {
+            displayToastNotification('⚠️ Page-range selector not found — using all pages.');
+          }
+        }
+        await new Promise(r => requestAnimationFrame(() => setTimeout(r, 60)));
+
+        const range = await promptForPageRange(totalPages);
+
+        if (modalEl) modalEl.style.zIndex = '';
+
+        if (!range) {
+          if (typeof ProgressUI !== 'undefined' && ProgressUI.hide) ProgressUI.hide();
+          return;
+        }
+        if (typeof ProgressUI !== 'undefined' && ProgressUI.show) {
+          ProgressUI.show(`Retrying OCR: ${file.name}`, `Pages ${range.start}–${range.end}...`);
+        }
+        extractedContent = await extractTextFromPDFWithOCRFallback(file, range.start, range.end, pdfDoc);
+      } finally {
+        try { await pdfDoc.destroy(); } catch (_) {}
+      }
+      newTokens = Array.isArray(extractTextFromPDFWithOCRFallback.lastFigureTokens) ? extractTextFromPDFWithOCRFallback.lastFigureTokens : [];
+      newNeedsVision = Array.isArray(extractTextFromPDFWithOCRFallback.lastVisionDataUrls) && extractTextFromPDFWithOCRFallback.lastVisionDataUrls.length > 0;
+      newVisionUrls = newNeedsVision ? extractTextFromPDFWithOCRFallback.lastVisionDataUrls : [];
+    } else if (ext === 'docx') {
+      if (typeof ProgressUI !== 'undefined' && ProgressUI.hide) {
+        try { ProgressUI.hide(); } catch (_) {}
+      }
+      if (typeof ProgressUI !== 'undefined' && ProgressUI.show) {
+        ProgressUI.show(`Reading ${file.name}`, 'Extracting document text locally...');
+      }
+      extractedContent = (await mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() })).value || '';
+    } else {
+      if (typeof ProgressUI !== 'undefined' && ProgressUI.hide) {
+        try { ProgressUI.hide(); } catch (_) {}
+      }
+      if (typeof ProgressUI !== 'undefined' && ProgressUI.show) {
+        ProgressUI.show(`Reading ${file.name}`, 'Reading text locally...');
+      }
+      extractedContent = await file.text();
+    }
+    releasePdfFigures(oldTokens);
+    fileData.figureTokens = newTokens;
+    fileData.needsVision = newNeedsVision;
+    fileData.visionDataUrls = newVisionUrls;
+    fileData.content = extractedContent;
+    fileData.sent = false;
+    fileData.sourceMode = 'ocr';
+    fileData.status = extractedContent ? 'ready' : 'skipped';
+    const currentHTML = typeof getAllCanvasHTML === 'function' ? getAllCanvasHTML() : '';
+    const isCanvasEmpty = currentHTML.includes('Start typing here');
+    if (extractedContent) {
+      const newHTML = typeof processMathEquationsToHTML === 'function' ? processMathEquationsToHTML(extractedContent) : extractedContent;
+      if (typeof setDocumentHTMLAndPaginate === 'function') {
+        if (isCanvasEmpty) setDocumentHTMLAndPaginate(newHTML);
+        else setDocumentHTMLAndPaginate(currentHTML + '<br><br>' + newHTML);
+      }
+      if (typeof displayToastNotification === 'function') {
+        displayToastNotification(`✅ OCR extracted content from "${file.name}"`);
+      }
+    } else {
+      if (typeof displayToastNotification === 'function') {
+        displayToastNotification(`⚠️ No readable text found in "${file.name}" — skipped.`);
+      }
+    }
+    if (typeof ProgressUI !== 'undefined') {
+      ProgressUI.finish();
+      _scheduleHideProgress(500);
+    }
+    renderAttachmentBar();
+    if (typeof TAB_MANAGER !== 'undefined' && TAB_MANAGER.activeId) {
+      TAB_MANAGER._captureCurrentState(TAB_MANAGER.activeId);
+      TAB_MANAGER._persist();
+    }
+  } catch (err) {
+    if (typeof ProgressUI !== 'undefined' && ProgressUI.hide) ProgressUI.hide();
+    fileData.status = 'error';
+    if (typeof displayToastNotification === 'function') {
+      displayToastNotification(`Error OCR failed for "${file.name}": ${err.message}`);
+    }
+    renderAttachmentBar();
+  }
+}
+
+async function handleFileWithAIVision(fileId) {
+  return handleFileWithStudioOCR(fileId);
+}
+
+// ===== OCR CONFIDENCE BADGE =====
+function getConfidenceBadge(confidence) {
+  if (confidence >= 75) return '<span class="ocr-confidence-badge ocr-conf-high" aria-label="High confidence">High <span aria-hidden="true">✓</span></span>';
+  if (confidence >= 45) return '<span class="ocr-confidence-badge ocr-conf-med" aria-label="Medium confidence">Medium <span aria-hidden="true">~</span></span>';
+  return '<span class="ocr-confidence-badge ocr-conf-low" aria-label="Low confidence">Low <span aria-hidden="true">⚠</span></span>';
+}
+
+// ============================================================
+// WINDOW EXPOSURE – OCR
+// ============================================================
+window.handleFileUploads = handleFileUploads;
+window.handleSidebarFileDrop = handleSidebarFileDrop;
+window.renderAttachmentBar = renderAttachmentBar;
+window.runOcrOnImageFile = runOcrOnImageFile;
+window.extractTextFromPDFWithOCRFallback = extractTextFromPDFWithOCRFallback;
+window.runGeminiVisionOCRFromDataUrl = runGeminiVisionOCRFromDataUrl;
+window.callGeminiVisionForOCR = callGeminiVisionForOCR;
+window.terminateOcrWorkersForCancellation = terminateOcrWorkersForCancellation;
