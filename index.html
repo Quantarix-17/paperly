@@ -23,23 +23,10 @@
 
   <!-- ===== CORE FUNCTION POLYFILLS (MUST BE IN HEAD) ===== -->
   <script>
-    // Missing dependency fix: isMobileDeviceLayout() is called all over
-    // ui-helpers.js, app.js and this file's own inline scripts, but it was
-    // never actually defined anywhere in the loaded JS. Every unguarded call
-    // (e.g. setMobileView's desktop-sync branch, the topbar-menu resize
-    // handler, and the mobile keyboard/visualViewport sync below) threw a
-    // ReferenceError and silently stopped executing right at that point —
-    // which is why, on phones, the chat input could end up hidden behind the
-    // on-screen keyboard: the script that resizes the layout to the real,
-    // keyboard-shrunk viewport height never got to run. Defining it here
-    // (before anything else loads) makes it match the same <=850px
-    // breakpoint the rest of the app already uses in CSS and in
-    // applyDesktopWorkspaceZoom's own fallback, so it can never be missing.
     var isMobileDeviceLayout = function() {
         return window.innerWidth <= 850;
     };
 
-    // Missing dependencies fix for math-renderer.js & document-editor.js
     var findBrokenDiagrams = function(container) {
         return []; 
     };
@@ -54,7 +41,6 @@
         });
     };
 
-    // Global UI Action Handlers
     var toggleDarkMode = function() {
         var root = document.documentElement;
         var body = document.body;
@@ -85,10 +71,6 @@
     };
 
     var switchPreviewTab = function(tab) {
-        // Keep this early stub consistent with the real switchPreviewTab()
-        // in pdf-export.js: a slide-deck tab has no A4 "editor" view, so an
-        // 'editor' request while a slide deck is active should land on the
-        // Slides view instead.
         if (tab === 'editor' && window.APP_STATE && window.APP_STATE.slideDeck &&
             Array.isArray(window.APP_STATE.slideDeck.slides) && window.APP_STATE.slideDeck.slides.length) {
             tab = 'slides';
@@ -98,10 +80,6 @@
         var slideContainer = document.getElementById('slide-view-container');
         var editorBtn = document.getElementById('tab-editor-btn');
         var pdfBtn = document.getElementById('tab-pdf-btn');
-        // The A4 document toolbar (Undo/Paginate/fonts/Bold-Italic/...) only
-        // applies to .doc-page-canvas content — it does nothing useful (and
-        // is confusing) while a slide deck is showing, since slides have
-        // their own dedicated editing toolbar inside #slide-view-container.
         var docToolbar = document.getElementById('editor-toolbar');
 
         if (tab === 'editor') {
@@ -139,6 +117,14 @@
     var openAIModelsModal = function() {
         var modal = document.getElementById('ai-models-modal');
         if (modal) modal.style.display = 'flex';
+        try {
+            if (typeof window.initSettingsTabs === 'function') window.initSettingsTabs();
+            var swContainer = document.getElementById('settings-switches-container');
+            if (swContainer && !swContainer.dataset.rendered && typeof window.renderStudioSwitches === 'function') {
+                window.renderStudioSwitches(swContainer, { idPrefix: 'settings-switch' });
+                swContainer.dataset.rendered = '1';
+            }
+        } catch (e) { console.warn('[Settings] render failed:', e); }
     };
     
     var closeAIModelsModal = function() {
@@ -182,20 +168,18 @@
   <!-- html2canvas & jsPDF -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-  <!-- PptxGenJS (client-side .pptx generation for Slide Studio) -->
+  <!-- PptxGenJS -->
   <script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"></script>
-  <!-- docx (client-side real .docx generation for the Word export; global: window.docx) -->
+  <!-- docx -->
   <script src="https://cdn.jsdelivr.net/npm/docx@9.6.1/dist/index.iife.js"></script>
-  <!-- JSZip: lets word-export.js add native (editable) charts to the .docx; optional, charts fall back to pictures without it -->
+  <!-- JSZip -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 
   <!-- Main Styles -->
   <link rel="stylesheet" href="css/styles.css">
   <style id="paperly-session-css">
-    /* Single-session model: no tab bar, so give its height back to the layout */
     #tab-bar,#desktop-close-all-tabs-btn,#topbar-newtab-fab-btn,#tab-new-btn{display:none!important}
     :root,html,body{--tabbar-height:0px!important;--mobile-tabbar:0px!important}
-    /* Top-left Google account avatar (replaces the app icon) */
     #topbar #paperly-avatar-btn{position:relative;display:flex!important;align-items:center;justify-content:center;flex:0 0 auto;width:38px!important;height:38px!important;
       padding:0;border:0;border-radius:50%!important;background:#4f7df3;color:#fff;cursor:pointer;font:700 16px Inter,Arial,sans-serif;box-shadow:0 2px 8px rgba(79,125,243,.35)}
     #paperly-avatar-btn .pa-face{width:100%;height:100%;border-radius:50%;overflow:hidden;display:flex;align-items:center;justify-content:center}
@@ -208,7 +192,7 @@
     .brand-l,.logo .logo-text .brand-l,#paperly-gate h1 .brand-l{color:#2563eb!important;-webkit-text-fill-color:#2563eb;font-weight:inherit!important}
     html.dark .brand-l,html.dark .logo .logo-text .brand-l,html.dark #paperly-gate h1 .brand-l{color:#4f8cff!important;-webkit-text-fill-color:#4f8cff}
   </style>
-  <!-- PaperLy: sign-in gate (visible immediately; hidden by js/paperly-cloud.js once the user is signed in) -->
+  <!-- PaperLy: sign-in gate -->
   <style id="paperly-gate-css">
     #paperly-gate{position:fixed;inset:0;z-index:2147482000;display:flex;align-items:center;justify-content:center;padding:20px;
       background:linear-gradient(135deg,#eef2ff,#f8fafc 55%,#e0e7ff);color:#0f172a;font-family:Inter,"Hind Siliguri",Arial,sans-serif;overflow:auto}
@@ -263,7 +247,6 @@
     #pdf-print-stage { display: none; }
   </style>
   <style id="export-menu-css">
-    /* ---- Export menu: pure glass, no colour ---- */
     #topbar-export-btn .export-caret{margin-left:2px;opacity:.7;transition:transform .18s ease}
     #topbar-export-btn[aria-expanded="true"] .export-caret{transform:rotate(180deg)}
     #export-menu-panel{display:none;position:fixed;z-index:100000;min-width:190px;padding:6px;border-radius:14px;
@@ -280,61 +263,76 @@
     html.dark #export-menu-panel button:hover,html.dark #export-menu-panel button:focus-visible{background:rgba(255,255,255,.12)}
   </style>
 
-  <!-- ===== Settings panel: section styles (new) ===== -->
+  <!-- ===== Settings panel: horizontal tabs + subsections ===== -->
   <style id="settings-sections-css">
-    /* Modal card should scroll if the content grows tall */
     #ai-models-modal .ai-models-modal-card{
       max-height:calc(100vh - 28px);
       overflow-y:auto;
     }
-    /* Section divider + header */
-    .settings-section{
-      margin:14px 0 4px;
-      padding:14px 0 4px;
-      border-top:1px solid rgba(148,163,184,.28);
+    /* Horizontal tab bar in the modal header */
+    .settings-tab-bar{
+      display:flex;
+      gap:4px;
+      margin:10px 0 14px;
+      padding:4px;
+      border-radius:12px;
+      background:rgba(148,163,184,.14);
+      overflow-x:auto;
+      scrollbar-width:none;
     }
-    .settings-section:first-of-type{ margin-top:6px; }
-    .settings-section-title{
+    .settings-tab-bar::-webkit-scrollbar{ display:none; }
+    .settings-tab{
+      flex:1 1 0;
+      min-width:0;
+      padding:9px 12px;
+      border:0;
+      border-radius:9px;
+      background:transparent;
+      color:inherit;
+      font:600 13px Inter,Arial,sans-serif;
+      cursor:pointer;
+      white-space:nowrap;
+      transition:background .15s ease, color .15s ease;
+      opacity:.72;
+    }
+    .settings-tab:hover{ background:rgba(148,163,184,.18); opacity:1; }
+    .settings-tab.active{
+      background:#4f7df3;
+      color:#fff;
+      opacity:1;
+      box-shadow:0 2px 8px rgba(79,125,243,.3);
+    }
+    html.dark .settings-tab-bar{ background:rgba(148,163,184,.1); }
+    html.dark .settings-tab.active{ background:#4f8cff; }
+
+    .settings-tab-panel{ padding:4px 0 8px; }
+    .settings-tab-panel[hidden]{ display:none !important; }
+
+    .settings-subsection{
+      margin:14px 0 6px;
+      padding:12px 0 4px;
+      border-top:1px solid rgba(148,163,184,.22);
+    }
+    .settings-subsection:first-child{ border-top:0; margin-top:0; padding-top:0; }
+    .settings-subsection-title{
       margin:0 0 10px;
-      font-size:14px;
+      font-size:13px;
       font-weight:700;
       letter-spacing:.01em;
       color:var(--text-primary,#0f172a);
-      display:flex;
-      align-items:center;
-      gap:8px;
+      opacity:.9;
     }
-    .settings-section-title::before{
-      content:"";
-      display:inline-block;
-      width:4px;
-      height:15px;
-      border-radius:2px;
-      background:#4f7df3;
-    }
-    html.dark .settings-section{ border-top-color:rgba(148,163,184,.22); }
-    html.dark .settings-section-title{ color:#f1f5f9; }
-    /* Add AI section: button + form host */
-    #settings-add-ai-section .settings-add-ai-btn{
-      display:inline-flex;
-      align-items:center;
-      gap:8px;
-      margin-bottom:6px;
-    }
-    /* Model list section: nothing extra needed — the existing toolbar/list keep their look */
-    /* Switches section: just host container */
-    #settings-switches-container{ min-height:10px; }
+    html.dark .settings-subsection-title{ color:#f1f5f9; }
+
+    #settings-switches-container{ min-height:8px; }
   </style>
 
-    <!-- OMR bubbles are drawn by the font "Nazrul OMR" (fonts/NazrulOMR-Regular.ttf): load it early so it is ready
-       when exam-library.js writes the bubbles (exam-library.js also waits for it before building). -->
   <link rel="preload" href="fonts/NazrulOMR-Regular.ttf" as="font" type="font/ttf" crossorigin>
   <script>
     (function () { try { if (document.fonts && document.fonts.load) document.fonts.load('20px "Nazrul OMR"', 'কখগঘAaBb01১২').catch(function () {}); } catch (e) {} })();
   </script>
 </head>
 <body>
-  <!-- PaperLy: sign-in gate -->
   <div id="paperly-gate" role="dialog" aria-modal="true" aria-label="Sign in">
     <div class="pg-card">
       <img class="pg-logo" src="icons/tamim.png" alt="" width="72" height="72">
@@ -385,8 +383,6 @@
       <button class="topbar-btn" onclick="startNewProject()">
         <span class="ui-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h9l3 3V20H6z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M14.5 3.5V7H18" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></span>New
       </button>
-      <!-- EXPORT (one entry: DOCX / PDF / JSON). The three original buttons stay in the DOM, hidden, so their
-           ids, handlers and busy-state logic keep working; the glass menu below just clicks them. -->
       <button class="topbar-btn" id="topbar-export-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="export-menu-panel" onclick="toggleExportMenu(event)">
         <span class="ui-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M12 15l-4-4M12 15l4-4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 17.5v2.5h14v-2.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></span>Export<svg class="export-caret" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
@@ -422,20 +418,15 @@
     </div>
   </div>
 
-  <!-- TAB BAR -->
   <div id="tab-bar"></div>
 
-  <!-- MOBILE NAV -->
   <div id="mobile-nav-bar">
     <button class="mobile-nav-btn active" id="mob-btn-chat" onclick="setMobileView('chat')">AI Chat</button>
     <button class="mobile-nav-btn mobile-nav-more-btn" id="mob-btn-more" type="button" aria-label="More options" onclick="toggleTopbarMenu()" title="More options">⋯</button>
     <button class="mobile-nav-btn" id="mob-btn-editor" onclick="setMobileView('editor')">Editor</button>
   </div>
 
-  <!-- MAIN -->
   <div id="main-container" class="mobile-view-chat desktop-view-chat">
-
-    <!-- SIDEBAR -->
     <div id="sidebar" ondragover="event.preventDefault(); this.classList.add('drag-over');" ondragleave="this.classList.remove('drag-over');" ondrop="handleSidebarFileDrop(event)">
       <div id="chat-history">
         <div id="chat-empty-state" class="chat-empty-state">
@@ -465,10 +456,8 @@
       </form>
     </div>
 
-    <!-- RESIZE HANDLE -->
     <div id="resize-handle" onmousedown="initializeSidebarResize(event)"></div>
 
-    <!-- PREVIEW PANEL -->
     <div id="preview-panel">
       <div id="preview-tabs-desktop">
         <button class="tab-btn active" id="tab-editor-btn-desktop" onclick="switchPreviewTabDesktop('editor')">Editor</button>
@@ -558,12 +547,8 @@
     </div>
   </div>
 
-  <!-- ===== OVERLAYS & INPUTS ===== -->
-  
-  <!-- GLOBAL PROGRESS OVERLAY (REDESIGNED) -->
   <div id="global-progress-overlay">
     <div class="progress-card">
-      <!-- Header -->
       <div class="progress-header">
         <div class="progress-ring-wrap">
           <svg class="progress-ring" viewBox="0 0 64 64" aria-hidden="true">
@@ -582,13 +567,11 @@
         </div>
       </div>
 
-      <!-- File Processing Panel (only appears while files are being processed) -->
       <div class="progress-live-preview-wrap" id="progress-live-preview-wrap">
-        <div class="preview-label"><span>ফাইল প্রসেসিং</span></div>
+        <div class="preview-label"><span>File Processing</span></div>
         <div id="progress-live-preview-scroll" class="progress-live-preview-scroll"></div>
       </div>
 
-      <!-- Quote Container -->
       <div class="progress-quote-container">
         <div id="progress-quote-text">
           <span class="quote-mark">“</span>
@@ -598,7 +581,6 @@
         </div>
       </div>
 
-      <!-- Modern Stepper -->
       <div id="progress-steps" class="progress-steps" aria-hidden="true">
         <span data-step="1"><span class="step-icon">📝</span> Plan</span>
         <i></i>
@@ -609,17 +591,14 @@
         <span data-step="4"><span class="step-icon">✅</span> Finish</span>
       </div>
 
-      <!-- Progress Bar (Play Store style indeterminate shapes) -->
       <div class="progress-bar-track">
         <div id="progress-bar-fill" class="progress-bar-fill"></div>
       </div>
 
-      <!-- Meta Row -->
       <div class="progress-meta-row">
         <span id="progress-bar-time"></span>
       </div>
 
-      <!-- Action Row -->
       <div class="progress-action-row">
         <button class="cancel-btn" id="cancel-processing-btn" onclick="requestCancelProcessing()">Cancel</button>
       </div>
@@ -631,7 +610,7 @@
   <input type="file" id="file-upload-input" accept=".pdf,.txt,.docx,.png,.jpg,.jpeg,.webp,.bmp" multiple onchange="handleFileUploads(this.files)" class="visually-hidden-input">
   <input type="file" id="project-load-input" accept=".aipdf" onchange="loadProjectFromFile(this.files)" style="display:none;">
 
-  <!-- ===== PAGE RANGE MODAL (ENHANCED) ===== -->
+  <!-- ===== PAGE RANGE MODAL ===== -->
   <div id="page-range-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); backdrop-filter:blur(8px); z-index:10000; align-items:center; justify-content:center; padding:16px; box-sizing:border-box;">
     <div class="modal-card" style="background:var(--surface-color); padding:28px 30px 24px; border-radius:var(--radius-lg); max-width:400px; width:100%; box-shadow:var(--shadow-lg); box-sizing:border-box; border:1px solid var(--border-color);">
       <h3 style="margin-bottom:4px; font-family:var(--font-display); font-size:1.1rem;">Select Page Range</h3>
@@ -658,7 +637,7 @@
     </div>
   </div>
 
-  <!-- ===== EDIT PAGE MODAL (ENHANCED) ===== -->
+  <!-- ===== EDIT PAGE MODAL ===== -->
   <div id="edit-page-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); backdrop-filter:blur(8px); z-index:10000; align-items:center; justify-content:center; padding:16px; box-sizing:border-box;">
     <div class="modal-card" style="background:var(--surface-color); padding:28px 30px 24px; border-radius:var(--radius-lg); max-width:440px; width:100%; box-shadow:var(--shadow-lg); box-sizing:border-box; border:1px solid var(--border-color);">
       <h3 style="margin-bottom:4px; font-family:var(--font-display); font-size:1.1rem;">Edit Page(s)</h3>
@@ -669,9 +648,7 @@
 
       <input type="text" id="edit-page-input" placeholder="e.g., 5 or 9 10 11" autocomplete="off" style="width:100%; padding:10px 12px; border:1.5px solid var(--border-color); border-radius:var(--radius-sm); background:var(--bg-color); color:var(--text-primary); font-size:0.95rem; box-sizing:border-box; transition:border 0.2s;">
       
-      <div id="edit-page-chips" class="chip-preview" style="display:flex; flex-wrap:wrap; gap:4px; margin-top:8px; min-height:28px;">
-        <!-- chips will appear here dynamically -->
-      </div>
+      <div id="edit-page-chips" class="chip-preview" style="display:flex; flex-wrap:wrap; gap:4px; margin-top:8px; min-height:28px;"></div>
 
       <div class="modal-actions" style="display:flex; gap:8px; justify-content:flex-end; margin-top:16px; flex-wrap:wrap;">
         <button class="topbar-btn" onclick="closeEditPageModal()">Cancel</button>
@@ -680,16 +657,14 @@
     </div>
   </div>
 
-  <!-- SETTINGS MODAL (formerly AI Models modal). Three sections:
-       (1) AI যুক্ত করুন — add form
-       (2) AI মডেল লিস্ট — toolbar + list
-       (3) সুইচ ও পারমিশন — permission switches (rendered by JS) -->
+  <!-- SETTINGS MODAL — horizontal tabs: Preference / AI Models / Permissions.
+       All labels are in English. -->
   <div id="ai-models-modal" style="display:none; position:fixed; inset:0; z-index:10000; align-items:center; justify-content:center; padding:14px; box-sizing:border-box;">
     <div class="ai-models-modal-card">
       <div class="ai-models-modal-header">
         <div class="ai-models-modal-title-wrap">
           <h3>Settings</h3>
-          <div class="ai-models-modal-subtitle">Manage AI models, permissions &amp; preferences</div>
+          <div class="ai-models-modal-subtitle">Manage AI models and preferences</div>
         </div>
         <button type="button" class="ai-model-head-btn" onclick="toggleAIModelsInfo()" aria-label="Information" title="Information">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 10v6"/><circle cx="12" cy="7.2" r=".8" fill="currentColor" stroke="none"/></svg>
@@ -699,112 +674,130 @@
         </button>
       </div>
 
-      <div id="ai-model-info-panel" class="ai-model-info-panel">
-        <div class="ai-model-info-grid">
-          <div class="ai-model-info-row"><span class="ai-model-info-label">Connection</span><span>OpenAI-compatible, Gemini, Anthropic and Ollama endpoints (cloud or local) can be configured; only the URL is required. API keys remain in this browser.</span></div>
-          <div class="ai-model-info-row"><span class="ai-model-info-label">Fallback</span><span>Models are tried in the order shown below when an AI request fails.</span></div>
-          <div class="ai-model-info-row"><span class="ai-model-info-label">Reorder</span><span>Use the handle at the left of a model card to change its priority.</span></div>
-          <div class="ai-model-auto-row">
-            <div class="ai-model-auto-main">
-              <input type="checkbox" id="ai-model-autoswitch-checkbox" onchange="handleAutoSwitchToggle(this.checked)">
-              <div><b style="color:var(--text-primary)">Auto-switch on error</b><div>Always enabled by the application.</div></div>
-            </div>
-          </div>
+      <!-- ===== Horizontal section tabs ===== -->
+      <nav class="settings-tab-bar" role="tablist" aria-label="Settings sections">
+        <button type="button" class="settings-tab active" data-tab="preference" role="tab" aria-selected="true">Preference</button>
+        <button type="button" class="settings-tab" data-tab="ai-models" role="tab" aria-selected="false">AI Models</button>
+        <button type="button" class="settings-tab" data-tab="permissions" role="tab" aria-selected="false">Permissions</button>
+      </nav>
+
+      <!-- ========== TAB 1: PREFERENCE ========== -->
+      <div class="settings-tab-panel" data-panel="preference">
+        <div class="settings-subsection">
+          <h4 class="settings-subsection-title">Image &amp; Figure Handling</h4>
+          <div id="settings-switches-container"></div>
         </div>
       </div>
 
-      <!-- ========== SECTION 1: AI যুক্ত করুন ========== -->
-      <section class="settings-section" id="settings-add-ai-section">
-        <h4 class="settings-section-title">AI যুক্ত করুন</h4>
-        <button type="button" class="topbar-btn btn-primary settings-add-ai-btn" onclick="toggleAIModelAddForm()">
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-          <span>Add new AI model</span>
-        </button>
-        <div class="ai-model-add-form" id="ai-model-add-form">
-          <h4 class="ai-model-add-title">Add model</h4>
-          <div style="font-size:.8rem;opacity:.75;margin:-4px 0 10px;">Only the <b>API URL</b> is required. Key, Model ID and Name are optional — local servers (FreeLLMAPI, Ollama, LM Studio…) often need neither.</div>
-          <details style="margin-bottom:12px;">
-            <summary style="cursor:pointer;font-size:.88rem;font-weight:600;">⚡ Paste anything (curl, URL, JSON, .env, “url key model”)</summary>
-            <textarea id="ai-model-paste-input" rows="4" placeholder="curl http://localhost:3001/v1/chat/completions -H 'Authorization: Bearer sk-...' -d '{&quot;model&quot;:&quot;auto&quot;}'&#10;or: http://localhost:3001&#10;or: base_url=...  api_key=...  model=..." style="width:100%;box-sizing:border-box;padding:9px 11px;border:1.5px solid var(--border-color);border-radius:var(--radius-sm);background:var(--bg-color);color:var(--text-primary);font-size:.85rem;font-family:monospace;margin-top:8px;"></textarea>
-            <button type="button" class="topbar-btn" style="margin-top:6px;" onclick="handleSmartPasteModel()">Fill the form from this text</button>
-          </details>
-          <div class="ai-model-form-grid">
-            <div class="ai-field ai-field-full"><label for="ai-model-url-input">API URL <span style="opacity:.6">(required)</span></label><input type="text" id="ai-model-url-input" placeholder="https://api.openai.com/v1/chat/completions  or  http://localhost:3001"></div>
-            <div class="ai-field ai-field-full"><label for="ai-model-key-input">API Key <span style="opacity:.6">(optional — leave blank for local servers)</span></label><input type="password" id="ai-model-key-input" placeholder="API key"></div>
-            <div class="ai-field"><label for="ai-model-id-input">Model ID <span style="opacity:.6">(optional)</span></label><input type="text" id="ai-model-id-input" list="ai-model-id-list" placeholder="blank = server decides"><datalist id="ai-model-id-list"></datalist></div>
-            <div class="ai-field"><label for="ai-model-name-input">Name <span style="opacity:.6">(optional)</span></label><input type="text" id="ai-model-name-input" placeholder="e.g. My local router"></div>
-            <div class="ai-field">
-              <label for="ai-model-api-type-select">API Type</label>
-              <select id="ai-model-api-type-select">
-                <option value="auto" selected>Auto-detect from URL</option>
-                <option value="openai">OpenAI-compatible</option>
-                <option value="gemini">Google Gemini</option>
-                <option value="anthropic">Anthropic (Claude)</option>
-                <option value="ollama">Ollama (native)</option>
-              </select>
-            </div>
-            <div class="ai-field">
-              <label for="ai-model-auth-select">Authentication</label>
-              <select id="ai-model-auth-select">
-                <option value="auto" selected>Auto (Bearer key; none if no key)</option>
-                <option value="bearer">Authorization: Bearer</option>
-                <option value="x-api-key">x-api-key header</option>
-                <option value="api-key">api-key header (Azure)</option>
-                <option value="none">No authentication</option>
-              </select>
+      <!-- ========== TAB 2: AI MODELS ========== -->
+      <div class="settings-tab-panel" data-panel="ai-models" hidden>
+        <div id="ai-model-info-panel" class="ai-model-info-panel">
+          <div class="ai-model-info-grid">
+            <div class="ai-model-info-row"><span class="ai-model-info-label">Connection</span><span>OpenAI-compatible, Gemini, Anthropic and Ollama endpoints (cloud or local) can be configured; only the URL is required. API keys remain in this browser.</span></div>
+            <div class="ai-model-info-row"><span class="ai-model-info-label">Fallback</span><span>Models are tried in the order shown below when an AI request fails.</span></div>
+            <div class="ai-model-info-row"><span class="ai-model-info-label">Reorder</span><span>Use the handle at the left of a model card to change its priority.</span></div>
+            <div class="ai-model-auto-row">
+              <div class="ai-model-auto-main">
+                <input type="checkbox" id="ai-model-autoswitch-checkbox" onchange="handleAutoSwitchToggle(this.checked)">
+                <div><b style="color:var(--text-primary)">Auto-switch on error</b><div>Always enabled by the application.</div></div>
+              </div>
             </div>
           </div>
-          <details style="margin-top:10px;">
-            <summary style="cursor:pointer;font-size:.85rem;">Advanced: extra headers / extra body (JSON)</summary>
-            <label for="ai-model-headers-input" style="display:block;font-size:.78rem;margin:8px 0 4px;">Extra headers</label>
-            <textarea id="ai-model-headers-input" rows="2" placeholder='{"X-Custom-Header": "value"}' style="width:100%;box-sizing:border-box;padding:9px 11px;border:1.5px solid var(--border-color);border-radius:var(--radius-sm);background:var(--bg-color);color:var(--text-primary);font-size:.85rem;font-family:monospace;"></textarea>
-            <label for="ai-model-body-input" style="display:block;font-size:.78rem;margin:8px 0 4px;">Extra body fields <span style="opacity:.6">(a null value removes a field, e.g. {"temperature": null})</span></label>
-            <textarea id="ai-model-body-input" rows="2" placeholder='{"max_tokens": 16000}' style="width:100%;box-sizing:border-box;padding:9px 11px;border:1.5px solid var(--border-color);border-radius:var(--radius-sm);background:var(--bg-color);color:var(--text-primary);font-size:.85rem;font-family:monospace;"></textarea>
-          </details>
-          <label class="ai-model-json-label"><input type="checkbox" id="ai-model-json-checkbox" checked> Supports JSON response format</label>
-          <label class="ai-model-json-label"><input type="checkbox" id="ai-model-search-checkbox" checked> Enable Google Search grounding (Gemini only)</label>
-          <div id="ai-model-add-status" class="ai-model-add-status"></div>
-          <div class="ai-model-form-actions">
-            <button type="button" class="topbar-btn" onclick="clearAIModelForm()">Clear</button>
-            <button type="button" class="topbar-btn" onclick="handleDetectAIModels()" title="Ask the server which models it offers">Detect models</button>
-            <button type="button" class="topbar-btn btn-primary" id="ai-model-add-btn" onclick="handleAddNewAIModel()">Verify &amp; Add</button>
+        </div>
+
+        <div class="settings-subsection">
+          <h4 class="settings-subsection-title">Add a new model</h4>
+          <div class="ai-models-toolbar" style="margin-bottom:8px;">
+            <button class="topbar-btn btn-primary" onclick="toggleAIModelAddForm()">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+              <span class="label-desktop">Add new AI model</span>
+            </button>
+          </div>
+          <div class="ai-model-add-form" id="ai-model-add-form">
+            <h4 class="ai-model-add-title">Add model</h4>
+            <div style="font-size:.8rem;opacity:.75;margin:-4px 0 10px;">Only the <b>API URL</b> is required. Key, Model ID and Name are optional — local servers (FreeLLMAPI, Ollama, LM Studio…) often need neither.</div>
+            <details style="margin-bottom:12px;">
+              <summary style="cursor:pointer;font-size:.88rem;font-weight:600;">Paste anything (curl, URL, JSON, .env, "url key model")</summary>
+              <textarea id="ai-model-paste-input" rows="4" placeholder="curl http://localhost:3001/v1/chat/completions -H 'Authorization: Bearer sk-...' -d '{&quot;model&quot;:&quot;auto&quot;}'&#10;or: http://localhost:3001&#10;or: base_url=...  api_key=...  model=..." style="width:100%;box-sizing:border-box;padding:9px 11px;border:1.5px solid var(--border-color);border-radius:var(--radius-sm);background:var(--bg-color);color:var(--text-primary);font-size:.85rem;font-family:monospace;margin-top:8px;"></textarea>
+              <button type="button" class="topbar-btn" style="margin-top:6px;" onclick="handleSmartPasteModel()">Fill the form from this text</button>
+            </details>
+            <div class="ai-model-form-grid">
+              <div class="ai-field ai-field-full"><label for="ai-model-url-input">API URL <span style="opacity:.6">(required)</span></label><input type="text" id="ai-model-url-input" placeholder="https://api.openai.com/v1/chat/completions  or  http://localhost:3001"></div>
+              <div class="ai-field ai-field-full"><label for="ai-model-key-input">API Key <span style="opacity:.6">(optional — leave blank for local servers)</span></label><input type="password" id="ai-model-key-input" placeholder="API key"></div>
+              <div class="ai-field"><label for="ai-model-id-input">Model ID <span style="opacity:.6">(optional)</span></label><input type="text" id="ai-model-id-input" list="ai-model-id-list" placeholder="blank = server decides"><datalist id="ai-model-id-list"></datalist></div>
+              <div class="ai-field"><label for="ai-model-name-input">Name <span style="opacity:.6">(optional)</span></label><input type="text" id="ai-model-name-input" placeholder="e.g. My local router"></div>
+              <div class="ai-field">
+                <label for="ai-model-api-type-select">API Type</label>
+                <select id="ai-model-api-type-select">
+                  <option value="auto" selected>Auto-detect from URL</option>
+                  <option value="openai">OpenAI-compatible</option>
+                  <option value="gemini">Google Gemini</option>
+                  <option value="anthropic">Anthropic (Claude)</option>
+                  <option value="ollama">Ollama (native)</option>
+                </select>
+              </div>
+              <div class="ai-field">
+                <label for="ai-model-auth-select">Authentication</label>
+                <select id="ai-model-auth-select">
+                  <option value="auto" selected>Auto (Bearer key; none if no key)</option>
+                  <option value="bearer">Authorization: Bearer</option>
+                  <option value="x-api-key">x-api-key header</option>
+                  <option value="api-key">api-key header (Azure)</option>
+                  <option value="none">No authentication</option>
+                </select>
+              </div>
+            </div>
+            <details style="margin-top:10px;">
+              <summary style="cursor:pointer;font-size:.85rem;">Advanced: extra headers / extra body (JSON)</summary>
+              <label for="ai-model-headers-input" style="display:block;font-size:.78rem;margin:8px 0 4px;">Extra headers</label>
+              <textarea id="ai-model-headers-input" rows="2" placeholder='{"X-Custom-Header": "value"}' style="width:100%;box-sizing:border-box;padding:9px 11px;border:1.5px solid var(--border-color);border-radius:var(--radius-sm);background:var(--bg-color);color:var(--text-primary);font-size:.85rem;font-family:monospace;"></textarea>
+              <label for="ai-model-body-input" style="display:block;font-size:.78rem;margin:8px 0 4px;">Extra body fields <span style="opacity:.6">(a null value removes a field, e.g. {"temperature": null})</span></label>
+              <textarea id="ai-model-body-input" rows="2" placeholder='{"max_tokens": 16000}' style="width:100%;box-sizing:border-box;padding:9px 11px;border:1.5px solid var(--border-color);border-radius:var(--radius-sm);background:var(--bg-color);color:var(--text-primary);font-size:.85rem;font-family:monospace;"></textarea>
+            </details>
+            <label class="ai-model-json-label"><input type="checkbox" id="ai-model-json-checkbox" checked> Supports JSON response format</label>
+            <label class="ai-model-json-label"><input type="checkbox" id="ai-model-search-checkbox" checked> Enable Google Search grounding (Gemini only)</label>
+            <div id="ai-model-add-status" class="ai-model-add-status"></div>
+            <div class="ai-model-form-actions">
+              <button type="button" class="topbar-btn" onclick="clearAIModelForm()">Clear</button>
+              <button type="button" class="topbar-btn" onclick="handleDetectAIModels()" title="Ask the server which models it offers">Detect models</button>
+              <button type="button" class="topbar-btn btn-primary" id="ai-model-add-btn" onclick="handleAddNewAIModel()">Verify &amp; Add</button>
+            </div>
           </div>
         </div>
-      </section>
 
-      <!-- ========== SECTION 2: AI মডেল লিস্ট ========== -->
-      <section class="settings-section" id="settings-model-list-section">
-        <h4 class="settings-section-title">AI মডেল লিস্ট</h4>
-        <div class="ai-models-toolbar">
-          <button class="topbar-btn" onclick="document.getElementById('ai-models-import-input').click()">
-            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V4"/><path d="m8 8 4-4 4 4"/><path d="M5 13v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"/></svg>
-            <span class="label-desktop">Import</span>
-          </button>
-          <button class="topbar-btn" onclick="exportAIModels()">
-            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 9V20"/><path d="m8 16 4 4 4-4"/><path d="M5 4h14v6"/></svg>
-            <span class="label-desktop">Export</span>
-          </button>
-          <button class="topbar-btn" id="ai-models-testall-btn" onclick="handleTestAllModels()" title="Test every model one by one automatically">
-            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12a8 8 0 0 1 13.7-5.7"/><path d="M20 12a8 8 0 0 1-13.7 5.7"/><path d="M17 3v4h-4M7 21v-4h4"/></svg>
-            <span class="label-desktop" id="ai-models-testall-label">Test all</span>
-          </button>
-          <button class="topbar-btn" id="ai-models-remove-btn" onclick="toggleAIModelsRemoveMode()" title="Mark models and remove them together">
-            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 7h14M9 7V4h6v3M8 10v7M12 10v7M16 10v7M7 7l1 14h8l1-14"/></svg>
-            <span class="label-desktop" id="ai-models-remove-label">Remove</span>
-          </button>
-          <div class="ai-models-toolbar-spacer"></div>
-          <input type="file" id="ai-models-import-input" accept=".json" style="display:none;" onchange="importAIModels(this.files)">
+        <div class="settings-subsection">
+          <h4 class="settings-subsection-title">Model list</h4>
+          <div class="ai-models-toolbar">
+            <button class="topbar-btn" onclick="document.getElementById('ai-models-import-input').click()">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V4"/><path d="m8 8 4-4 4 4"/><path d="M5 13v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"/></svg>
+              <span class="label-desktop">Import</span>
+            </button>
+            <button class="topbar-btn" onclick="exportAIModels()">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 9V20"/><path d="m8 16 4 4 4-4"/><path d="M5 4h14v6"/></svg>
+              <span class="label-desktop">Export</span>
+            </button>
+            <button class="topbar-btn" id="ai-models-testall-btn" onclick="handleTestAllModels()" title="Test every model one by one automatically">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12a8 8 0 0 1 13.7-5.7"/><path d="M20 12a8 8 0 0 1-13.7 5.7"/><path d="M17 3v4h-4M7 21v-4h4"/></svg>
+              <span class="label-desktop" id="ai-models-testall-label">Test all</span>
+            </button>
+            <button class="topbar-btn" id="ai-models-remove-btn" onclick="toggleAIModelsRemoveMode()" title="Mark models and remove them together">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 7h14M9 7V4h6v3M8 10v7M12 10v7M16 10v7M7 7l1 14h8l1-14"/></svg>
+              <span class="label-desktop" id="ai-models-remove-label">Remove</span>
+            </button>
+            <div class="ai-models-toolbar-spacer"></div>
+            <input type="file" id="ai-models-import-input" accept=".json" style="display:none;" onchange="importAIModels(this.files)">
+          </div>
+          <div id="ai-models-list" class="ai-models-list"></div>
         </div>
-        <div id="ai-models-list" class="ai-models-list"></div>
-      </section>
+      </div>
 
-      <!-- ========== SECTION 3: সুইচ ও পারমিশন ========== -->
-      <section class="settings-section" id="settings-switches-section">
-        <h4 class="settings-section-title">সুইচ ও পারমিশন</h4>
-        <div class="settings-section-body" id="settings-switches-container">
-          <!-- window.renderStudioSwitches() will populate this on DOMContentLoaded -->
+      <!-- ========== TAB 3: PERMISSIONS ========== -->
+      <div class="settings-tab-panel" data-panel="permissions" hidden>
+        <div class="settings-subsection">
+          <h4 class="settings-subsection-title">Permissions</h4>
+          <p style="font-size:13px;opacity:.72;margin:0 0 10px;">Additional permission controls will appear here. Current permissions are managed automatically by the application based on your AI model configuration.</p>
         </div>
-      </section>
+      </div>
     </div>
   </div>
 
@@ -836,18 +829,22 @@
             });
         }
 
-        // File-processing preview container starts empty; it is shown only while files are queued
         const previewScroll = document.getElementById('progress-live-preview-scroll');
-        if (previewScroll) {
-            previewScroll.innerHTML = '';
+        if (previewScroll) previewScroll.innerHTML = '';
+
+        // Initialise the horizontal Settings tabs (Preference / AI Models / Permissions).
+        try {
+            if (typeof window.initSettingsTabs === 'function') window.initSettingsTabs();
+        } catch (e) {
+            console.warn('[Settings] could not init tabs:', e);
         }
 
-        // Populate the "সুইচ ও পারমিশন" section with the two switches defined
-        // in tab-manager.js (OCR image policy + text-figure policy).
+        // Render the two Preference switches (English labels only).
         try {
             const swContainer = document.getElementById('settings-switches-container');
-            if (swContainer && typeof window.renderStudioSwitches === 'function') {
+            if (swContainer && typeof window.renderStudioSwitches === 'function' && !swContainer.dataset.rendered) {
                 window.renderStudioSwitches(swContainer, { idPrefix: 'settings-switch' });
+                swContainer.dataset.rendered = '1';
             }
         } catch (e) {
             console.warn('[Settings] could not render studio switches:', e);
@@ -855,7 +852,6 @@
     });
   </script>
 
-  <!-- EXPORT MENU (glass popover; lives on <body> so no parent clips or re-positions it) -->
   <div id="export-menu-panel" role="menu" aria-hidden="true"></div>
   <script>
     (function () {
@@ -879,13 +875,10 @@
         p.style.left = left + 'px'; p.style.top = top + 'px';
       }
       window.toggleExportMenu = function (e) {
-        if (e) e.stopPropagation();   // the topbar menu closes on any document click; keep it open
+        if (e) e.stopPropagation();
         const p = panel();
         if (p && p.classList.contains('open')) closeExportMenu(); else openExportMenu();
       };
-      // The menu is built each time it opens, from whichever original (hidden) buttons are currently
-      // available — document mode: DOCX / PDF, slide deck: PPTX / slides PDF — plus JSON (always).
-      // Every item clicks the original button, so existing handlers, busy state and guards all still apply.
       const isShown = (id) => { const b = document.getElementById(id); return !!b && window.getComputedStyle(b).display !== 'none'; };
       function renderItems(p) {
         const docPdf = isShown('topbar-truepdf-btn');
@@ -911,8 +904,6 @@
       document.addEventListener('click', (e) => { if (!e.target.closest || !e.target.closest('#export-menu-panel')) closeExportMenu(); });
       document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeExportMenu(); });
       window.addEventListener('resize', closeExportMenu);
-      // The export helpers show their spinner / progress on the button that was clicked (a hidden one here),
-      // so copy that state onto the visible Export button while an export is running.
       const legacy = document.getElementById('export-legacy-buttons');
       let savedHtml = null;
       function syncBusy() {
@@ -935,90 +926,29 @@
   </script>
 
   <!-- ===== JAVASCRIPT MODULES ===== -->
-
-  <!-- 1. Configuration -->
   <script src="js/config.js"></script>
-
-  <!-- 2. Constants & UI Icons -->
   <script src="js/constants.js"></script>
-
-  <!-- 3. UI Helpers (toast, progress, theme, etc.) -->
   <script src="js/ui-helpers.js"></script>
-
-  <!-- 3b. AI Quotes (progress modal) — uses callAIAPIRaw/getActiveAIModel from app.js at call time -->
   <script src="js/ai-quotes.js"></script>
-
-  <!-- 4. Tab Manager -->
   <script src="js/tab-manager.js"></script>
-
-  <!-- 5. AI Models Manager -->
   <script src="js/ai-models.js"></script>
-
-  <!-- 6. Command Menu (@ commands) -->
   <script src="js/command-menu.js"></script>
-
-  <!-- 7. Math Renderer (KaTeX) -->
   <script src="js/math-renderer.js"></script>
-
-  <!-- 8. Document Editor (core editing, pagination, history) -->
   <script src="js/document-editor.js"></script>
-
-  <!-- 9. OCR Pipeline -->
   <script src="js/ocr.js"></script>
-
-  <!-- 10. PDF Export -->
   <script src="js/pdf-export.js"></script>
-
-  <!-- 11. Diagram Template Library (verified, hand-authored SVG diagrams
-       for well-known subjects — must load before app.js, which reads
-       getDiagramTemplateCatalogForPrompt()/injectDiagramTemplates()) -->
   <script src="js/diagram-library.js"></script>
-
-  <!-- 11b. Chart Library (deterministic, code-computed bar/line/pie/donut
-       chart SVGs — must load before app.js, which reads
-       getChartCatalogForPrompt()/injectChartTemplates()) -->
   <script src="js/chart-library.js"></script>
-
-  <!-- 11c. Illustration Library (deterministic, code-composed flat-design
-       scene SVGs — landscapes, cityscapes, person figures, icon badges —
-       must load before app.js/slide-studio.js, which read
-       getIllustrationCatalogForPrompt()/injectIllustrationTemplates()) -->
   <script src="js/illustration-library.js"></script>
-
-  <!-- 11d. Element Library (small, code-authored SVG pieces — sun, clock,
-       pen, house, mobile phone, graduation cap, icons, plain shapes —
-       droppable onto/into any other hand-drawn figure — must load before
-       app.js, which reads getElementCatalogForPrompt()/injectElementTemplates()) -->
   <script src="js/element-library.js"></script>
-
-  <!-- 11d2. Code Highlight (fixed dark VS Code theme for code + output blocks; must load before app.js,
-       which calls injectCodeBlocks()/getCodeBlockRuleForPrompt()) -->
   <script src="js/code-highlight.js"></script>
-
-  <!-- 11e. Slide Theme System (fonts, palettes, AI/inline themes — must load before slide-studio.js,
-       which calls resolveSlideTheme()/slideThemePptx()/getSlideThemeRuleForPrompt()) -->
   <script src="js/slide-theme.js"></script>
-
   <script src="js/slide-studio.js"></script>
-
-  <!-- Native .docx export — needs rasterizeSvgPreservingAspect from slide-studio.js
-       and the docx CDN script above; must load before app.js -->
   <script src="js/word-export.js"></script>
-
-  <!-- Exam Library (MCQ প্রশ্নপত্র + compact OMR). All exam behaviour — format, questions the AI
-       asks, difficulty, subjects, prompt rules — lives in this ONE file. Edit it and the AI follows
-       on the next request. Must load after document-editor.js and before app.js.
-       Bump ?v= after editing if the browser/service worker serves a cached copy. -->
   <script src="js/exam-library.js?v=180"></script>
-
-  <!-- 11f. Instruction box (sidebar) — visible, editable "how to answer" text, cloud-synced via
-       PaperlyMenuPrefs. Must load after command-menu.js and before app.js (buildSharedRules reads it). -->
   <script src="js/instruction-panel.js?v=2"></script>
-
-  <!-- 12. Main App (initialization) -->
   <script src="js/app.js"></script>
 
-  <!-- PWA: service worker + install button -->
   <script src="js/firebase-config.js"></script>
   <script src="js/paperly-vault.js"></script>
   <script type="module" src="js/paperly-cloud.js"></script>
@@ -1034,8 +964,6 @@
           if (!window.visualViewport || !(typeof isMobileDeviceLayout === 'function' ? isMobileDeviceLayout() : false)) return;
           var vv = window.visualViewport;
           var height = Math.max(320, Math.round(vv.height || window.innerHeight || 0));
-          // Only touch the DOM when the value really changed (>=2px): writing the
-          // same/near-same height every frame made the whole layout shimmer.
           if (Math.abs(height - lastH) >= 2) {
             lastH = height;
             document.documentElement.style.setProperty('--mobile-vh', height + 'px');
@@ -1048,8 +976,6 @@
       apply();
       window.addEventListener('resize', sync, { passive: true });
       window.addEventListener('orientationchange', function() { setTimeout(sync, 120); }, { passive: true });
-      // NOTE: deliberately NOT listening to visualViewport 'scroll' — it fires
-      // continuously while panning and fought the browser, causing jitter.
       if (window.visualViewport) window.visualViewport.addEventListener('resize', sync, { passive: true });
       document.addEventListener('visibilitychange', function() { if (!document.hidden) { sync(); setTimeout(sync, 250); } }, { passive: true });
       window.addEventListener('pageshow', function() { sync(); setTimeout(sync, 250); }, { passive: true });
@@ -1057,34 +983,6 @@
     })();
   </script>
 
-  <!-- ===== MOBILE INITIAL VIEW FALLBACK =====
-       #main-container starts in the raw HTML with BOTH "mobile-view-chat"
-       and "desktop-view-chat" classes. On a phone, "mobile-view-chat" is
-       what hides the editor panel (CSS: .mobile-view-chat #preview-panel
-       {display:none}) — but only until something changes the className.
-       tab-manager.js is expected to confirm/set the right mobile-view-*
-       class on load; if it (or anything before it) throws, or JS resets
-       #main-container's className without one of the three mobile-view-*
-       classes present, NOTHING is left hiding the editor panel — both the
-       chat panel and the editor panel then lay out side by side at their
-       normal (desktop-sized) widths on a screen far narrower than that,
-       which is what cuts content off on both the right and bottom edges.
-       This is a pure safety net: it only acts if, after everything else
-       has finished loading, #main-container still isn't in any of the
-       three known mobile view states. -->
-  <!-- ===== PROGRESS OVERLAY INITIAL-STATE FALLBACK =====
-       #global-progress-overlay (the "Working..." card with the rotating
-       Bengali quotes and "ফাইল প্রসেসিং" file-processing label) is
-       display:none in CSS by default and is only meant to appear once a
-       PDF-generation call is actually running, toggled on via inline
-       style by app.js. On a fresh page load nothing has started generating
-       yet, so there's no legitimate reason for it to be visible — if it
-       ever is (a stray inline style, a state-restore path that resumed an
-       interrupted previous session's "generating" flag, or anything
-       upstream throwing before it gets a chance to hide things), it sits
-       on top of the AI Chat panel as unexplained Bengali text. This forces
-       it back to hidden once on load; it never runs again afterward, so it
-       can't interfere with a real, legitimately-triggered generation. -->
   <script>
     document.addEventListener('DOMContentLoaded', function() {
       try {
