@@ -12,9 +12,33 @@
   var RESIST    = 0.5;  // আঙুলের তুলনায় কতটা ধীরে নামবে
 
   var mq = window.matchMedia('(max-width: 850px)');
-  var ind, startY = 0, startX = 0, pull = 0, tracking = false, locked = false, refreshing = false;
+  var ind = null, startY = 0, startX = 0, pull = 0, tracking = false, locked = false, refreshing = false;
+
+  function injectCSS() {
+    if (document.getElementById('ptr-style')) return;
+    var st = document.createElement('style');
+    st.id = 'ptr-style';
+    st.textContent =
+      'html,body{overscroll-behavior-y:contain;}' +
+      '#ptr-indicator{position:fixed;left:0;right:0;top:0;z-index:2147483000;display:flex;justify-content:center;pointer-events:none;' +
+        '--ptr-y:0px;--ptr-p:0;transform:translateY(calc(var(--ptr-y) - 56px + env(safe-area-inset-top,0px)));opacity:calc(var(--ptr-p) * 1);}' +
+      '#ptr-indicator.ptr-snap{transition:transform .25s ease,opacity .25s ease;}' +
+      '#ptr-indicator.ptr-refreshing{opacity:1;transition:transform .2s ease;}' +
+      '#ptr-indicator .ptr-bubble{width:40px;height:40px;border-radius:50%;background:#fff;color:#7c3aed;display:flex;align-items:center;' +
+        'justify-content:center;box-shadow:0 4px 14px rgba(0,0,0,.22);}' +
+      'body.dark #ptr-indicator .ptr-bubble,[data-theme="dark"] #ptr-indicator .ptr-bubble{background:#2a2a38;color:#c4b5fd;}' +
+      '#ptr-indicator .ptr-arrow{transition:transform .2s ease;transform:rotate(calc(var(--ptr-p) * 180deg - 180deg));}' +
+      '#ptr-indicator.ptr-ready .ptr-arrow{transform:rotate(0deg);}' +
+      '#ptr-indicator .ptr-spinner{display:none;width:20px;height:20px;border:3px solid currentColor;border-right-color:transparent;' +
+        'border-radius:50%;animation:ptr-spin .7s linear infinite;}' +
+      '#ptr-indicator.ptr-refreshing .ptr-arrow{display:none;}' +
+      '#ptr-indicator.ptr-refreshing .ptr-spinner{display:block;}' +
+      '@keyframes ptr-spin{to{transform:rotate(360deg);}}';
+    document.head.appendChild(st);
+  }
 
   function build() {
+    injectCSS();
     ind = document.createElement('div');
     ind.id = 'ptr-indicator';
     ind.setAttribute('aria-hidden', 'true');
@@ -39,6 +63,8 @@
     for (var n = el; n && n !== document.documentElement; n = n.parentElement) {
       if (n.scrollTop > 0) return 'scrolled-down';
     }
+    var se = document.scrollingElement || document.documentElement;
+    if ((se && se.scrollTop > 0) || window.pageYOffset > 0) return 'scrolled-down';
     return false;
   }
 
@@ -99,6 +125,7 @@
 
   function init() {
     build();
+    window.addEventListener('pageshow', function () { refreshing = false; if (ind) { ind.classList.remove('ptr-refreshing', 'ptr-pulling', 'ptr-ready'); setPull(0); } });
     document.addEventListener('touchstart', onStart, { passive: true });
     document.addEventListener('touchmove', onMove, { passive: false });
     document.addEventListener('touchend', onEnd, { passive: true });
