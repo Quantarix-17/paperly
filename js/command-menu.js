@@ -950,6 +950,41 @@ function _applyLanguageFormatChoice(id) {
 window.refreshFormatChip = function () { renderSelectedCommandChips(); };
 
 // ===== RENDER CHIPS =====
+// The Copy and Copy & Refine commands are shown in the chat panel as "@Create" (it creates a new
+// document from the typed text). Only the DISPLAY changes: the stored command
+// ids stay 'copy_text' / 'copy_refine', so every Copy rule and the payload are untouched.
+function _chipDisplayLabel(c) {
+  return c && _COPY_CMD_IDS.includes(c.id) ? 'Create' : (c ? c.label : '');
+}
+function _chipDisplayIcon(c) {
+  if (c && _COPY_CMD_IDS.includes(c.id)) {
+    const base = getAtCommandById('create_pdf');
+    const slides = window.APP_STATE && window.APP_STATE.creationMode === 'slides';
+    return slides ? 'slides' : ((base && base.icon) || c.icon);
+  }
+  return c ? c.icon : '';
+}
+// Chips that mean the same thing to the person (Create / Copy / Copy & Refine /
+// implicit Create parent all read "@Create"; the same id twice) are merged into ONE
+// chip, so the chat panel never shows a double selection. The merged chip's ×
+// removes every command it stands for.
+function _chipDedupeKey(c) {
+  if (c && (c.id === 'create_pdf' || _COPY_CMD_IDS.includes(c.id))) return 'create';
+  return (c && c.id) + '|' + (c && c.param != null ? c.param : '');
+}
+function _dedupeChipCommands(list) {
+  const groups = new Map();
+  (list || []).forEach(c => {
+    if (!c) return;
+    const key = _chipDedupeKey(c);
+    const g = groups.get(key);
+    if (!g) { groups.set(key, { c, ids: [c.id] }); return; }
+    if (!g.ids.includes(c.id)) g.ids.push(c.id);
+    // prefer the explicit (non-implicit) one as the visible chip
+    if (g.c.implicit && !c.implicit) g.c = c;
+  });
+  return Array.from(groups.values());
+}
 function renderSelectedCommandChips() {
   try { if (window.PaperlyMenuPrefs) window.PaperlyMenuPrefs.saveCommandsSoon(); } catch (_) { /* best-effort */ }
   const wrap = document.getElementById('at-command-chips');
@@ -961,22 +996,23 @@ function renderSelectedCommandChips() {
     const hasSelection = selectedCommands.length > 0;
     commandButton.classList.toggle('has-selection', hasSelection);
     commandButton.setAttribute('aria-pressed', hasSelection ? 'true' : 'false');
-    commandButton.setAttribute('aria-label', hasSelection ? `Selected ${selectedCommands.map(c => '@' + c.label).join(', ')}` : 'Select intent');
+    commandButton.setAttribute('aria-label', hasSelection ? `Selected ${_dedupeChipCommands(selectedCommands).map(g => '@' + _chipDisplayLabel(g.c)).join(', ')}` : 'Select intent');
   }
   if (!window.APP_STATE) return;
-  selectedCommands.forEach(c => {
+  _dedupeChipCommands(selectedCommands).forEach(({ c, ids }) => {
     const chip = document.createElement('span');
     chip.className = 'at-chip';
-    const labelText = c.param ? `@${c.label.replace(/\s*\[.*?\]/, '')}:${c.param}` : `@${c.label}`;
+    const _dispLabel = _chipDisplayLabel(c);
+    const labelText = c.param ? `@${_dispLabel.replace(/\s*\[.*?\]/, '')}:${c.param}` : `@${_dispLabel}`;
     if (c.implicit) chip.classList.add('at-chip-implicit');
     const labelSpan = document.createElement('span');
-    labelSpan.innerHTML = `<span class="at-chip-icon">${renderCommandIcon(c.icon)}</span><span>${labelText}</span>`;
+    labelSpan.innerHTML = `<span class="at-chip-icon">${renderCommandIcon(_chipDisplayIcon(c))}</span><span>${labelText}</span>`;
     const removeBtn = document.createElement('button');
     removeBtn.type = 'button';
     removeBtn.className = 'at-chip-remove';
-    removeBtn.setAttribute('aria-label', `Remove ${c.label}`);
+    removeBtn.setAttribute('aria-label', `Remove ${_dispLabel}`);
     removeBtn.textContent = '×';
-    removeBtn.onclick = () => removeSelectedAtCommand(c.id);
+    removeBtn.onclick = () => ids.forEach(id => removeSelectedAtCommand(id));
     chip.appendChild(labelSpan);
     chip.appendChild(removeBtn);
     wrap.appendChild(chip);
