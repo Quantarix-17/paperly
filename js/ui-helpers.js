@@ -428,8 +428,30 @@ const ProgressUI = {
     return null;
   },
 
+  // Preference switch "Show quotes" (Settings → Preference). Default: ON.
+  _quotesEnabled() {
+    try {
+      if (typeof window.getStudioSetting === 'function') return window.getStudioSetting('showQuotes') !== false;
+    } catch (_) {}
+    return true;
+  },
+
+  // Switch flipped while the processing modal is open: apply it immediately.
+  _onQuoteSettingChanged() {
+    const ov = this._els().overlay;
+    if (!ov || ov.style.display !== 'flex') return;
+    if (!this._quotesEnabled()) {
+      this._stopQuoteRotation();
+      this._clearQuote();
+    } else if (!this._finished && !this._quoteInterval) {
+      this._startQuoteRotation();
+    }
+  },
+
   _startQuoteRotation() {
     this._stopQuoteRotation();
+    // সুইচ অফ থাকলে উক্তি দেখানো হবে না, কোনো AI কলও হবে না
+    if (!this._quotesEnabled()) { this._clearQuote(); return; }
     const runId = ++this._quoteRunId;
     // জায়গাটা ফাঁকা না রেখে অপেক্ষার লেখা দেখাই (পুরোনো উক্তি নয়)
     this._setQuoteText('Writing a fresh quote...', '');
@@ -1232,6 +1254,15 @@ async function waitWhilePaused() {
 // WINDOW EXPOSURE – UI Helpers
 // ============================================================
 window.ProgressUI = ProgressUI;
+
+// "Show quotes" switch changed (or settings reset) → update the open modal right away.
+if (typeof window !== 'undefined') {
+  window.addEventListener('studio-settings-changed', function (e) {
+    const d = (e && e.detail) || {};
+    if (d.key !== 'showQuotes' && d.key !== '*') return;
+    try { ProgressUI._onQuoteSettingChanged(); } catch (_) {}
+  });
+}
 window.toggleDarkMode = toggleDarkMode;
 window.applyCurrentTheme = applyCurrentTheme;
 window.displayToastNotification = displayToastNotification;
