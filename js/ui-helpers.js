@@ -53,7 +53,7 @@ const ProgressUI = {
   _modelName: '',
   _pageCount: 0,
   _totalPages: 0,
-  
+
   // ---- Quote Engine (কোনো তালিকা/ইতিহাস রাখা হয় না) ----
   _quoteInterval: null,
   _quoteRunId: 0, // পুরোনো দেরিতে-আসা উত্তর বাদ দিতে
@@ -184,7 +184,7 @@ const ProgressUI = {
       panel.id = 'progress-activity';
       panel.className = 'pa-wrap';
       panel.innerHTML =
-        '<div class="pa-head"><span class="pa-live"></span><span class="pa-title">লাইভ কার্যক্রম</span><span class="pa-beat" id="pa-beat"></span></div>' +
+        '<div class="pa-head"><span class="pa-live"></span><span class="pa-title">Live Activity</span><span class="pa-beat" id="pa-beat"></span></div>' +
         '<div class="pa-chips" id="pa-chips"></div>' +
         '<ol class="pa-log" id="pa-log"></ol>';
       if (steps && steps.parentNode) {
@@ -226,7 +226,7 @@ const ProgressUI = {
 
   _finishActivity() {
     this._finished = true;
-    this._logActivity('কাজ সম্পন্ন');
+    this._logActivity('Completed');
     const panel = document.getElementById('progress-activity');
     if (panel) panel.classList.add('pa-done');
     this._activityDirty = true;
@@ -248,19 +248,20 @@ const ProgressUI = {
     if (!chips || !log) return;
     const now = Date.now();
 
-    // chips: only facts that are actually known
-    const items = [['⏱', this._formatTime(this._finished ? (this._lastEventAt - this._startTime) : (now - this._startTime))]];
-    if (this._totalPages > 0) items.push(['📄', `পৃষ্ঠা ${this._pageCount}/${this._totalPages}`]);
-    if (this._totalSteps > 0) items.push(['◧', `ধাপ ${this._stepDone}/${this._totalSteps}`]);
-    if (this._modelName) items.push(['🤖', this._modelName]);
-    const sig = items.map(x => x.join(' ')).join('|');
+    // chips: only facts that are actually known (no emojis)
+    const items = [];
+    items.push('Elapsed ' + this._formatTime(this._finished ? (this._lastEventAt - this._startTime) : (now - this._startTime)));
+    if (this._totalPages > 0) items.push(`Page ${this._pageCount}/${this._totalPages}`);
+    if (this._totalSteps > 0) items.push(`Step ${this._stepDone}/${this._totalSteps}`);
+    if (this._modelName) items.push(this._modelName);
+    const sig = items.join('|');
     if (chips.dataset.sig !== sig) {
       chips.dataset.sig = sig;
       chips.innerHTML = '';
-      items.forEach(([ic, tx]) => {
+      items.forEach(tx => {
         const c = document.createElement('span');
         c.className = 'pa-chip';
-        c.textContent = ic + ' ' + tx;
+        c.textContent = tx;
         chips.appendChild(c);
       });
     }
@@ -270,12 +271,12 @@ const ProgressUI = {
       if (this._finished) beat.textContent = '';
       else {
         const age = Math.max(0, Math.round((now - this._lastEventAt) / 1000));
-        beat.textContent = age < 6 ? 'এইমাত্র আপডেট' : (age < 20 ? `শেষ আপডেট ${age}s আগে` : `কাজ চলছে · শেষ আপডেট ${age}s আগে`);
+        beat.textContent = age < 6 ? 'just updated' : (age < 20 ? `last update ${age}s ago` : `working · last update ${age}s ago`);
       }
     }
 
     // timeline: rebuilt only when something real happened (or pages changed)
-    const pageSuffix = (!this._finished && this._totalPages > 0) ? ` — পৃষ্ঠা ${this._pageCount}/${this._totalPages}` : '';
+    const pageSuffix = (!this._finished && this._totalPages > 0) ? ` - Page ${this._pageCount}/${this._totalPages}` : '';
     const logSig = this._activity.map(a => a.at + a.text).join('|') + '#' + pageSuffix + '#' + this._finished;
     if (!this._activityDirty && log.dataset.sig === logSig) return;
     this._activityDirty = false;
@@ -343,7 +344,7 @@ const ProgressUI = {
     const el = this._els().pageCount;
     if (!el) return;
     if (this._totalPages > 0) {
-      el.textContent = `📄 পৃষ্ঠা ${this._pageCount} এর ${this._totalPages}`;
+      el.textContent = `Page ${this._pageCount} of ${this._totalPages}`;
       el.style.display = 'block';
     } else {
       el.style.display = 'none';
@@ -371,7 +372,7 @@ const ProgressUI = {
     if (!quote || !quote.text || !quoteText) return;
     quoteText.classList.remove('visible');
     const myRun = this._quoteRunId;
-    setTimeout(() => { if (myRun === this._quoteRunId) this._setQuoteText(quote.text, '— AI'); }, 300);
+    setTimeout(() => { if (myRun === this._quoteRunId) this._setQuoteText(quote.text, 'AI'); }, 300);
   },
 
   // ai-quotes.js লোড না থাকলে নিজে থেকে লোড করার চেষ্টা (HTML-এ script tag ভুলে গেলেও কাজ করবে)
@@ -382,7 +383,7 @@ const ProgressUI = {
         const sc = document.createElement('script');
         sc.src = 'js/ai-quotes.js';
         sc.onload = () => resolve(typeof AIQuote !== 'undefined');
-        sc.onerror = () => { console.warn('[Quotes] ai-quotes.js লোড হয়নি — ফাইলটি index.html-এর পাশে রাখুন বা <script src="ai-quotes.js"> যোগ করুন।'); resolve(false); };
+        sc.onerror = () => { console.warn('[Quotes] ai-quotes.js not loaded — keep the file next to index.html or add <script src="ai-quotes.js">.'); resolve(false); };
         document.head.appendChild(sc);
       });
     }
@@ -407,7 +408,7 @@ const ProgressUI = {
     this._stopQuoteRotation();
     const runId = ++this._quoteRunId;
     // জায়গাটা ফাঁকা না রেখে অপেক্ষার লেখা দেখাই (পুরোনো উক্তি নয়)
-    this._setQuoteText('✨ Writing a fresh quote for you…', '');
+    this._setQuoteText('Writing a fresh quote...', '');
     this._quoteBuffer = null;
     this._quoteBusy = false;
 
@@ -451,7 +452,7 @@ const ProgressUI = {
     this._updatePageCountDisplay();
     const label = this._els().previewPageLabel;
     if (label) {
-      label.textContent = totalPages ? `পৃষ্ঠা ${pageNumber || 1} এর ${totalPages}` : `পৃষ্ঠা ${pageNumber || 1}`;
+      label.textContent = totalPages ? `Page ${pageNumber || 1} of ${totalPages}` : `Page ${pageNumber || 1}`;
     }
   },
 
@@ -490,7 +491,7 @@ const ProgressUI = {
 
     this._setVisualStage(1);
     this._updatePageCountDisplay();
-    this._resetActivity(subtitle || title || 'কাজ শুরু হয়েছে');
+    this._resetActivity(subtitle || title || 'Work started');
 
     // লাইভ কোটেশন শুরু
     this._startQuoteRotation();
@@ -589,10 +590,29 @@ const ProgressUI = {
     this._stopQuoteRotation(); // শেষে বাড়তি AI কল নয়; যে উক্তিটা চলছিল সেটাই থাকে
   },
 
-  setActiveModel(name) {
+  // Shows only the serial number of the active model (position in the
+  // saved model list, 1-based). Falls back to the name if the model
+  // cannot be found in AI_MODELS_STATE.
+  setActiveModel(modelOrName) {
     const e = this._els().badge;
-    if (e) e.textContent = name ? '🤖 ' + name : '';
-    this._modelName = name || '';
+    let display = '';
+    try {
+      let idx = -1;
+      const models = (typeof AI_MODELS_STATE !== 'undefined' && Array.isArray(AI_MODELS_STATE.models)) ? AI_MODELS_STATE.models : [];
+      if (modelOrName && typeof modelOrName === 'object') {
+        if (modelOrName.id) idx = models.findIndex(m => m.id === modelOrName.id);
+        if (idx < 0 && modelOrName.name) idx = models.findIndex(m => m.name === modelOrName.name);
+      } else if (typeof modelOrName === 'string' && modelOrName) {
+        const activeId = (typeof AI_MODELS_STATE !== 'undefined') ? AI_MODELS_STATE.activeModelId : null;
+        if (activeId) idx = models.findIndex(m => m.id === activeId);
+        if (idx < 0) idx = models.findIndex(m => m.name === modelOrName);
+      }
+      display = idx >= 0 ? `Model #${idx + 1}` : (typeof modelOrName === 'string' ? modelOrName : (modelOrName && modelOrName.name) || '');
+    } catch (_) {
+      display = typeof modelOrName === 'string' ? modelOrName : (modelOrName && modelOrName.name) || '';
+    }
+    if (e) e.textContent = display;
+    this._modelName = display;
   },
 
   setPageCount(current, total) {
@@ -607,7 +627,7 @@ const ProgressUI = {
       this._updatePageCountDisplay();
       const label = this._els().previewPageLabel;
       if (label) {
-        label.textContent = `পৃষ্ঠা ${this._pageCount} এর ${this._totalPages}`;
+        label.textContent = `Page ${this._pageCount} of ${this._totalPages}`;
       }
     }
   },
