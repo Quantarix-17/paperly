@@ -44,6 +44,13 @@ const ProgressUI = {
   _stageStartedAt: 0,
   _previewContainer: null,
   _fileProgressItems: new Map(),
+
+  // ---- Live activity (real events only: labels the app reports + measured time) ----
+  _activity: [],
+  _activityDirty: false,
+  _lastEventAt: 0,
+  _finished: false,
+  _modelName: '',
   _pageCount: 0,
   _totalPages: 0,
   
@@ -120,6 +127,175 @@ const ProgressUI = {
     lines.forEach((el, i) => el.classList.toggle('done', i + 1 < n));
   },
 
+
+  // ===== GREEN THEME + LIVE ACTIVITY PANEL =====
+  // The old "plan / read / write / ..." step chips are removed. In their place the modal shows a
+  // live activity timeline that is built ONLY from real events: the status labels the app reports
+  // (setLabel / setStage), measured elapsed time, real page counts, real step counts and the model
+  // actually in use. Nothing is simulated; if a number is unknown it is simply not shown.
+  _ensureProgressStyle() {
+    if (document.getElementById('progress-green-style')) return;
+    const st = document.createElement('style');
+    st.id = 'progress-green-style';
+    st.textContent =
+      '#progress-steps{display:none!important}' +
+      '#global-progress-overlay{--pg-1:#16a34a;--pg-2:#22c55e;--pg-3:#4ade80;--pg-soft:rgba(34,197,94,.12);--pg-line:rgba(22,163,74,.28)}' +
+      '#global-progress-overlay #progress-bar-fill{background-color:#22c55e!important;background-image:linear-gradient(90deg,#16a34a,#4ade80,#16a34a)!important}' +
+      '#global-progress-overlay #progress-ring-fill{stroke:#22c55e!important}' +
+      '#global-progress-overlay #progress-ring-icon{color:#16a34a!important}' +
+      '#global-progress-overlay .progress-file-fill{background:linear-gradient(90deg,#16a34a,#4ade80)!important}' +
+      '#global-progress-overlay .progress-file-status.done{color:#16a34a!important}' +
+      'html.dark #global-progress-overlay #progress-ring-icon{color:#4ade80!important}' +
+      'html.dark #global-progress-overlay .progress-file-status.done{color:#4ade80!important}' +
+      // activity panel
+      '.pa-wrap{width:100%;box-sizing:border-box;margin:10px 0 4px;padding:12px 14px;border-radius:14px;border:1px solid var(--pg-line);background:var(--pg-soft);text-align:left}' +
+      '.pa-head{display:flex;align-items:center;gap:8px;margin-bottom:8px}' +
+      '.pa-live{width:8px;height:8px;border-radius:50%;background:var(--pg-2);box-shadow:0 0 0 0 rgba(34,197,94,.55);animation:pa-pulse 1.6s infinite}' +
+      '.pa-wrap.pa-done .pa-live{animation:none;box-shadow:none}' +
+      '.pa-title{font-size:12px;font-weight:700;letter-spacing:.02em;color:#15803d}' +
+      '.pa-beat{margin-left:auto;font-size:11px;opacity:.7;font-variant-numeric:tabular-nums}' +
+      '.pa-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}' +
+      '.pa-chip{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;border:1px solid var(--pg-line);background:rgba(255,255,255,.55);font-size:11px;font-weight:600;font-variant-numeric:tabular-nums}' +
+      '.pa-log{list-style:none;margin:0;padding:0;position:relative}' +
+      '.pa-log li{position:relative;display:flex;gap:10px;align-items:flex-start;padding:0 0 9px 18px;font-size:12.5px;line-height:1.45;opacity:.62;animation:pa-in .28s ease both}' +
+      '.pa-log li:last-child{padding-bottom:0}' +
+      '.pa-log li::before{content:"";position:absolute;left:3px;top:6px;width:8px;height:8px;border-radius:50%;background:var(--pg-1)}' +
+      '.pa-log li::after{content:"";position:absolute;left:6.5px;top:15px;bottom:-2px;width:1px;background:var(--pg-line)}' +
+      '.pa-log li:last-child::after{display:none}' +
+      '.pa-log li.active{opacity:1;font-weight:600}' +
+      '.pa-log li.active::before{background:var(--pg-2);box-shadow:0 0 0 3px rgba(34,197,94,.25);animation:pa-pulse 1.6s infinite}' +
+      '.pa-wrap.pa-done .pa-log li.active::before{animation:none;box-shadow:none}' +
+      '.pa-log .pa-t{flex:0 0 auto;min-width:38px;font-size:11px;opacity:.65;font-variant-numeric:tabular-nums}' +
+      '.pa-log .pa-x{flex:1 1 auto;min-width:0;word-break:break-word}' +
+      'html.dark .pa-title{color:#4ade80}' +
+      'html.dark .pa-chip{background:rgba(255,255,255,.06)}' +
+      '@keyframes pa-pulse{0%{box-shadow:0 0 0 0 rgba(34,197,94,.55)}70%{box-shadow:0 0 0 7px rgba(34,197,94,0)}100%{box-shadow:0 0 0 0 rgba(34,197,94,0)}}' +
+      '@keyframes pa-in{from{opacity:0;transform:translateY(4px)}to{opacity:inherit;transform:none}}' +
+      '@media (prefers-reduced-motion:reduce){.pa-live,.pa-log li,.pa-log li.active::before{animation:none!important}}';
+    document.head.appendChild(st);
+  },
+
+  _ensureActivityPanel() {
+    this._ensureProgressStyle();
+    let panel = document.getElementById('progress-activity');
+    const steps = document.getElementById('progress-steps');
+    if (!panel) {
+      panel = document.createElement('div');
+      panel.id = 'progress-activity';
+      panel.className = 'pa-wrap';
+      panel.innerHTML =
+        '<div class="pa-head"><span class="pa-live"></span><span class="pa-title">লাইভ কার্যক্রম</span><span class="pa-beat" id="pa-beat"></span></div>' +
+        '<div class="pa-chips" id="pa-chips"></div>' +
+        '<ol class="pa-log" id="pa-log"></ol>';
+      if (steps && steps.parentNode) {
+        steps.parentNode.insertBefore(panel, steps);
+      } else {
+        const { subtitle } = this._els();
+        if (subtitle && subtitle.parentNode) subtitle.parentNode.insertBefore(panel, subtitle.nextSibling);
+        else return null;
+      }
+    }
+    if (steps) steps.remove(); // plan / read / write ... chips are gone for good
+    return panel;
+  },
+
+  _logActivity(text) {
+    text = String(text == null ? '' : text).trim();
+    if (!text) return;
+    const last = this._activity[this._activity.length - 1];
+    if (last && last.text === text) return;
+    this._activity.push({ at: Date.now(), text });
+    if (this._activity.length > 5) this._activity.shift();
+    this._lastEventAt = Date.now();
+    this._activityDirty = true;
+    this._renderActivity();
+  },
+
+  _resetActivity(first) {
+    this._activity = [];
+    this._activityDirty = true;
+    this._finished = false;
+    this._modelName = '';
+    this._lastEventAt = Date.now();
+    this._ensureActivityPanel();
+    const panel = document.getElementById('progress-activity');
+    if (panel) panel.classList.remove('pa-done');
+    this._logActivity(first);
+    this._renderActivity();
+  },
+
+  _finishActivity() {
+    this._finished = true;
+    this._logActivity('কাজ সম্পন্ন');
+    const panel = document.getElementById('progress-activity');
+    if (panel) panel.classList.add('pa-done');
+    this._activityDirty = true;
+    this._renderActivity();
+  },
+
+  _clearActivity() {
+    this._activity = [];
+    this._activityDirty = false;
+    this._finished = false;
+    const log = document.getElementById('pa-log');
+    if (log) log.innerHTML = '';
+  },
+
+  _renderActivity() {
+    const chips = document.getElementById('pa-chips');
+    const log = document.getElementById('pa-log');
+    const beat = document.getElementById('pa-beat');
+    if (!chips || !log) return;
+    const now = Date.now();
+
+    // chips: only facts that are actually known
+    const items = [['⏱', this._formatTime(this._finished ? (this._lastEventAt - this._startTime) : (now - this._startTime))]];
+    if (this._totalPages > 0) items.push(['📄', `পৃষ্ঠা ${this._pageCount}/${this._totalPages}`]);
+    if (this._totalSteps > 0) items.push(['◧', `ধাপ ${this._stepDone}/${this._totalSteps}`]);
+    if (this._modelName) items.push(['🤖', this._modelName]);
+    const sig = items.map(x => x.join(' ')).join('|');
+    if (chips.dataset.sig !== sig) {
+      chips.dataset.sig = sig;
+      chips.innerHTML = '';
+      items.forEach(([ic, tx]) => {
+        const c = document.createElement('span');
+        c.className = 'pa-chip';
+        c.textContent = ic + ' ' + tx;
+        chips.appendChild(c);
+      });
+    }
+
+    // heartbeat: honest "last update" age, so a long wait never looks frozen
+    if (beat) {
+      if (this._finished) beat.textContent = '';
+      else {
+        const age = Math.max(0, Math.round((now - this._lastEventAt) / 1000));
+        beat.textContent = age < 6 ? 'এইমাত্র আপডেট' : (age < 20 ? `শেষ আপডেট ${age}s আগে` : `কাজ চলছে · শেষ আপডেট ${age}s আগে`);
+      }
+    }
+
+    // timeline: rebuilt only when something real happened (or pages changed)
+    const pageSuffix = (!this._finished && this._totalPages > 0) ? ` — পৃষ্ঠা ${this._pageCount}/${this._totalPages}` : '';
+    const logSig = this._activity.map(a => a.at + a.text).join('|') + '#' + pageSuffix + '#' + this._finished;
+    if (!this._activityDirty && log.dataset.sig === logSig) return;
+    this._activityDirty = false;
+    log.dataset.sig = logSig;
+    log.innerHTML = '';
+    this._activity.forEach((a, i) => {
+      const li = document.createElement('li');
+      const isLast = i === this._activity.length - 1;
+      if (isLast) li.className = 'active';
+      const t = document.createElement('span');
+      t.className = 'pa-t';
+      t.textContent = '+' + this._formatTime(a.at - this._startTime);
+      const x = document.createElement('span');
+      x.className = 'pa-x';
+      x.textContent = a.text + (isLast ? pageSuffix : '');
+      li.append(t, x);
+      log.appendChild(li);
+    });
+  },
+
   _startTicker() {
     if (this._interval) clearInterval(this._interval);
     this._interval = setInterval(() => {
@@ -159,6 +335,7 @@ const ProgressUI = {
       }
       
       this._updatePageCountDisplay();
+      this._renderActivity();
     }, 250);
   },
 
@@ -313,6 +490,7 @@ const ProgressUI = {
 
     this._setVisualStage(1);
     this._updatePageCountDisplay();
+    this._resetActivity(subtitle || title || 'কাজ শুরু হয়েছে');
 
     // লাইভ কোটেশন শুরু
     this._startQuoteRotation();
@@ -327,6 +505,7 @@ const ProgressUI = {
   setLabel(t) {
     const e = this._els().subtitle;
     if (e) e.textContent = t || '';
+    if (t) this._logActivity(t);
   },
 
   setScope(t) {
@@ -405,6 +584,7 @@ const ProgressUI = {
       e.ringIcon.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
     }
     if (e.time) e.time.textContent = `Done • ${this._elapsed()}`;
+    this._finishActivity();
     this._updatePageCountDisplay();
     this._stopQuoteRotation(); // শেষে বাড়তি AI কল নয়; যে উক্তিটা চলছিল সেটাই থাকে
   },
@@ -412,6 +592,7 @@ const ProgressUI = {
   setActiveModel(name) {
     const e = this._els().badge;
     if (e) e.textContent = name ? '🤖 ' + name : '';
+    this._modelName = name || '';
   },
 
   setPageCount(current, total) {
@@ -493,6 +674,7 @@ const ProgressUI = {
     if (this._interval) { clearInterval(this._interval);
       this._interval = null; }
     this._stopQuoteRotation();
+    this._clearActivity();
     const e = this._els();
     e.overlay.style.display = 'none';
     if (e.badge) e.badge.textContent = '';
