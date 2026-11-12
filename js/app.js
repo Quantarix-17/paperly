@@ -1434,6 +1434,46 @@ function getActiveStandingInstructionBlock() {
 }
 window.getActiveStandingInstructionBlock = getActiveStandingInstructionBlock;
 
+function _buildLanguageFormatInstruction(languageFormat) {
+  return languageFormat === 'english' ? `
+    === LANGUAGE FORMAT (MANDATORY — OVERRIDES EVERYTHING ELSE ABOUT LANGUAGE) ===
+    The user has explicitly selected "English only" from the format menu. Write the ENTIRE document in English only, no matter what language the user's own message/prompt is written in. Do not add Bengali translations or any Bengali text.
+  ` : languageFormat === 'bengali' ? `
+    === LANGUAGE FORMAT (MANDATORY — OVERRIDES EVERYTHING ELSE ABOUT LANGUAGE) ===
+    The user has explicitly selected "Bengali only" from the format menu. Write the ENTIRE document in Bengali (বাংলা) only, no matter what language the user's own message/prompt is written in. Do not add English translations or any English text (keep standard mathematical/scientific notation, symbols and proper nouns as-is).
+  ` : languageFormat === 'english_bengali' ? `
+    === LANGUAGE FORMAT (MANDATORY — OVERRIDES EVERYTHING ELSE ABOUT LANGUAGE) ===
+    The user has explicitly selected "English then Bengali" from the format menu. This applies no matter what language the user's own message/prompt is written in. Present the document bilingually: write each section in English first, followed immediately by its Bengali translation. Keep the same structure and meaning in both languages.
+  ` : languageFormat === 'english_bengali_explain' ? `
+    === LANGUAGE FORMAT (MANDATORY — OVERRIDES EVERYTHING ELSE ABOUT LANGUAGE) ===
+    The user has explicitly selected "English + Bengali Explained" from the format menu. This applies no matter what language the user's own message/prompt is written in. The document itself is written in English (the normal, full content). On top of that, you add SELECTIVE Bengali concept explanations — the Bengali part is NOT a translation and NOT a summary of every section.
+
+    1. WHERE TO ADD A BENGALI EXPLANATION — for CONCEPT parts that a learner would find hard, new or even slightly tricky, judged from the notes/source material (a beginner reading these notes should not be left puzzled by any key idea):
+       - new or technical terms, definitions and key concepts that are central to the topic (include moderately difficult ones too, not only the hardest);
+       - abstract ideas, theories, principles, laws, models, mechanisms, processes and "how/why it works" parts;
+       - things that are easy to confuse (similar-looking terms, subtle differences, common misconceptions);
+       - a concept that builds on an earlier one or introduces a new sub-idea inside a section, when a beginner could stumble on it;
+       - a hard formula/table/figure ONLY when understanding its meaning (not the calculation) is the difficulty.
+    2. WHERE NOT TO ADD ONE (strictly skip these):
+       - easy, obvious, self-explanatory or commonly known statements and everyday facts;
+       - plain lists, headings, intro/transition sentences, summaries, simple examples, and anything the English already makes clear;
+       - math problems, numericals, worked solutions, step-by-step calculations, exercises, MCQs, Q&A and any similar problem-solving content — never attach a Bengali explanation to these;
+       - a term that was already explained in Bengali earlier in this document (never repeat).
+       When a part is clearly easy, leave it out. When it is borderline (a beginner might or might not follow it), lean towards adding a short explanation. Still, the explanations must stay selective and meaningful: never put one under every section, and never explain something just to fill space. Aim for a gentle, steady presence of explanations across the document wherever a real concept appears, rather than just a few isolated ones.
+    3. HOW TO WRITE EACH EXPLANATION — use <div class="block-accent block-accent-blue"><b>বাংলা ব্যাখ্যা:</b> ...</div>, placed right after the English concept it explains. Make it detailed and genuinely clear (not a thin 1–2 line gloss), in simple spoken-style Bengali, as if teaching a beginner, covering as needed:
+       - what the concept actually means, in plain words;
+       - why it exists / why it matters / how it works, step by step if it is a process;
+       - one small everyday example or analogy that makes the idea click;
+       - what it is often confused with, and how it is different (only if relevant).
+       Length follows difficulty: a moderately hard term needs a short paragraph; a core, tricky concept can take a longer one (use a short <ul> if it has steps/parts). Never pad with filler, repetition of the English, or obvious statements just to make it longer.
+    4. NEVER translate the English sentence by sentence or word by word. Re-explain the idea in your own simple words and add understanding the English alone does not give.
+    5. Keep technical terms, symbols, formulas and proper nouns in English (or write them in brackets after the Bengali word) so the learner connects both languages. Avoid heavy/literary Bengali — prefer everyday spoken-style words.${_bnExplainDensityInstruction(getBnExplainDensity())}
+  ` : languageFormat === 'bengali_english' ? `
+    === LANGUAGE FORMAT (MANDATORY — OVERRIDES EVERYTHING ELSE ABOUT LANGUAGE) ===
+    The user has explicitly selected "Bengali then English" from the format menu. This applies no matter what language the user's own message/prompt is written in. Present the document bilingually: write each section in Bengali first, followed immediately by its English translation. Keep the same structure and meaning in both languages.
+  ` : '';
+}
+
 // ===== BUILD SHARED RULES =====
 // options.skipInstruction = true -> do not inject the standing Instruction (pure-copy / beautify only: content must stay verbatim).
 function buildSharedRules(isMonochromeMode, outputLanguage, options) {
@@ -1478,43 +1518,7 @@ function buildSharedRules(isMonochromeMode, outputLanguage, options) {
   `;
 
   const languageFormat = _syncPDFLanguageFormatPreference();
-  const languageFormatInstruction = languageFormat === 'english' ? `
-    === LANGUAGE FORMAT (MANDATORY — OVERRIDES EVERYTHING ELSE ABOUT LANGUAGE) ===
-    The user has explicitly selected "English only" from the format menu. Write the ENTIRE document in English only, no matter what language the user's own message/prompt is written in. Do not add Bengali translations or any Bengali text.
-  ` : languageFormat === 'bengali' ? `
-    === LANGUAGE FORMAT (MANDATORY — OVERRIDES EVERYTHING ELSE ABOUT LANGUAGE) ===
-    The user has explicitly selected "Bengali only" from the format menu. Write the ENTIRE document in Bengali (বাংলা) only, no matter what language the user's own message/prompt is written in. Do not add English translations or any English text (keep standard mathematical/scientific notation, symbols and proper nouns as-is).
-  ` : languageFormat === 'english_bengali' ? `
-    === LANGUAGE FORMAT (MANDATORY — OVERRIDES EVERYTHING ELSE ABOUT LANGUAGE) ===
-    The user has explicitly selected "English then Bengali" from the format menu. This applies no matter what language the user's own message/prompt is written in. Present the document bilingually: write each section in English first, followed immediately by its Bengali translation. Keep the same structure and meaning in both languages.
-  ` : languageFormat === 'english_bengali_explain' ? `
-    === LANGUAGE FORMAT (MANDATORY — OVERRIDES EVERYTHING ELSE ABOUT LANGUAGE) ===
-    The user has explicitly selected "English + Bengali Explained" from the format menu. This applies no matter what language the user's own message/prompt is written in. The document itself is written in English (the normal, full content). On top of that, you add SELECTIVE Bengali concept explanations — the Bengali part is NOT a translation and NOT a summary of every section.
-
-    1. WHERE TO ADD A BENGALI EXPLANATION — for CONCEPT parts that a learner would find hard, new or even slightly tricky, judged from the notes/source material (a beginner reading these notes should not be left puzzled by any key idea):
-       - new or technical terms, definitions and key concepts that are central to the topic (include moderately difficult ones too, not only the hardest);
-       - abstract ideas, theories, principles, laws, models, mechanisms, processes and "how/why it works" parts;
-       - things that are easy to confuse (similar-looking terms, subtle differences, common misconceptions);
-       - a concept that builds on an earlier one or introduces a new sub-idea inside a section, when a beginner could stumble on it;
-       - a hard formula/table/figure ONLY when understanding its meaning (not the calculation) is the difficulty.
-    2. WHERE NOT TO ADD ONE (strictly skip these):
-       - easy, obvious, self-explanatory or commonly known statements and everyday facts;
-       - plain lists, headings, intro/transition sentences, summaries, simple examples, and anything the English already makes clear;
-       - math problems, numericals, worked solutions, step-by-step calculations, exercises, MCQs, Q&A and any similar problem-solving content — never attach a Bengali explanation to these;
-       - a term that was already explained in Bengali earlier in this document (never repeat).
-       When a part is clearly easy, leave it out. When it is borderline (a beginner might or might not follow it), lean towards adding a short explanation. Still, the explanations must stay selective and meaningful: never put one under every section, and never explain something just to fill space. Aim for a gentle, steady presence of explanations across the document wherever a real concept appears, rather than just a few isolated ones.
-    3. HOW TO WRITE EACH EXPLANATION — use <div class="block-accent block-accent-blue"><b>বাংলা ব্যাখ্যা:</b> ...</div>, placed right after the English concept it explains. Make it detailed and genuinely clear (not a thin 1–2 line gloss), in simple spoken-style Bengali, as if teaching a beginner, covering as needed:
-       - what the concept actually means, in plain words;
-       - why it exists / why it matters / how it works, step by step if it is a process;
-       - one small everyday example or analogy that makes the idea click;
-       - what it is often confused with, and how it is different (only if relevant).
-       Length follows difficulty: a moderately hard term needs a short paragraph; a core, tricky concept can take a longer one (use a short <ul> if it has steps/parts). Never pad with filler, repetition of the English, or obvious statements just to make it longer.
-    4. NEVER translate the English sentence by sentence or word by word. Re-explain the idea in your own simple words and add understanding the English alone does not give.
-    5. Keep technical terms, symbols, formulas and proper nouns in English (or write them in brackets after the Bengali word) so the learner connects both languages. Avoid heavy/literary Bengali — prefer everyday spoken-style words.${_bnExplainDensityInstruction(getBnExplainDensity())}
-  ` : languageFormat === 'bengali_english' ? `
-    === LANGUAGE FORMAT (MANDATORY — OVERRIDES EVERYTHING ELSE ABOUT LANGUAGE) ===
-    The user has explicitly selected "Bengali then English" from the format menu. This applies no matter what language the user's own message/prompt is written in. Present the document bilingually: write each section in Bengali first, followed immediately by its English translation. Keep the same structure and meaning in both languages.
-  ` : '';
+  const languageFormatInstruction = _buildLanguageFormatInstruction(languageFormat);
 
   const sourceInterpretationRules = `
     === SOURCE / ATTACHMENT INTERPRETATION RULES ===
@@ -3854,14 +3858,16 @@ function _buildCopyRefineRules(canvasOn) {
 // document" (solve problems, add Given/Step/Final Answer, callout boxes, charts, illustrations,
 // Bengali explanations, short paragraphs...). It made Copy rewrite and add content.
 // Copy uses only the small rule set below; Copy & Refine keeps the old behaviour.
-function _buildCopyVerbatimRules() {
+function _buildCopyVerbatimRules(langFmt) {
+  const _fmt = !!(langFmt && langFmt !== 'default');
+  const _lbl = _fmt ? (_COPY_LANGUAGE_FORMAT_LABELS[langFmt] || langFmt) : '';
   return `=== VERBATIM COPY MODE (THIS IS THE ONLY SET OF RULES FOR THIS TASK) ===
 You are a TEXT-TO-HTML TYPESETTER, not a writer, teacher, editor or problem solver.
-V1. The visible text of your output must be WORD-FOR-WORD identical to the source: same words, same order, same sentences, same numbers, same examples, same practice problems. Do not reword, correct, shorten, expand, summarize, translate or "improve" anything.
-V2. NEVER ADD anything that is not in the source. Specifically forbidden: solutions or answers to questions/exercises/practice problems (if the source has only the question, output only the question), worked steps, labels such as "Solution", "Given:", "Step 1:", "Final Answer:", "Definition:", "Note:", "Remember:", Bengali/English explanations or translations, extra examples, introductions, conclusions, comments, figure captions that are not in the source.
-V3. NEVER ADD VISUALS: no charts, graphs, plots, <!--CHART:...--> placeholders, SVG, illustrations, icons, images, diagrams, new tables, colored/callout boxes (no block-definition / block-example / block-important / block-note / block-warning / block-solution / block-accent / math-step / math-final-answer divs). A picture/table/list appears in the output ONLY if it is in the source.
+V1. ${_fmt ? `The ORIGINAL source text must stay WORD-FOR-WORD identical (same words, same order, same sentences, numbers, examples, practice problems). The user selected the Format "${_lbl}", so you MAY ADD ONLY the translation / explanation that the FORMAT CONVERSION and LANGUAGE FORMAT sections below ask for, placed as described there. Never reword, correct, shorten or remove the original text, and never let an added part replace or alter it.` : `The visible text of your output must be WORD-FOR-WORD identical to the source: same words, same order, same sentences, same numbers, same examples, same practice problems. Do not reword, correct, shorten, expand, summarize, translate or "improve" anything.`}
+V2. NEVER ADD anything that is not in the source${_fmt ? ' except what the selected Format asks for (V1)' : ''}. Specifically forbidden: solutions or answers to questions/exercises/practice problems (if the source has only the question, output only the question), worked steps, labels such as "Solution", "Given:", "Step 1:", "Final Answer:", "Definition:", "Note:", "Remember:", ${_fmt ? '' : 'Bengali/English explanations or translations, '}extra examples, introductions, conclusions, comments, figure captions that are not in the source.
+V3. NEVER ADD VISUALS: no charts, graphs, plots, <!--CHART:...--> placeholders, SVG, illustrations, icons, images, diagrams, new tables, colored/callout boxes (no block-definition / block-example / block-important / block-note / block-warning / block-solution / math-step / math-final-answer divs${_fmt ? '; the ONLY box allowed is the block-accent block-accent-blue "বাংলা ব্যাখ্যা" box when the Format asks for Bengali explanations' : '; no block-accent either'}). A picture/table/list appears in the output ONLY if it is in the source.
 V4. Use only plain structure tags: <h1>/<h2>/<h3> for headings (see HEADING SIZES rule), <p> for every paragraph, <ul>/<ol>/<li> for lists that exist in the source, <table> only for tables that exist in the source, <b>/<i> only where the source itself clearly marks bold/italic or a label like "Theorem:", "Proof:", "Example:", "Solution".
-V5. Remove only non-content leftovers: AI-chat wrapper sentences if the source clearly starts/ends with them (e.g. "Sure! Here is...", "Let me know if..."), page numbers, running headers/footers, OCR markers, and any "ব াংলা ব্যাখ্যা"-style text ONLY if it is not part of the source (if it IS in the source, keep it exactly).
+V5. Remove only non-content leftovers: AI-chat wrapper sentences if the source clearly starts/ends with them (e.g. "Sure! Here is...", "Let me know if..."), page numbers, running headers/footers and OCR markers. Text that IS in the source (including Bengali explanation boxes) is kept exactly.
 V6. Keep the source's paragraph structure: every source paragraph becomes its own <p>; do not merge separate paragraphs and do not split one paragraph.
 ${_COPY_EQUATION_SPACING_RULES}`;
 }
@@ -4192,8 +4198,8 @@ async function handleCopyStyleCommand(inputField, opts = {}) {
   // (2) figures may be added. Canvas chip decides whether ILLUSTRATIONS are allowed —
   // it has to be read here, BEFORE the chips are cleared below.
   const isRefine = !!opts.refine;
-  // Plain Copy never ADDS content: the "English + Bengali Explained" format adds explanations, so Copy ignores it.
-  const copyLanguageFormat = (!isRefine && _rawCopyLanguageFormat === 'english_bengali_explain') ? 'default' : _rawCopyLanguageFormat;
+  // Format menu selected (EN/BN, BN/EN, EN+Bengali Explained...): Copy keeps the ORIGINAL text verbatim and may ADD translation / explanation.
+  const copyLanguageFormat = _rawCopyLanguageFormat;
   const canvasOn = (APP_STATE.selectedCommands || []).some(c => c.id === 'canvas' || c.category === 'visual');
   if (isRefine) APP_STATE.canvasIllustrationsEnabled = canvasOn;
 
@@ -4248,7 +4254,7 @@ async function handleCopyStyleCommand(inputField, opts = {}) {
 
     const copySystem =
       `You are a pure FORMATTING engine. Your ONLY job is to take the source content below and re-present it with clean visual styling — you must NOT summarize, shorten, expand, paraphrase, correct, reorder, ${copyLanguageFormat === 'default' ? 'translate, ' : ''}or omit ANY piece of it.${copyLanguageFormat !== 'default' ? ' The ONLY change allowed is converting the language to the selected Format (see FORMAT CONVERSION below).' : ''}\n` +
-      `${isRefine ? (typeof buildSharedRules === 'function' ? buildSharedRules(isMonochromeMode, outputLanguage, { skipInstruction: true }) : '') : _buildCopyVerbatimRules()}\n` +
+      `${isRefine ? (typeof buildSharedRules === 'function' ? buildSharedRules(isMonochromeMode, outputLanguage, { skipInstruction: true }) : '') : _buildCopyVerbatimRules(copyLanguageFormat) + (copyLanguageFormat !== 'default' ? '\n' + _buildLanguageFormatInstruction(copyLanguageFormat) : '')}\n` +
       `=== ABSOLUTE RULES FOR THIS "COPY" TASK ===\n` +
       `1. Every sentence, word, number, fact, name, and value from the source MUST appear in your output — nothing added, nothing removed, nothing summarized.\n` +
       `2. Do NOT add your own commentary, introduction, conclusion, or explanation that wasn't in the source.\n` +
@@ -4294,7 +4300,7 @@ async function handleCopyStyleCommand(inputField, opts = {}) {
           : '';
         return instructionPrefix + formatNote + partNote + (isRefine
           ? `Restyle and present the following source content. Drop ONLY the AI chat wrapper (see the REFINE rules), keep every other detail, and add figures where they genuinely help:\n[SOURCE FILE ${chunk.fileNo}: ${chunk.name}]\n${chunk.text}\nEND SOURCE FILE ${chunk.fileNo}`
-          : `VERBATIM COPY — restyle ONLY. Output exactly the source words: do NOT solve the practice problems, do NOT add Given/Step/Final Answer, explanations, translations, charts, figures or callout boxes. Give every paragraph and every display equation its own <p>.\nRestyle and present ALL of the following source content, preserving every detail:\n[SOURCE FILE ${chunk.fileNo}: ${chunk.name}]\n${chunk.text}\nEND SOURCE FILE ${chunk.fileNo}`);
+          : `VERBATIM COPY — keep the original text exactly. ${copyLanguageFormat === 'default' ? 'Do NOT solve the practice problems, do NOT add Given/Step/Final Answer, explanations, translations, charts, figures or callout boxes.' : 'Add ONLY the translation/explanation the selected Format asks for; do NOT solve the practice problems, do NOT add Given/Step/Final Answer, charts or figures.'} Give every paragraph and every display equation its own <p>.\nRestyle and present ALL of the following source content, preserving every detail:\n[SOURCE FILE ${chunk.fileNo}: ${chunk.name}]\n${chunk.text}\nEND SOURCE FILE ${chunk.fileNo}`);
       }
     };
 
