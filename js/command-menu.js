@@ -1005,6 +1005,7 @@ function renderSelectedCommandChips() {
     const _dispLabel = _chipDisplayLabel(c);
     const labelText = c.param ? `@${_dispLabel.replace(/\s*\[.*?\]/, '')}:${c.param}` : `@${_dispLabel}`;
     if (c.implicit) chip.classList.add('at-chip-implicit');
+    if (c.id === 'create_pdf' || c.id === 'create_slides' || c.id === 'add') chip.classList.add('at-chip-create');   // @Create / @Add chip: green
     const labelSpan = document.createElement('span');
     labelSpan.innerHTML = `<span class="at-chip-icon">${renderCommandIcon(_chipDisplayIcon(c))}</span><span>${labelText}</span>`;
     const removeBtn = document.createElement('button');
@@ -1089,6 +1090,7 @@ function _buildAtIntentGrid() {
       : memberCmds.every(c => isAtCommandDisabled(c)));
     const card = document.createElement('div');
     card.className = 'at-intent-card' +
+      (group.key === 'create' ? ' at-intent-create' : '') +   // Create / Add card: styled green
       (selectedMember ? ' selected' : '') +
       (AT_MENU_STATE.expandedGroup === group.key ? ' expanded' : '') +
       (allDisabled ? ' disabled' : '');
