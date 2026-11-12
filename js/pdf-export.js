@@ -355,6 +355,7 @@ async function _rasterizeMathForWordExport(temp) {
       holder.style.cssText = 'display:inline-block; padding:2px 4px; background:#fff;';
       holder.appendChild(eq.cloneNode(true));
       stage.appendChild(holder);
+      _pdfFixKatexSvg(holder);
       const canvas = await window.html2canvas(holder, { backgroundColor: '#ffffff', scale: 2.5 });
       const img = document.createElement('img');
       img.src = canvas.toDataURL('image/png');
@@ -1640,6 +1641,130 @@ function _pdfFixBengaliInMath(root) {
 }
 
 
+// ===== KaTeX TALL DELIMITERS ({ } [ ] ( ) | ‖ ⌊ ⌋ ⌈ ⌉) -> ONE fixed-size <svg> =====
+// WHY: KaTeX builds every delimiter taller than \Bigg out of a vlist: separate glyph pieces (top hook / middle cusp / bottom hook
+// in KaTeX_Size4) plus separate absolutely-positioned <svg> rods, each placed with a negative `top`, inside an inline-table.
+// html2canvas cannot reproduce that stack: the rods vanish or drift and the hooks end up detached (the "broken brace/bracket"
+// symptom). Before any capture, each such delimiter is replaced by a single self-contained <svg> whose width/height/baseline are
+// measured from the live layout, so the picture no longer depends on how the stack is laid out. Idempotent; never throws.
+function _pdfBakeKatexDelimiters(root) {
+  try {
+    if (!root || !root.querySelectorAll) return;
+    const doc = root.ownerDocument || document;
+    const win = doc.defaultView || window;
+    const NS = 'http://www.w3.org/2000/svg';
+    const GLYPH_KIND = [
+      [/[\u23A7-\u23A9]/, 'lbrace'], [/[\u23AB-\u23AD]/, 'rbrace'],
+      [/[\u239B-\u239D]/, 'lparen'], [/[\u239E-\u23A0]/, 'rparen'],
+      [/[\u23A1-\u23A3]/, 'lbrack'], [/[\u23A4-\u23A6]/, 'rbrack']
+    ];
+    root.querySelectorAll('.katex .delimsizing.mult').forEach((el) => {
+      if (el.getAttribute('data-pdfbaked')) return;
+      try {
+        const vt = el.querySelector('.vlist-t');
+        const first = vt && vt.querySelector('.vlist-r .vlist');
+        if (!vt || !first) return;
+        const cs = win.getComputedStyle(el);
+        const fs = parseFloat(cs.fontSize) || 16;
+        const color = cs.color || '#000';
+        const T = vt.getBoundingClientRect();           // whole stack: height above baseline + depth below it
+        const F = first.getBoundingClientRect();        // its bottom edge is the baseline
+        const svgs = Array.from(el.querySelectorAll('svg'));
+        const glyphs = Array.from(el.querySelectorAll('.delimsizinginner'));
+        // ---- real extent = union of every piece (the table itself can be narrower than its absolutely placed pieces) ----
+        const E = el.getBoundingClientRect();           // the delimiter's real LAYOUT box (an inline box one line tall): kept untouched
+        let L = Infinity, Rr = -Infinity, Tp = T.top, Bt = T.bottom;
+        svgs.forEach((s) => { const r = s.getBoundingClientRect(); if (r.width > 0 && r.height > 0) { L = Math.min(L, r.left); Rr = Math.max(Rr, r.right); Tp = Math.min(Tp, r.top); Bt = Math.max(Bt, r.bottom); } });
+        glyphs.forEach((g) => { const r = g.getBoundingClientRect(); if (r.width > 0) { L = Math.min(L, r.left); Rr = Math.max(Rr, r.right); } });
+        if (!isFinite(L)) { L = E.left; Rr = E.right; }
+        const W = Rr - L, H = Bt - Tp;
+        if (!(W > 1 && H > 1)) return;
+        const depth = Bt - F.bottom;                    // how far the stack hangs below the text baseline
+        const glyphText = glyphs.map((g) => g.textContent).join('');
+        let kind = '';
+        for (const [re, k] of GLYPH_KIND) if (re.test(glyphText)) { kind = k; break; }
+
+        const svg = doc.createElementNS(NS, 'svg');
+        svg.setAttribute('xmlns', NS);
+        svg.setAttribute('width', W.toFixed(3)); svg.setAttribute('height', H.toFixed(3));
+        svg.setAttribute('viewBox', '0 0 ' + W.toFixed(3) + ' ' + H.toFixed(3));
+        svg.setAttribute('preserveAspectRatio', 'none');
+        svg.setAttribute('overflow', 'visible');
+        svg.setAttribute('data-pdfbaked-svg', '1');
+        svg.style.cssText = 'display:block;position:static;overflow:visible;width:' + W.toFixed(3) + 'px;height:' + H.toFixed(3) + 'px;';
+
+        if (kind && glyphs.length) {
+          // glyph-stacked delimiter (braces / parentheses / old-style brackets): redraw the whole thing as one stroked path
+          const th = Math.max(0.9, 0.085 * fs);          // stroke weight ~ KaTeX rule
+          const y0 = th / 2, yE = H - th / 2;
+          const right = /^r/.test(kind);
+          const X = (x) => (right ? W - x : x);
+          const p = doc.createElementNS(NS, 'path');
+          let d = '';
+          if (/brace/.test(kind)) {
+            const c = 0.5 * W, xe = 0.84 * W, xt = 0.14 * W;
+            const hh = Math.min(0.46 * fs, H * 0.2), ch = Math.min(0.46 * fs, H * 0.2), ym = H / 2;
+            d = 'M' + X(xe) + ' ' + y0 +
+                ' C' + X(c + (xe - c) * 0.45) + ' ' + y0 + ' ' + X(c) + ' ' + (y0 + hh * 0.35) + ' ' + X(c) + ' ' + (y0 + hh) +
+                ' L' + X(c) + ' ' + (ym - ch) +
+                ' C' + X(c) + ' ' + (ym - ch * 0.4) + ' ' + X(xt + (c - xt) * 0.45) + ' ' + ym + ' ' + X(xt) + ' ' + ym +
+                ' C' + X(xt + (c - xt) * 0.45) + ' ' + ym + ' ' + X(c) + ' ' + (ym + ch * 0.4) + ' ' + X(c) + ' ' + (ym + ch) +
+                ' L' + X(c) + ' ' + (yE - hh) +
+                ' C' + X(c) + ' ' + (yE - hh * 0.35) + ' ' + X(c + (xe - c) * 0.45) + ' ' + yE + ' ' + X(xe) + ' ' + yE;
+          } else if (/paren/.test(kind)) {
+            const xe = 0.78 * W, xc = 0.22 * W;
+            d = 'M' + X(xe) + ' ' + y0 + ' C' + X(xc) + ' ' + (H * 0.30) + ' ' + X(xc) + ' ' + (H * 0.70) + ' ' + X(xe) + ' ' + yE;
+          } else {                                       // bracket
+            const xs = 0.30 * W, xv = 0.72 * W;          // vertical bar at xv, serifs reach back to xs
+            d = 'M' + X(xs) + ' ' + y0 + ' L' + X(xv) + ' ' + y0 + ' L' + X(xv) + ' ' + yE + ' L' + X(xs) + ' ' + yE;
+          }
+          p.setAttribute('d', d);
+          p.setAttribute('fill', 'none'); p.setAttribute('stroke', color);
+          p.setAttribute('stroke-width', th.toFixed(3)); p.setAttribute('stroke-linecap', 'butt'); p.setAttribute('stroke-linejoin', 'miter');
+          // katex.css has `.katex svg path { stroke: none }`, which beats presentation attributes: pin the stroke inline as well
+          p.style.setProperty('stroke', color, 'important'); p.style.setProperty('fill', 'none', 'important');
+          p.style.setProperty('stroke-width', th.toFixed(3) + 'px', 'important');
+          svg.appendChild(p);
+        } else if (svgs.length) {
+          // pure-SVG delimiter (brackets, bars, floors, ceilings): keep KaTeX's own outline, but pin every piece at an explicit
+          // pixel box with preserveAspectRatio="none" so nothing can be cropped, re-anchored or rescaled during capture
+          svgs.forEach((s) => {
+            const r = s.getBoundingClientRect();
+            if (!(r.width > 0 && r.height > 0)) return;
+            const vb = (s.getAttribute('viewBox') || '').trim().split(/\s+/).map(Number);
+            if (vb.length !== 4 || !(vb[2] > 0 && vb[3] > 0)) return;
+            const g = doc.createElementNS(NS, 'svg');
+            g.setAttribute('x', (r.left - L).toFixed(3)); g.setAttribute('y', (r.top - Tp).toFixed(3));
+            g.setAttribute('width', r.width.toFixed(3)); g.setAttribute('height', r.height.toFixed(3));
+            g.setAttribute('viewBox', vb.join(' ')); g.setAttribute('preserveAspectRatio', 'none'); g.setAttribute('overflow', 'visible');
+            s.querySelectorAll('path').forEach((pa) => {
+              const q = doc.createElementNS(NS, 'path');
+              q.setAttribute('d', pa.getAttribute('d') || ''); q.setAttribute('fill', color); q.setAttribute('stroke', 'none'); q.style.setProperty('fill', color, 'important');
+              g.appendChild(q);
+            });
+            svg.appendChild(g);
+          });
+          if (!svg.firstChild) return;
+        } else return;
+
+        // ---- swap the stack for the single svg WITHOUT touching layout ----
+        // KaTeX's delimiter takes only one line of layout height; the tall stack hangs out of it through negative offsets.
+        // So: a zero-height inline-block (its bottom edge sits exactly on the text baseline) keeps the original width, and the
+        // svg is positioned absolutely from that baseline.
+        svg.style.cssText += ';position:absolute;left:' + (L - E.left).toFixed(3) + 'px;top:' + (Tp - F.bottom).toFixed(3) + 'px;';
+        const holder = doc.createElement('span');
+        holder.setAttribute('data-pdfbaked', '1');
+        holder.style.cssText = 'display:inline-block;position:relative;box-sizing:content-box;padding:0;margin:0;border:0;' +
+          'width:' + E.width.toFixed(3) + 'px;height:0;vertical-align:baseline;line-height:0;overflow:visible;';
+        holder.appendChild(svg);
+        el.textContent = '';
+        el.setAttribute('data-pdfbaked', '1');
+        el.appendChild(holder);
+      } catch (_) { /* leave this delimiter as KaTeX drew it */ }
+    });
+  } catch (_) { /* never break the export */ }
+}
+
 // ===== KaTeX SVG (square-root sign, long arrows, braces) =====
 // KaTeX draws \sqrt as an inline <svg> that is sized and coloured ONLY by katex.min.css (width:100%, fill:currentColor,
 // path{stroke:none}, overflow hidden on .hide-tail). html2canvas copies the <svg> into a standalone image, so those CSS rules
@@ -1648,8 +1773,10 @@ function _pdfFixBengaliInMath(root) {
 function _pdfFixKatexSvg(root) {
   try {
     if (!root || !root.querySelectorAll) return;
+    _pdfBakeKatexDelimiters(root);     // tall { } [ ] ( ) | delimiters -> one pinned <svg> each (see above)
     root.querySelectorAll('.katex svg').forEach((sv) => {
       try {
+        if (sv.closest && sv.closest('[data-pdfbaked-svg]')) return;   // already pinned: do not re-slice / re-colour
         const win = (sv.ownerDocument && sv.ownerDocument.defaultView) || window;
         const cs = win.getComputedStyle(sv);
         const r = sv.getBoundingClientRect();
