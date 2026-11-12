@@ -521,6 +521,7 @@ window.showSettingsTab = function (tabName) {
   panels.forEach(function (p) {
     p.hidden = p.dataset.panel !== tabName;
   });
+  try { _studioEnsureTabLabel(); } catch (_) {}
   return true;
 };
 
@@ -601,27 +602,7 @@ window.restructureSettingsPanel = function () {
     });
 
     // 2) Rename the middle tab
-    const tabs = Array.prototype.slice.call(tabBar.querySelectorAll('[data-tab]'));
-    const mid = tabs.slice(1).find(function (b) { return /model/i.test(b.dataset.tab || ''); }) ||
-                tabs.slice(1).find(function (b) { return /setting/i.test(b.dataset.tab || '') || /setting/i.test(b.textContent || ''); }) ||
-                tabs[1];
-    if (mid && mid.dataset.labelFixed !== '1') {
-      mid.dataset.labelFixed = '1';
-      mid.removeAttribute('data-i18n');
-      mid.removeAttribute('data-i18n-key');
-      mid.querySelectorAll('[data-i18n],[data-i18n-key]').forEach(function (el) {
-        el.removeAttribute('data-i18n'); el.removeAttribute('data-i18n-key');
-      });
-      const walker = document.createTreeWalker(mid, NodeFilter.SHOW_TEXT, null);
-      let n, done = false;
-      while ((n = walker.nextNode())) {
-        if (!n.textContent.trim()) continue;
-        n.textContent = done ? '' : 'AI Models';
-        done = true;
-      }
-      if (!done) mid.textContent = 'AI Models';
-      mid.setAttribute('aria-label', 'AI Models');
-    }
+    _studioEnsureTabLabel();
 
     // Make sure something is selected after removals
     if (!tabBar.querySelector('[data-tab].active')) {
@@ -630,7 +611,7 @@ window.restructureSettingsPanel = function () {
     }
 
     // 3) Move Auto-switch into Preference (retry later if not rendered yet)
-    if (!_studioMoveAutoSwitch()) _studioWatchForAutoSwitch();
+    _studioLateRestructure();
     return true;
   } catch (e) {
     console.warn('[StudioSettings] restructureSettingsPanel failed:', e);
@@ -686,20 +667,114 @@ function _studioMoveAutoSwitch() {
   return true;
 }
 
-let _studioAutoSwitchObserver = null;
-function _studioWatchForAutoSwitch() {
-  if (_studioAutoSwitchObserver || typeof MutationObserver === 'undefined') return;
+// Renames the middle tab to "AI Models". Safe to call repeatedly: it re-applies
+// the label if anything else rewrote it.
+function _studioEnsureTabLabel() {
+  const tabBar = document.querySelector('.settings-tab-bar');
+  if (!tabBar) return;
+  let mid = tabBar.querySelector('[data-ai-models-tab="1"]');
+  if (!mid) {
+    const tabs = Array.prototype.slice.call(tabBar.querySelectorAll('[data-tab]'));
+    mid = tabs.slice(1).find(function (b) { return /model/i.test(b.dataset.tab || ''); }) ||
+          tabs.slice(1).find(function (b) { return /setting/i.test(b.dataset.tab || '') || /setting/i.test(b.textContent || ''); }) ||
+          tabs[1];
+    if (!mid) return;
+    mid.setAttribute('data-ai-models-tab', '1');
+    mid.removeAttribute('data-i18n');
+    mid.removeAttribute('data-i18n-key');
+    mid.querySelectorAll('[data-i18n],[data-i18n-key]').forEach(function (el) {
+      el.removeAttribute('data-i18n'); el.removeAttribute('data-i18n-key');
+    });
+  }
+  if ((mid.textContent || '').trim() !== 'AI Models') {
+    const walker = document.createTreeWalker(mid, NodeFilter.SHOW_TEXT, null);
+    let n, done = false;
+    while ((n = walker.nextNode())) {
+      if (!n.textContent.trim()) continue;
+      n.textContent = done ? '' : 'AI Models';
+      done = true;
+    }
+    if (!done) mid.textContent = 'AI Models';
+  }
+  mid.setAttribute('aria-label', 'AI Models');
+  mid.title = 'AI Models';
+}
+
+// Moves "+ Add new AI model" into the Model list toolbar (far right, same row
+// as Import / Export / Test all / Remove) and collapses the now-empty
+// "Add a new model" section so no blank space is left behind.
+function _studioMoveAddModelButton() {
+  const panels = document.querySelectorAll('.settings-tab-panel');
+  const findBtn = function (re) {
+    let hit = null;
+    panels.forEach(function (p) {
+      if (hit) return;
+      p.querySelectorAll('button,[role="button"],a').forEach(function (el) {
+        if (!hit && re.test((el.textContent || '').replace(/\s+/g, ' ').trim())) hit = el;
+      });
+    });
+    return hit;
+  };
+  const addBtn = findBtn(/^\+?\s*add new ai model$/i);
+  const importBtn = findBtn(/^import$/i);
+  if (!addBtn || !importBtn) return false;
+  const toolbar = importBtn.parentElement;
+  if (!toolbar) return false;
+  if (addBtn.parentElement === toolbar && addBtn.dataset.studioMoved === '1') return true;
+
+  const oldRow = addBtn.parentElement;
+  const cs = window.getComputedStyle(toolbar);
+  if (cs.display !== 'flex' && cs.display !== 'inline-flex') toolbar.style.display = 'flex';
+  toolbar.style.flexWrap = 'wrap';
+  toolbar.style.alignItems = 'center';
+  addBtn.style.marginLeft = 'auto';
+  addBtn.dataset.studioMoved = '1';
+  toolbar.appendChild(addBtn);
+
+  // Collapse the empty "Add a new model" section.
+  const hasUi = function (el) { return !!el.querySelector('button,input,select,textarea,[role="switch"]'); };
+  if (oldRow && oldRow !== toolbar && !oldRow.children.length) oldRow.style.display = 'none';
+  let heading = null;
+  panels.forEach(function (p) {
+    if (heading) return;
+    p.querySelectorAll('*').forEach(function (el) {
+      if (!heading && !el.children.length && /^\s*add a new model\s*$/i.test(el.textContent || '')) heading = el;
+    });
+  });
+  if (heading) {
+    // Highest ancestor of the heading that does not contain the toolbar.
+    let sec = heading;
+    while (sec.parentElement && !sec.parentElement.contains(toolbar) &&
+           !sec.parentElement.classList.contains('settings-tab-panel')) {
+      sec = sec.parentElement;
+    }
+    if (!hasUi(sec)) sec.style.display = 'none';
+    else heading.style.display = 'none';
+  }
+  return true;
+}
+
+// Runs the DOM moves that depend on the AI Models panel being rendered;
+// keeps watching (cheaply) until everything has been applied once.
+let _studioLateObserver = null;
+function _studioLateRestructure() {
+  let a = false, b = false;
+  try { a = _studioMoveAutoSwitch(); } catch (e) { console.warn('[StudioSettings] auto-switch move failed:', e); }
+  try { b = _studioMoveAddModelButton(); } catch (e) { console.warn('[StudioSettings] add-model move failed:', e); }
+  if (a && b) return true;
+  if (_studioLateObserver || typeof MutationObserver === 'undefined') return false;
   let t = null;
-  _studioAutoSwitchObserver = new MutationObserver(function () {
+  _studioLateObserver = new MutationObserver(function () {
     clearTimeout(t);
     t = setTimeout(function () {
-      if (_studioMoveAutoSwitch()) {
-        _studioAutoSwitchObserver.disconnect();
-        _studioAutoSwitchObserver = null;
+      if (_studioLateRestructure() && _studioLateObserver) {
+        _studioLateObserver.disconnect();
+        _studioLateObserver = null;
       }
     }, 150);
   });
-  _studioAutoSwitchObserver.observe(document.body, { childList: true, subtree: true });
+  _studioLateObserver.observe(document.body, { childList: true, subtree: true });
+  return false;
 }
 
 // ---- Header rename: "AI Models" → "Settings" (best effort) ----
@@ -707,39 +782,9 @@ function _studioWatchForAutoSwitch() {
 // is a harmless no-op there; it only matters for any residual "AI Models"
 // labels left over from an older HTML.
 window.renameAIModelsHeaderToSettings = function () {
-  try {
-    let found = false;
-    const selectors = [
-      '#ai-models-btn', '.ai-models-btn',
-      '[data-action="open-ai-models"]',
-      '[data-i18n-key="aiModels"]', '[data-i18n="aiModels"]'
-    ];
-    selectors.forEach(function (sel) {
-      document.querySelectorAll(sel).forEach(function (el) {
-        found = true;
-        const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
-        let n;
-        while ((n = walker.nextNode())) {
-          n.textContent = n.textContent.replace(/AI\s*Models?/gi, 'Settings');
-        }
-        if (el.hasAttribute('title')) el.setAttribute('title', el.getAttribute('title').replace(/AI\s*Models?/gi, 'Settings'));
-        if (el.hasAttribute('aria-label')) el.setAttribute('aria-label', el.getAttribute('aria-label').replace(/AI\s*Models?/gi, 'Settings'));
-      });
-    });
-    if (!found) {
-      document.querySelectorAll('button, a, [role="button"]').forEach(function (el) {
-        if (el.children.length > 2) return;
-        if (/^\s*AI\s*Models?\s*$/i.test(el.textContent || '')) {
-          el.textContent = 'Settings';
-          found = true;
-        }
-      });
-    }
-    return found;
-  } catch (e) {
-    console.warn('[StudioSettings] header rename failed:', e);
-    return false;
-  }
+  // Intentionally a no-op: the modal title already says "Settings", and the
+  // middle tab must read "AI Models" (the old rewrite turned it back).
+  return false;
 };
 
 // Wire up header rename + tabs once the DOM is ready. Both are idempotent.
