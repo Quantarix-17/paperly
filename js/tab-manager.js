@@ -249,10 +249,15 @@ window.getTextFigurePolicy = function () {
       /* ---- layout fix: tab bar must never be squeezed out by tall panels ---- */
       '.settings-tab-bar{flex:0 0 auto !important;min-height:44px;max-height:none !important;}',
       '.settings-tab-bar [data-tab]{flex-shrink:0;}',
-      /* ---- remove dead space under the tab bar (empty leading wrappers) ---- */
-      '.settings-tab-panel{min-height:0;padding-top:10px !important;}',
-      '.settings-tab-panel>div:empty,.settings-tab-panel>section:empty,.settings-tab-panel>header:empty{display:none !important;}',
-      '.settings-tab-panel>.settings-panel-heading:empty,.settings-tab-panel>.section-header:empty{display:none !important;}',
+      /* ---- AGGRESSIVE top-space removal under the tab bar ---- */
+      '.settings-tab-panel{min-height:0;padding-top:0 !important;margin-top:0 !important;}',
+      '.settings-tab-panel>div:empty,.settings-tab-panel>section:empty,.settings-tab-panel>header:empty,.settings-tab-panel>p:empty,.settings-tab-panel>span:empty,.settings-tab-panel>h1:empty,.settings-tab-panel>h2:empty,.settings-tab-panel>h3:empty,.settings-tab-panel>h4:empty,.settings-tab-panel>h5:empty,.settings-tab-panel>h6:empty{display:none !important;height:0 !important;margin:0 !important;padding:0 !important;border:0 !important;}',
+      '.settings-tab-panel>[class*="heading"]:empty,.settings-tab-panel>[class*="header"]:empty,.settings-tab-panel>[class*="title"]:empty,.settings-tab-panel>[class*="spacer"]:empty,.settings-tab-panel>[class*="gap"]:empty,.settings-tab-panel>[class*="divider"]:empty{display:none !important;height:0 !important;margin:0 !important;padding:0 !important;border:0 !important;}',
+      '.settings-tab-panel>:first-child{margin-top:0 !important;padding-top:0 !important;}',
+      '.settings-tab-panel>:first-child>:first-child{margin-top:0 !important;padding-top:0 !important;}',
+      '.settings-tab-panel>:first-child>:first-child>:first-child{margin-top:0 !important;padding-top:0 !important;}',
+      '.settings-tab-panel>:first-child>:is(h1,h2,h3,h4,h5,h6){margin-top:0 !important;padding-top:0 !important;}',
+      '.settings-tab-panel>:first-child>:first-child>:is(h1,h2,h3,h4,h5,h6){margin-top:0 !important;padding-top:0 !important;}',
       /* ---- green instead of blue: active tab, focus, selection ---- */
       '.settings-tab-bar [data-tab].active,.settings-tab-bar [data-tab][aria-selected="true"]{background:' + GA + ' !important;color:inherit !important;border-color:' + G + ' !important;box-shadow:inset 0 -2px 0 ' + G + ' !important;}',
       '.settings-tab-bar [data-tab]:focus-visible,.settings-tab-panel :is(button,a,input,select,textarea,[role="switch"]):focus-visible{outline:2px solid ' + G + ' !important;outline-offset:2px;}',
@@ -509,12 +514,7 @@ window.restoreStudioSettingsBackup = function (data) {
   } catch (_) { return false; }
 };
 
-// ---- Horizontal settings tabs (Preference / AI Models) ----
-// Matches the markup in index.html: a `.settings-tab-bar` containing
-// buttons with data-tab="<panel-name>", and sibling `.settings-tab-panel`
-// elements each with data-panel="<panel-name>". Idempotent.
-// Full ARIA tabs pattern, roving tabindex, Arrow/Home/End keys, and
-// window.showSettingsTab(name) for deep-linking.
+// ---- Horizontal settings tabs (Preference / AI Configuration) ----
 window.showSettingsTab = function (tabName) {
   const tabBar = document.querySelector('.settings-tab-bar');
   if (!tabBar) return false;
@@ -764,25 +764,16 @@ function _studioMoveAddModelButton() {
   return true;
 }
 
-// Hides empty leading children (leftover wrappers/spacers) at the top of
-// every settings tab panel so no dead gray band sits under the tab bar.
+// ---------- AGGRESSIVE TOP-SPACE TRIMMER ----------
+// Returns true when it hid something or zeroed a margin/padding.
 function _studioTrimEmptyPanelSpace() {
   let changed = false;
   try {
     document.querySelectorAll('.settings-tab-panel').forEach(function (panel) {
-      const kids = Array.prototype.slice.call(panel.children);
-      for (let i = 0; i < kids.length; i++) {
-        const child = kids[i];
-        if (!child) continue;
-        if (child.style.display === 'none') continue;
-        const text = (child.textContent || '').replace(/\s+/g, '');
-        const hasControl = !!child.querySelector(
-          'button,input,select,textarea,[role="switch"],img,svg,canvas,table,ul,ol'
-        );
-        if (text || hasControl) break;       // reached real content — stop
-        child.style.display = 'none';        // empty leading wrapper — hide
-        changed = true;
-      }
+      // Only trim when the panel already contains real interactive content
+      // (avoids hiding placeholders before content renders into them).
+      if (!panel.querySelector('button,input,select,textarea,[role="switch"],.studio-setting-row,.studio-settings-list')) return;
+      if (_studioTrimLeadingEmpty(panel, 0)) changed = true;
     });
   } catch (e) {
     console.warn('[StudioSettings] trim empty panel space failed:', e);
@@ -790,28 +781,91 @@ function _studioTrimEmptyPanelSpace() {
   return changed;
 }
 
+// Recursively hides leading empty siblings and zeroes the top
+// margin/padding of the first visible content element.
+function _studioTrimLeadingEmpty(container, depth) {
+  if (!container || depth > 4) return false;
+  let changed = false;
+  const kids = Array.prototype.slice.call(container.children);
+  for (let i = 0; i < kids.length; i++) {
+    const child = kids[i];
+    if (!child) continue;
+    if (child.style.display === 'none') continue;
+    if (_studioIsEmptyLeading(child)) {
+      child.style.display = 'none';
+      changed = true;
+      continue;
+    }
+    // First visible content: force its top to zero so it hugs the tab bar.
+    try {
+      if (child.style.marginTop !== '0px') {
+        child.style.setProperty('margin-top', '0', 'important');
+        changed = true;
+      }
+      if (depth > 0 && child.style.paddingTop !== '0px') {
+        child.style.setProperty('padding-top', '0', 'important');
+        changed = true;
+      }
+    } catch (_) {}
+    // Recurse so the nested first-child heading also loses its top margin.
+    if (_studioTrimLeadingEmpty(child, depth + 1)) changed = true;
+    break;
+  }
+  return changed;
+}
+
+// An element counts as "empty leading" when it carries no visible content
+// and no interactive descendants — safe to hide without losing functionality.
+function _studioIsEmptyLeading(el) {
+  if (!el) return true;
+  const tag = (el.tagName || '').toUpperCase();
+  if (['BUTTON','INPUT','SELECT','TEXTAREA','IMG','CANVAS','VIDEO','AUDIO','SVG','HR'].indexOf(tag) !== -1) return false;
+  if (el.matches('[role="switch"],button,input,select,textarea,[contenteditable]')) return false;
+  const text = (el.textContent || '').replace(/\s+/g, '');
+  if (text) return false;
+  if (el.querySelector('button,input,select,textarea,[role="switch"],img,canvas,video,audio')) return false;
+  if (el.children.length > 0) {
+    // Hide only when every descendant is itself empty (decorative wrapper).
+    return Array.prototype.every.call(el.children, function (c) {
+      return _studioIsEmptyLeading(c);
+    });
+  }
+  return true;
+}
+
 // Runs the DOM moves that depend on the AI Models panel being rendered;
-// keeps watching (cheaply) until everything has been applied once.
+// keeps watching (cheaply, throttled) until the panel content is stable.
 let _studioLateObserver = null;
+let _studioLateTimer = null;
+let _studioLateIdle = 0;
 function _studioLateRestructure() {
   let a = false, b = false, c = false;
   try { a = _studioMoveAutoSwitch(); } catch (e) { console.warn('[StudioSettings] auto-switch move failed:', e); }
   try { b = _studioMoveAddModelButton(); } catch (e) { console.warn('[StudioSettings] add-model move failed:', e); }
   try { c = _studioTrimEmptyPanelSpace(); } catch (e) { console.warn('[StudioSettings] trim gap failed:', e); }
-  if (a && b) return true;
-  if (_studioLateObserver || typeof MutationObserver === 'undefined') return false;
-  let t = null;
+
+  if (_studioLateObserver) {
+    if (a && b && !c) _studioLateIdle++;
+    else _studioLateIdle = 0;
+    if (_studioLateIdle > 5) {
+      try { _studioLateObserver.disconnect(); } catch (_) {}
+      _studioLateObserver = null;
+      _studioLateIdle = 0;
+    }
+    return a && b;
+  }
+  if (typeof MutationObserver === 'undefined') return a && b;
+
   _studioLateObserver = new MutationObserver(function () {
-    clearTimeout(t);
-    t = setTimeout(function () {
-      if (_studioLateRestructure() && _studioLateObserver) {
-        _studioLateObserver.disconnect();
-        _studioLateObserver = null;
-      }
+    clearTimeout(_studioLateTimer);
+    _studioLateTimer = setTimeout(function () {
+      try { _studioTrimEmptyPanelSpace(); } catch (_) {}
+      try { _studioMoveAutoSwitch(); } catch (_) {}
+      try { _studioMoveAddModelButton(); } catch (_) {}
     }, 150);
   });
   _studioLateObserver.observe(document.body, { childList: true, subtree: true });
-  return false;
+  return a && b;
 }
 
 // ---- Header rename: "AI Models" → "Settings" (best effort) ----
