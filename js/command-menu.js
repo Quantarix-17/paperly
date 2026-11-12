@@ -26,7 +26,7 @@ function getModeFilteredAtCommands() {
 // ===== FRIENDLIER LENGTH NAMES (PDF mode) =====
 // "Long PDF" -> "Detailed", "Short PDF" -> "Compact". Only the display label
 // changes; ids (long_pdf / short_pdf) and every check built on them stay.
-const AT_LABEL_OVERRIDES = { long_pdf: 'Detailed', short_pdf: 'Compact', redesign_diagram: 'Redesign Figure' };
+const AT_LABEL_OVERRIDES = { create_pdf: 'Create', long_pdf: 'Detailed', short_pdf: 'Compact', redesign_diagram: 'Redesign Figure' };
 try {
   AT_COMMANDS.forEach(c => { if (c && AT_LABEL_OVERRIDES[c.id]) c.label = AT_LABEL_OVERRIDES[c.id]; });
 } catch (_) { /* label stays as defined in constants.js */ }
@@ -388,7 +388,6 @@ function syncCreateAddCommandSelection(opts = {}) {
     if (meta) {
       sel[createIdx] = { id: meta.id, category: meta.category, label: meta.label, icon: meta.icon, param: null, implicit: false };
       changed = true;
-      toast = 'A document already exists, so @Create is now @Add (new content is added to it).';
     }
   } else if (!useAdd && addIdx > -1 && createIdx === -1) {
     const meta = getAtCommandById('create_pdf');
@@ -556,13 +555,13 @@ function getAtCommandDisabledReason(cmd) {
 
   if (cmd.category === 'intent' && !['chat'].includes(cmd.id)) {
     if (primary && primary.id !== cmd.id) {
-      return `Remove @${primary.label} first — only one primary action is allowed`;
+      return `Remove @${primary.label} first (tap the × on it) — only one primary action is allowed`;
     }
     if (cmd.requiresDocument && !hasExistingDocument) return 'Create/open a document first';
   }
 
   if (cmd.category === 'length') {
-    if (!sel.some(c => c.id === 'create_pdf' || c.id === 'add')) return _currentAtCommandMode() === 'slides' ? 'Select @Create Slides first' : 'Select @Create PDF or @Add first';
+    if (!sel.some(c => c.id === 'create_pdf' || c.id === 'add')) return _currentAtCommandMode() === 'slides' ? 'Select @Create Slides first' : 'Select @Create or @Add first';
     const other = sel.find(c => c.category === 'length' && c.id !== cmd.id);
     if (other) return `Remove @${other.label} first — choose one length`;
   }
@@ -575,14 +574,14 @@ function getAtCommandDisabledReason(cmd) {
   }
 
   if (cmd.category === 'language') {
-    if (!primary) return 'Select @Create PDF or a document-editing action first';
+    if (!primary) return 'Select @Create or a document-editing action first';
     const same = sel.find(c => c.category === 'language' && c.id !== cmd.id);
     if (same) return `Remove @${same.label} first`;
   }
 
   if (cmd.category === 'visual') {
     // Canvas also works with @Copy & Refine (lets it add illustrations).
-    if (!sel.some(c => c.id === 'create_pdf' || c.id === 'add' || c.id === 'copy_refine')) return 'Select @Create PDF, @Add or @Copy & Refine first';
+    if (!sel.some(c => c.id === 'create_pdf' || c.id === 'add' || c.id === 'copy_refine')) return 'Select @Create, @Add or @Copy & Refine first';
   }
 
   return null;
@@ -874,6 +873,76 @@ function removeSelectedAtCommand(id) {
   if (AT_MENU_STATE.open) renderAtCommandMenuList();
 }
 
+// ===== SMALL × BUTTON ON SELECTED OPTIONS (command panel) =====
+// A selected card / chip in the Commands tab now carries its own small ×, so
+// it can be removed right there instead of hunting for the chip in the chat
+// panel. Used by the intent cards, sub-scope chips, Chat toggle and the
+// Fine-tune chips.
+function _ensureAtSelXStyle() {
+  if (document.getElementById('at-sel-x-style')) return;
+  const st = document.createElement('style');
+  st.id = 'at-sel-x-style';
+  st.textContent =
+    '.at-sel-x{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:16px;height:16px;margin-left:6px;border-radius:50%;' +
+    'background:rgba(148,163,184,.3);color:inherit;font-size:12px;font-weight:700;line-height:1;cursor:pointer;pointer-events:auto;-webkit-tap-highlight-color:transparent}' +
+    '.at-sel-x:hover{background:rgba(148,163,184,.55)}' +
+    '.at-intent-card.selected{position:relative}' +
+    '.at-intent-card .at-sel-x{position:absolute;top:4px;right:4px;margin:0}' +
+    '.at-chip-format .at-chip-icon{font-size:10px;font-weight:800;letter-spacing:.2px}';
+  document.head.appendChild(st);
+}
+function _makeAtSelectedX(id, label) {
+  _ensureAtSelXStyle();
+  const x = document.createElement('span');
+  x.className = 'at-sel-x';
+  x.setAttribute('role', 'button');
+  x.setAttribute('tabindex', '0');
+  x.setAttribute('aria-label', 'Remove ' + label);
+  x.title = 'Remove @' + label;
+  x.textContent = '×';
+  const stop = e => { e.stopPropagation(); };
+  x.addEventListener('mousedown', stop);
+  x.addEventListener('touchstart', stop, { passive: true });
+  const doRemove = e => {
+    e.stopPropagation();
+    e.preventDefault();
+    removeSelectedAtCommand(id);
+    if (AT_MENU_STATE.open) renderAtCommandMenuList();
+  };
+  x.addEventListener('click', doRemove);
+  x.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') doRemove(e); });
+  return x;
+}
+
+// ===== FORMAT CHIP IN THE CHAT PANEL =====
+// Any Format-tab choice other than "Default" (the "Aa" one) is shown next to
+// the command chips in the chat panel, with a × that puts it back to Default.
+const AT_FORMAT_CHIP_INFO = {
+  english: { short: 'EN', label: 'English only' },
+  bengali: { short: 'BN', label: 'Bengali only' },
+  english_bengali: { short: 'EN/BN', label: 'English then Bengali' },
+  bengali_english: { short: 'BN/EN', label: 'Bengali then English' },
+  english_bengali_explain: { short: 'EN+বা', label: 'English + Bengali Explained' }
+};
+function _getCurrentLanguageFormatId() {
+  // getActivePDFLanguageFormat() may not know the newest format id, so when it reports
+  // 'default' fall back to app.js's durable preference (which does).
+  let cur = typeof getActivePDFLanguageFormat === 'function' ? getActivePDFLanguageFormat() : 'default';
+  if ((!cur || cur === 'default') && typeof window._syncPDFLanguageFormatPreference === 'function') {
+    try { cur = window._syncPDFLanguageFormatPreference() || 'default'; } catch (_) { /* keep */ }
+  }
+  return cur || 'default';
+}
+function _applyLanguageFormatChoice(id) {
+  try { if (typeof choosePDFLanguageFormat === 'function') choosePDFLanguageFormat(id); } catch (e) { console.warn('[format] choosePDFLanguageFormat failed for', id, e); }
+  // Mirror the manual pick (even "Default") into app.js's durable preference,
+  // otherwise an older non-default value would silently win again.
+  if (typeof window.setPDFLanguageFormatPreference === 'function') window.setPDFLanguageFormatPreference(id);
+  if (window.PaperlyMenuPrefs) window.PaperlyMenuPrefs.save({ language: id });
+  renderSelectedCommandChips();
+}
+window.refreshFormatChip = function () { renderSelectedCommandChips(); };
+
 // ===== RENDER CHIPS =====
 function renderSelectedCommandChips() {
   try { if (window.PaperlyMenuPrefs) window.PaperlyMenuPrefs.saveCommandsSoon(); } catch (_) { /* best-effort */ }
@@ -906,6 +975,29 @@ function renderSelectedCommandChips() {
     chip.appendChild(removeBtn);
     wrap.appendChild(chip);
   });
+
+  // Non-default Format (anything other than "Aa" Default) -> show it here too.
+  _ensureAtSelXStyle();
+  const fmtInfo = AT_FORMAT_CHIP_INFO[_getCurrentLanguageFormatId()];
+  if (fmtInfo) {
+    const chip = document.createElement('span');
+    chip.className = 'at-chip at-chip-format';
+    chip.title = 'Format: ' + fmtInfo.label;
+    const labelSpan = document.createElement('span');
+    labelSpan.innerHTML = '<span class="at-chip-icon">' + fmtInfo.short + '</span><span>' + fmtInfo.label + '</span>';
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'at-chip-remove';
+    removeBtn.setAttribute('aria-label', 'Reset format to Default');
+    removeBtn.textContent = '×';
+    removeBtn.onclick = () => {
+      _applyLanguageFormatChoice('default');
+      if (AT_MENU_STATE.open) renderAtCommandMenuList();
+    };
+    chip.appendChild(labelSpan);
+    chip.appendChild(removeBtn);
+    wrap.appendChild(chip);
+  }
 }
 
 // ===== COMMANDS TAB — NEW UI BUILDERS =====
@@ -950,9 +1042,9 @@ function _buildAtIntentGrid() {
   groups.forEach(group => {
     const memberCmds = group.members.map(id => getAtCommandById(id)).filter(Boolean);
     const selectedMember = memberCmds.find(c => hasSelectedCommand(c.id));
-    const allDisabled = group.key === 'create'
+    const allDisabled = !selectedMember && (group.key === 'create'
       ? isAtCommandDisabled(resolveCreateOrAddCommand(memberCmds[0]))
-      : memberCmds.every(c => isAtCommandDisabled(c));
+      : memberCmds.every(c => isAtCommandDisabled(c)));
     const card = document.createElement('div');
     card.className = 'at-intent-card' +
       (selectedMember ? ' selected' : '') +
@@ -983,6 +1075,7 @@ function _buildAtIntentGrid() {
     label.className = 'at-intent-label';
     label.textContent = _isAddCard ? 'Add' : group.label;
     card.appendChild(label);
+    if (selectedMember) card.appendChild(_makeAtSelectedX(selectedMember.id, selectedMember.label));
     grid.appendChild(card);
   });
 
@@ -1011,13 +1104,14 @@ function _buildAtSubscopePanel() {
     const selected = hasSelectedCommand(cmd.id);
     const chip = document.createElement('button');
     chip.type = 'button';
-    chip.className = 'at-subscope-chip' + (selected ? ' selected' : '') + (disabled ? ' disabled' : '');
+    chip.className = 'at-subscope-chip' + (selected ? ' selected' : '') + (disabled && !selected ? ' disabled' : '');
     chip.textContent = AT_SUBSCOPE_LABELS[cmd.id] || cmd.label;
-    if (disabled) {
+    if (disabled && !selected) {
       chip.title = getAtCommandDisabledReason(cmd) || '';
       chip.disabled = true;
     } else {
       chip.onclick = () => _chooseAtCommandFromNewUI(cmd);
+      if (selected) chip.appendChild(_makeAtSelectedX(cmd.id, cmd.label));
     }
     row.appendChild(chip);
   });
@@ -1046,6 +1140,7 @@ function _buildAtChatCompanionRow() {
   chip.className = 'at-modifier-chip' + (on ? ' selected' : '');
   chip.textContent = on ? 'Chat ON: AI suggests, nothing is changed' : 'Chat: get AI suggestions';
   chip.title = 'Keeps ' + primary.label + ' selected. The AI only suggests; tap a suggestion to apply it.';
+  if (on) chip.appendChild(_makeAtSelectedX('chat', chatCmd.label));
   chip.onclick = () => {
     if (on) removeSelectedAtCommand('chat');
     else attemptAddAtCommand(chatCmd, null);
@@ -1074,13 +1169,14 @@ function _buildAtModifierRow() {
     const selectedEntry = window.APP_STATE && window.APP_STATE.selectedCommands.find(c => c.id === cmd.id);
     const chip = document.createElement('button');
     chip.type = 'button';
-    chip.className = 'at-modifier-chip' + (selectedEntry ? ' selected' : '') + (disabled ? ' disabled' : '');
+    chip.className = 'at-modifier-chip' + (selectedEntry ? ' selected' : '') + (disabled && !selectedEntry ? ' disabled' : '');
     chip.textContent = selectedEntry && selectedEntry.param ? `${cmd.label.replace(/\s*\[.*?\]/, '')}: ${selectedEntry.param}` : cmd.label;
-    if (disabled) {
+    if (selectedEntry) {
+      chip.onclick = () => removeSelectedAtCommand(cmd.id);
+      chip.appendChild(_makeAtSelectedX(cmd.id, cmd.label));
+    } else if (disabled) {
       chip.title = getAtCommandDisabledReason(cmd) || '';
       chip.disabled = true;
-    } else if (selectedEntry) {
-      chip.onclick = () => removeSelectedAtCommand(cmd.id);
     } else {
       chip.onclick = () => _chooseAtCommandFromNewUI(cmd);
     }
@@ -1261,6 +1357,7 @@ function renderAtCommandMenuList() {
     if (typeof window.setBnExplainDensity === 'function') window.setBnExplainDensity('normal');
     if (window.PaperlyMenuPrefs) window.PaperlyMenuPrefs.save({ visual: 'default', text: 'default', language: 'default' });
     renderAtCommandMenuList();
+    renderSelectedCommandChips();
     displayToastNotification('PDF background and text restored to Default');
   };
   formatWrap.appendChild(resetBtn);
@@ -1276,10 +1373,7 @@ function renderAtCommandMenuList() {
 
   // getActivePDFLanguageFormat() may not know the newest format id, so when it reports
   // 'default' fall back to app.js's durable preference (which does).
-  let currentLanguageFormat = typeof getActivePDFLanguageFormat === 'function' ? getActivePDFLanguageFormat() : 'default';
-  if ((!currentLanguageFormat || currentLanguageFormat === 'default') && typeof window._syncPDFLanguageFormatPreference === 'function') {
-    try { currentLanguageFormat = window._syncPDFLanguageFormatPreference() || 'default'; } catch (_) { /* keep */ }
-  }
+  const currentLanguageFormat = _getCurrentLanguageFormatId();
   [
     { id: 'default', label: 'Default', desc: 'Follow the language of your request' },
     { id: 'english', label: 'English only', desc: 'Write everything in English' },
@@ -1290,13 +1384,7 @@ function renderAtCommandMenuList() {
   ].forEach(f => {
     const row = document.createElement('div');
     row.className = 'at-format-item' + (currentLanguageFormat === f.id ? ' active' : '');
-    row.onclick = () => {
-      try { if (typeof choosePDFLanguageFormat === 'function') choosePDFLanguageFormat(f.id); } catch (e) { console.warn('[format] choosePDFLanguageFormat failed for', f.id, e); }
-      // Mirror the manual pick (even "Default") into app.js's durable preference,
-      // otherwise an older non-default value would silently win again.
-      if (typeof window.setPDFLanguageFormatPreference === 'function') window.setPDFLanguageFormatPreference(f.id);
-      if (window.PaperlyMenuPrefs) window.PaperlyMenuPrefs.save({ language: f.id });
-    };
+    row.onclick = () => { _applyLanguageFormatChoice(f.id); };
     const sw = document.createElement('span');
     sw.className = 'at-language-swatch ' + (f.swatchClass || f.id);
     sw.textContent = f.id === 'default' ? 'Aa' : f.id === 'english' ? 'EN' : f.id === 'bengali' ? 'BN' : f.id === 'english_bengali' ? 'EN/BN' : f.id === 'english_bengali_explain' ? 'EN+বা' : 'BN/EN';
@@ -1784,6 +1872,7 @@ const PaperlyMenuPrefs = (function () {
       if (d.recents) { try { localStorage.setItem(AT_RECENTS_KEY, JSON.stringify(d.recents)); } catch (_) {} }
       if (d.commands) { try { restoreCommands(d.commands); } catch (e) { console.warn('[menu prefs] command restore skipped', e); } }
       if (AT_MENU_STATE.open) renderAtCommandMenuList();
+      try { renderSelectedCommandChips(); } catch (_) {}
     } finally { restoring = false; }
   }
 
