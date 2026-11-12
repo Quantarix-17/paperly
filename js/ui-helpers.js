@@ -407,7 +407,7 @@ const ProgressUI = {
     this._stopQuoteRotation();
     const runId = ++this._quoteRunId;
     // জায়গাটা ফাঁকা না রেখে অপেক্ষার লেখা দেখাই (পুরোনো উক্তি নয়)
-    this._setQuoteText('✨ আপনার জন্য নতুন একটি উক্তি তৈরি হচ্ছে…', '');
+    this._setQuoteText('✨ Writing a fresh quote for you…', '');
     this._quoteBuffer = null;
     this._quoteBusy = false;
 
