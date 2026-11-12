@@ -6,7 +6,9 @@
 //        Access is limited to the owner by the Firestore rules (see firestore.rules).
 //  * Guest: 100% offline. Firebase is never loaded, nothing is uploaded, API keys stay in this browser only.
 //
-// Backed up: API keys / model config, preferences (theme, language, Instruction ...) AND the sessions you create.
+// Backed up: API keys / model config (every model setting + the selected model), ALL Settings-panel switches
+// (Use AI Vision, Keep figures as images, Show quotes, Auto-switch ...), preferences (theme, language, Instruction ...)
+// AND the sessions you create.
 // A saved session carries CONTENT only — no per-session theme / format copies — so a session opened from History
 // always picks up the CURRENT settings and every app update, instead of the look it was saved with.
 // Uploaded files bigger than 5 MB are not saved to the cloud.
@@ -25,10 +27,17 @@ const configured = !!(CFG.apiKey && CFG.projectId && CFG.appId);
 const SECRET_KEYS = ['aiModelsConfig_v1', 'aiModelAutoSwitchEnabled_v1', 'OCR_PREFERRED_MODEL_ID'];   // holds API keys
 const PREF_KEYS = ['aiPdfStudio.visualFormat', 'aiPdfStudio.textFormat', 'aiPdfStudio.languageFormat', 'aiStudioCreationMode_v1',
   'atCommandRecents_v1', 'aipdf_slide_auto_background_mode', 'aipdf_slide_auto_background_enabled', 'paperly_theme',
-  'paperly_instruction_v1'];   // "Instruction" (how the AI should answer) — backed up with the other preferences
+  'paperly_instruction_v1',   // "Instruction" (how the AI should answer) — backed up with the other preferences
+  'paperly_studio_settings_v1',   // Settings panel switches: Use AI Vision, Keep figures as images, Show quotes (see tab-manager.js)
+  'studio_theme'];
 const SYNC_KEYS = SECRET_KEYS.concat(PREF_KEYS);
 const WIPE_KEYS = SYNC_KEYS.concat(['aiDocTabs_v1', 'aiDocProState_v22', 'aiModelDailyResetDate_v1', 'studio_theme', 'paperly_sync_state', 'paperly_local_owner']);
-const MODEL_FIELDS = ['id', 'name', 'apiUrl', 'apiKey', 'modelId', 'supportsJson', 'supportsVision', 'enableGoogleSearch', 'apiType'];
+// Every per-model setting is backed up EXCEPT live, per-device runtime values (status text, failure counters ...).
+// (Exclusion list instead of an allow-list, so any model setting / switch added in the future is backed up automatically.)
+const MODEL_RUNTIME_RE = /^(status|statusMessage|fail|failure|failures|consecutive|error|lastError|last|usage|used|today|test)/i;
+const modelStable = m => Object.keys(m || {}).reduce((o, f) => (m[f] !== undefined && !MODEL_RUNTIME_RE.test(f) && (o[f] = m[f]), o), {});
+// Keys added to the backup after launch: an older cloud copy lacks them, so a download must NOT erase the local value.
+const KEEP_IF_MISSING = ['paperly_studio_settings_v1', 'studio_theme'];
 const MAX_INDEX = 300, MAX_UPLOAD_CHARS = 8000000, PLAIN_CHUNK = 250000;
 // An uploaded file bigger than this is NOT saved to the cloud (set to 0 to never save uploaded files at all).
 const MAX_ATTACHED_FILE_BYTES = 5 * 1024 * 1024;
@@ -375,7 +384,8 @@ function collectGroup(g) {
     // Only stable fields — status / failure counters / active model change constantly and are per-device.
     try {
       const cfg = JSON.parse(values.aiModelsConfig_v1);
-      values.aiModelsConfig_v1 = JSON.stringify((cfg.models || []).map(m => MODEL_FIELDS.reduce((o, f) => (m[f] !== undefined && (o[f] = m[f]), o), {})));
+      values.aiModelsConfig_v1 = JSON.stringify((cfg.models || []).map(modelStable));
+      if (cfg.activeModelId) values.__activeModelId = cfg.activeModelId;   // the selected model is a setting too
     } catch (_) { delete values.aiModelsConfig_v1; }
   }
   return values;
@@ -387,10 +397,11 @@ function applyGroup(g, values) {
     const oldById = {}; (cfg.models || []).forEach(m => { oldById[m.id] = m; });
     let incoming = []; try { incoming = JSON.parse(values.aiModelsConfig_v1 || '[]'); } catch (_) {}
     const models = incoming.map(m => Object.assign({ status: 'idle', statusMessage: '' }, oldById[m.id] || {}, m));
-    const active = models.some(m => m.id === cfg.activeModelId) ? cfg.activeModelId : (models[0] && models[0].id) || null;
+    const want = values.__activeModelId || cfg.activeModelId;
+    const active = models.some(m => m.id === want) ? want : (models[0] && models[0].id) || null;
     lsSet('aiModelsConfig_v1', JSON.stringify(Object.assign({}, cfg, { models, activeModelId: active })));
     SECRET_KEYS.slice(1).forEach(k => (values[k] != null ? lsSet(k, values[k]) : lsDel(k)));
-  } else PREF_KEYS.forEach(k => (values[k] != null ? lsSet(k, values[k]) : lsDel(k)));
+  } else PREF_KEYS.forEach(k => (values[k] != null ? lsSet(k, values[k]) : (KEEP_IF_MISSING.includes(k) ? 0 : lsDel(k))));
 }
 function askChoice(title, text, choices) {
   return new Promise(resolve => {
@@ -415,8 +426,11 @@ async function reconcileSettings() {
     const local = collectGroup(g), lh = V.hash(JSON.stringify(local)), s = st[g] || {};
     const upload = async () => { const rev = Date.now(); await setData(ref, await encodeGroup(g, local, rev)); st[g] = { hash: lh, rev }; };
     const download = async () => {
-      applyGroup(g, await decodeGroup(g, cloud));
+      const incoming = await decodeGroup(g, cloud);
+      applyGroup(g, incoming);
       st[g] = { hash: V.hash(JSON.stringify(collectGroup(g))), rev: cloud.rev }; reload = true;
+      // The cloud copy predates some synced keys (e.g. the new switches): push this device's values up so they get backed up too.
+      if (g === 'prefs' && KEEP_IF_MISSING.some(k => incoming[k] == null && lsGet(k) != null)) { const after = collectGroup(g), rev = Date.now(); await setData(ref, await encodeGroup(g, after, rev)); st[g] = { hash: V.hash(JSON.stringify(after)), rev }; }
     };
     if (!cloud) { if (!groupIsEmpty(g, local)) await upload(); continue; }
     if (cloud.rev === s.rev) { if (lh !== s.hash && !groupIsEmpty(g, local)) await upload(); continue; }
@@ -781,6 +795,7 @@ async function afterLogin(user) {
   if (owner && owner !== user.uid) { WIPE_KEYS.forEach(lsDel); lsSet('paperly_local_owner', user.uid); location.reload(); return; }   // never mix two accounts' data
   lsSet('paperly_local_owner', user.uid);
   G.ready = true; prefetchCloud();
+  { const st = readSync(); if (!st.v4) { st.v4 = 1; ['secrets', 'prefs'].forEach(g => { if (st[g]) st[g].hash = '__reupload'; }); writeSync(st); } }   // one-time: re-upload so the switches / full model settings are backed up
   { const st = readSync(); if (!st.v3) { st.v3 = 1; if (st.secrets) st.secrets.hash = '__reupload'; writeSync(st); } }   // one-time: re-upload API keys as plain text
   if (readSync().synced) { closeGate(); setStatus('busy'); startEngine(); runBackup(false); return; }   // known device: never make the person wait
   await setupBackupFlow();
