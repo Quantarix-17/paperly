@@ -249,7 +249,10 @@ window.getTextFigurePolicy = function () {
       /* ---- layout fix: tab bar must never be squeezed out by tall panels ---- */
       '.settings-tab-bar{flex:0 0 auto !important;min-height:44px;max-height:none !important;}',
       '.settings-tab-bar [data-tab]{flex-shrink:0;}',
-      '.settings-tab-panel{min-height:0;}',
+      /* ---- remove dead space under the tab bar (empty leading wrappers) ---- */
+      '.settings-tab-panel{min-height:0;padding-top:10px !important;}',
+      '.settings-tab-panel>div:empty,.settings-tab-panel>section:empty,.settings-tab-panel>header:empty{display:none !important;}',
+      '.settings-tab-panel>.settings-panel-heading:empty,.settings-tab-panel>.section-header:empty{display:none !important;}',
       /* ---- green instead of blue: active tab, focus, selection ---- */
       '.settings-tab-bar [data-tab].active,.settings-tab-bar [data-tab][aria-selected="true"]{background:' + GA + ' !important;color:inherit !important;border-color:' + G + ' !important;box-shadow:inset 0 -2px 0 ' + G + ' !important;}',
       '.settings-tab-bar [data-tab]:focus-visible,.settings-tab-panel :is(button,a,input,select,textarea,[role="switch"]):focus-visible{outline:2px solid ' + G + ' !important;outline-offset:2px;}',
@@ -528,6 +531,7 @@ window.showSettingsTab = function (tabName) {
     p.hidden = p.dataset.panel !== tabName;
   });
   try { _studioEnsureTabLabel(); } catch (_) {}
+  try { _studioTrimEmptyPanelSpace(); } catch (_) {}
   return true;
 };
 
@@ -589,7 +593,7 @@ window.initSettingsTabs = function () {
 
 // Restructures the settings modal at runtime (idempotent, best effort):
 //  1) removes the "Permissions" tab + panel
-//  2) renames the middle tab ("Settings") to "AI Models"
+//  2) renames the middle tab ("Settings") to "AI Configuration"
 //  3) moves the Auto-switch control from the AI Models panel into Preference
 window.restructureSettingsPanel = function () {
   try {
@@ -673,8 +677,8 @@ function _studioMoveAutoSwitch() {
   return true;
 }
 
-// Renames the middle tab to "AI Models". Safe to call repeatedly: it re-applies
-// the label if anything else rewrote it.
+// Renames the middle tab to "AI Configuration". Safe to call repeatedly: it
+// re-applies the label if anything else rewrote it.
 function _studioEnsureTabLabel() {
   const tabBar = document.querySelector('.settings-tab-bar');
   if (!tabBar) return;
@@ -692,18 +696,18 @@ function _studioEnsureTabLabel() {
       el.removeAttribute('data-i18n'); el.removeAttribute('data-i18n-key');
     });
   }
-  if ((mid.textContent || '').trim() !== 'AI Models') {
+  if ((mid.textContent || '').trim() !== 'AI Configuration') {
     const walker = document.createTreeWalker(mid, NodeFilter.SHOW_TEXT, null);
     let n, done = false;
     while ((n = walker.nextNode())) {
       if (!n.textContent.trim()) continue;
-      n.textContent = done ? '' : 'AI Models';
+      n.textContent = done ? '' : 'AI Configuration';
       done = true;
     }
-    if (!done) mid.textContent = 'AI Models';
+    if (!done) mid.textContent = 'AI Configuration';
   }
-  mid.setAttribute('aria-label', 'AI Models');
-  mid.title = 'AI Models';
+  mid.setAttribute('aria-label', 'AI Configuration');
+  mid.title = 'AI Configuration';
 }
 
 // Moves "+ Add new AI model" into the Model list toolbar (far right, same row
@@ -760,13 +764,40 @@ function _studioMoveAddModelButton() {
   return true;
 }
 
+// Hides empty leading children (leftover wrappers/spacers) at the top of
+// every settings tab panel so no dead gray band sits under the tab bar.
+function _studioTrimEmptyPanelSpace() {
+  let changed = false;
+  try {
+    document.querySelectorAll('.settings-tab-panel').forEach(function (panel) {
+      const kids = Array.prototype.slice.call(panel.children);
+      for (let i = 0; i < kids.length; i++) {
+        const child = kids[i];
+        if (!child) continue;
+        if (child.style.display === 'none') continue;
+        const text = (child.textContent || '').replace(/\s+/g, '');
+        const hasControl = !!child.querySelector(
+          'button,input,select,textarea,[role="switch"],img,svg,canvas,table,ul,ol'
+        );
+        if (text || hasControl) break;       // reached real content — stop
+        child.style.display = 'none';        // empty leading wrapper — hide
+        changed = true;
+      }
+    });
+  } catch (e) {
+    console.warn('[StudioSettings] trim empty panel space failed:', e);
+  }
+  return changed;
+}
+
 // Runs the DOM moves that depend on the AI Models panel being rendered;
 // keeps watching (cheaply) until everything has been applied once.
 let _studioLateObserver = null;
 function _studioLateRestructure() {
-  let a = false, b = false;
+  let a = false, b = false, c = false;
   try { a = _studioMoveAutoSwitch(); } catch (e) { console.warn('[StudioSettings] auto-switch move failed:', e); }
   try { b = _studioMoveAddModelButton(); } catch (e) { console.warn('[StudioSettings] add-model move failed:', e); }
+  try { c = _studioTrimEmptyPanelSpace(); } catch (e) { console.warn('[StudioSettings] trim gap failed:', e); }
   if (a && b) return true;
   if (_studioLateObserver || typeof MutationObserver === 'undefined') return false;
   let t = null;
@@ -789,7 +820,7 @@ function _studioLateRestructure() {
 // labels left over from an older HTML.
 window.renameAIModelsHeaderToSettings = function () {
   // Intentionally a no-op: the modal title already says "Settings", and the
-  // middle tab must read "AI Models" (the old rewrite turned it back).
+  // middle tab must read "AI Configuration" (the old rewrite turned it back).
   return false;
 };
 
