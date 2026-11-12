@@ -1,6 +1,6 @@
 // ========================================================================
 // OCR PIPELINE - Local OCR for images and PDFs using Tesseract.js
-// (fixed + faster revision)
+// (fixed + faster revision - post-review)
 // ========================================================================
 
 let ocrWorkerPool = [];
@@ -17,20 +17,34 @@ function _ocrNum(key, fallback) {
   const v = Number(_figCfg(key, fallback));
   return Number.isFinite(v) ? v : fallback;
 }
-// safe cancellation check (the flag lives in another script and may not exist yet)
+// safe cancellation check: works whether the flag is a boolean OR a function
 function _ocrCancelled() {
-  try { return typeof isCancellationRequested !== 'undefined' && !!isCancellationRequested; } catch (_) { return false; }
+  try {
+    if (typeof isCancellationRequested === 'undefined') return false;
+    return typeof isCancellationRequested === 'function'
+      ? !!isCancellationRequested()
+      : !!isCancellationRequested;
+  } catch (_) { return false; }
 }
 function _ocrSleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 function _ocrTick() { return new Promise(resolve => setTimeout(resolve, 0)); } // let the UI breathe between heavy steps
 function _ocrFreeCanvas(c) { try { if (c) { c.width = 0; c.height = 0; } } catch (_) {} }
 
-// run fn over items with at most `limit` running at once
+// Shared rotation helper: applies the same transform used by both OCR canvas builders.
+// `w`,`h` are the PRE-rotation (source) dimensions; the target ctx must already be the rotated size.
+function _ocrApplyRotate(ctx, w, h, angle) {
+  if (angle === 90) { ctx.translate(h, 0); ctx.rotate(Math.PI / 2); }
+  else if (angle === 180) { ctx.translate(w, h); ctx.rotate(Math.PI); }
+  else if (angle === 270) { ctx.translate(0, w); ctx.rotate(-Math.PI / 2); }
+}
+
+// run fn over items with at most `limit` running at once; aborts early on cancellation
 async function _ocrMapLimit(items, limit, fn) {
   const out = new Array(items.length);
   let next = 0;
   const run = async () => {
     while (true) {
+      if (_ocrCancelled()) return;             // stop consuming new items after cancel
       const i = next++;
       if (i >= items.length) return;
       out[i] = await fn(items[i], i);
@@ -42,8 +56,19 @@ async function _ocrMapLimit(items, limit, fn) {
 }
 
 function _ocrPoolTarget() {
-  return Math.max(1, Math.min(4, Math.floor(_ocrNum('OCR_MAX_PARALLEL_WORKERS', 2)) || 2));
+  return Math.max(1, Math.min(8, Math.floor(_ocrNum('OCR_MAX_PARALLEL_WORKERS', 2)) || 2));
 }
+
+// Progress-bar hide scheduling with a generation counter so a stale timeout cannot hide a newer progress UI.
+let _progressHideGen = 0;
+function _scheduleHideProgress(ms) {
+  const gen = ++_progressHideGen;
+  setTimeout(() => {
+    if (gen !== _progressHideGen) return;
+    if (typeof ProgressUI !== 'undefined' && ProgressUI.hide) ProgressUI.hide();
+  }, ms);
+}
+function _cancelScheduledHide() { _progressHideGen++; }
 
 // ===== OCR WORKER MANAGEMENT =====
 async function createConfiguredOcrWorker() {
@@ -279,16 +304,7 @@ function createOcrCanvasFromImage(img, scale = 1, mode = 'base', rotateDeg = 0) 
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.save();
-  if (angle === 90) {
-    ctx.translate(h, 0);
-    ctx.rotate(Math.PI / 2);
-  } else if (angle === 180) {
-    ctx.translate(w, h);
-    ctx.rotate(Math.PI);
-  } else if (angle === 270) {
-    ctx.translate(0, w);
-    ctx.rotate(-Math.PI / 2);
-  }
+  _ocrApplyRotate(ctx, w, h, angle);
   ctx.drawImage(img, 0, 0, w, h);
   ctx.restore();
 
@@ -321,9 +337,7 @@ function _ocrRotateCanvas(src, angle, maxLongEdge) {
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, c.width, c.height);
   ctx.save();
-  if (angle === 90) { ctx.translate(h, 0); ctx.rotate(Math.PI / 2); }
-  else if (angle === 180) { ctx.translate(w, h); ctx.rotate(Math.PI); }
-  else if (angle === 270) { ctx.translate(0, w); ctx.rotate(-Math.PI / 2); }
+  _ocrApplyRotate(ctx, w, h, angle);
   ctx.drawImage(src, 0, 0, w, h);
   ctx.restore();
   return c;
@@ -366,11 +380,8 @@ async function _ocrRecognizeOnce(slot, canvas, psm, timeoutMs) {
 }
 
 // ===== TALL MATH DELIMITER DETECTION =====
-// Tesseract reads a text LINE at a time and has no concept of a big { [ ( that spans several lines
-// (piecewise functions / "cases", matrices, systems of equations, big sums & integrals). It drops the
-// bracket and splits the stacked fractions into separate lines, so the structure is lost. This finds such
-// tall, curved glyphs on the original picture so the page can be sent to AI vision (which writes
-// \begin{cases}...\end{cases}) instead of trusting Tesseract.
+// (unchanged detection logic; note: `dy = -2..2` is intentional for brace-fragment merging —
+//  the `aspect < 0.5` filter keeps wide merged components from being treated as brackets)
 // APP_CONFIG.OCR_COMPLEX_MATH_POLICY (old name OCR_TALL_BRACKET_POLICY also works):
 //   'vision-then-image' (default) | 'vision' | 'off'
 function _ocrTallPolicy() {
@@ -462,8 +473,6 @@ function _ocrDetectTallDelimiter(source) {
     const overlapX = (a, b) => Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0) + 1;
 
     // FRACTION BAR: a thin horizontal stroke with ink hugging it from above AND below (numerator / denominator).
-    // The gap must be small (KaTeX/Word fractions sit ~0.2 glyph-heights away), which separates it from a
-    // hyphen between two text lines. Neighbours on the same row (=, +) are normal in an equation, so allowed.
     let fractionBars = 0;
     for (const cp of comps) {
       const cw = cp.x1 - cp.x0 + 1, ch = cp.y1 - cp.y0 + 1;
@@ -481,8 +490,7 @@ function _ocrDetectTallDelimiter(source) {
       if (above && below) fractionBars++;
     }
 
-    // ACCENT over a letter (x-bar, x-hat, x-tilde): a small, wide-ish mark sitting right on top of a letter-sized
-    // glyph. Dots (i, j, :) are not wide; minus / "=" have no letter-sized glyph directly under them.
+    // ACCENT over a letter (x-bar, x-hat, x-tilde)
     let barAccents = 0;
     for (const cp of comps) {
       const cw = cp.x1 - cp.x0 + 1, ch = cp.y1 - cp.y0 + 1;
@@ -505,10 +513,9 @@ function _ocrDetectTallDelimiter(source) {
     return null;
   }
 }
-const _ocrDetectMathLayout = _ocrDetectTallDelimiter;   // same function, clearer name: it now finds more than tall brackets
+const _ocrDetectMathLayout = _ocrDetectTallDelimiter;   // same function, clearer name
 
-// TEXT-level suspicion: things Tesseract tends to get wrong or silently simplify. Plain arithmetic
-// ("12 + 7 = 19") is NOT flagged and stays on Tesseract; anything with math structure is.
+// TEXT-level suspicion: things Tesseract tends to get wrong or silently simplify.
 function _ocrTextLooksComplexMath(text) {
   const t = String(text || '');
   const reasons = [];
@@ -519,11 +526,11 @@ function _ocrTextLooksComplexMath(text) {
   if (/[\u0300-\u036F\u00AF\u02C9\u203E\u20D7]/.test(t)) reasons.push('accent');
   if (/\^|\\[A-Za-z]+|_\{?[A-Za-z0-9]/.test(t)) reasons.push('script-marks');
   if (lines.some(l => /^[{\[(|]\s*\S?$/.test(l) || /^[{\[|]\s*[\dA-Za-z]/.test(l))) reasons.push('bracket-line');
-  for (let i = 0; i < lines.length - 1; i++) {                 // stacked fraction: lone "1" above "4, x = 0"
+  for (let i = 0; i < lines.length - 1; i++) {
     if (/^\d{1,2}$/.test(lines[i]) && /^\d{1,2}(\s|[,;.]|$)/.test(lines[i + 1])) { reasons.push('stacked-fraction'); break; }
   }
   if (lines.filter(l => /[,;]\s*[A-Za-z]\s*[=<>≤≥]\s*-?\d/.test(l)).length >= 2 || /\botherwise\b/i.test(t)) reasons.push('piecewise');
-  if (lines.some(l => /=/.test(l) && /\b[A-Za-z]\d{1,2}\b/.test(l))) reasons.push('sub-superscript?');   // x2, a1 next to "="
+  if (lines.some(l => /=/.test(l) && /\b[A-Za-z]\d{1,2}\b/.test(l))) reasons.push('sub-superscript?');
   return { complex: reasons.length > 0, reasons };
 }
 
@@ -555,7 +562,7 @@ function mergeOcrCandidates(primary, secondary) {
     const n = normalizeOcrLineText(line);
     if (!n || seen.has(n)) continue;
     if (!/[\p{L}\p{N}]/u.test(line)) continue;
-    if (primaryNorm.includes(n)) continue;   // fragment of a line we already have (sparse modes split lines)
+    if (primaryNorm.includes(n)) continue;
     seen.add(n);
     extras.push(line.trim());
   }
@@ -568,7 +575,6 @@ function mergeOcrCandidates(primary, secondary) {
 }
 
 // ===== RECOGNIZE IMAGE WITH OCR =====
-// opts: { maxPasses, allowRotation }  (figure crops use maxPasses:2, allowRotation:false for speed)
 async function recognizeImageWithOcr(imageSource, opts = {}) {
   const slot = await acquireOcrSlot();
   try {
@@ -594,7 +600,6 @@ async function recognizeImageWithOcr(imageSource, opts = {}) {
       attempts++;
       try {
         const cand = await _ocrRecognizeOnce(slot, canvas, pass.psm, _ocrScaledTimeout(baseTimeout, canvas));
-        // text read from a rotated copy only counts when it is believable (wrong rotation yields gibberish)
         if (cand.text && (group === 0 || cand.confidence >= 40)) { cand.group = group; candidates.push(cand); }
         return cand;
       } catch (err) {
@@ -629,7 +634,7 @@ async function recognizeImageWithOcr(imageSource, opts = {}) {
       }
     }
 
-    // ---- ROTATION RECOVERY (runs for weak AND for empty results: sideways scans return nothing upright) ----
+    // ---- ROTATION RECOVERY ----
     const upright = candidates.filter(c => c.group === 0).sort((a, b) => scoreOf(b) - scoreOf(a));
     const bestUp = upright[0] || null;
     const needRotation = allowRotation && !stop() && (!bestUp || bestUp.confidence < 55 || bestUp.lineCount < 2);
@@ -645,7 +650,7 @@ async function recognizeImageWithOcr(imageSource, opts = {}) {
           await _ocrTick();
           rc = _ocrRotateCanvas(imageSource, angle, rotEdge);
           const cand = await runPass({ psm: '6' }, rc, deepTimeout, angle);
-          if (cand && cand.confidence >= 60 && cand.lineCount >= 3) break; // good enough, skip the other direction
+          if (cand && cand.confidence >= 60 && cand.lineCount >= 3) break;
         } finally {
           _ocrFreeCanvas(rc);
         }
@@ -660,7 +665,6 @@ async function recognizeImageWithOcr(imageSource, opts = {}) {
       };
     }
 
-    // ---- pick the best orientation group, merge only inside that group ----
     const groups = new Map();
     for (const c of candidates) {
       if (!groups.has(c.group)) groups.set(c.group, []);
@@ -669,7 +673,7 @@ async function recognizeImageWithOcr(imageSource, opts = {}) {
     let bestList = null, bestScore = -Infinity;
     for (const [g, list] of groups) {
       list.sort((a, b) => scoreOf(b) - scoreOf(a));
-      const s = scoreOf(list[0]) + (g === 0 ? 8 : 0); // small bias: do not flip orientation on a tie
+      const s = scoreOf(list[0]) + (g === 0 ? 8 : 0);
       if (s > bestScore) { bestScore = s; bestList = list; }
     }
     let merged = bestList[0];
@@ -692,10 +696,6 @@ async function recognizeImageWithOcr(imageSource, opts = {}) {
 }
 
 // ===== GEMINI VISION OCR FALLBACK =====
-// Used ONLY when the default local pipeline (Tesseract / pdf.js text layer) fails to
-// read a file. Everything stays local-first; an API call is spent only on the rare
-// page/image the local engine can't handle. Set APP_CONFIG.VISION_FALLBACK_ENABLED = false
-// to guarantee that nothing is ever uploaded.
 const GEMINI_VISION_OCR_PROMPT =
   'You are an OCR engine. Transcribe every piece of readable text in this image exactly ' +
   'as written, preserving line breaks, bullet points, and reading order. Write any ' +
@@ -709,13 +709,15 @@ const GEMINI_VISION_OCR_PROMPT =
   'image genuinely has no readable text, respond with exactly: [NO_TEXT_FOUND]';
 
 function _parseDataUrl(dataUrl) {
-  const match = /^data:([^;]+);base64,(.*)$/s.exec(String(dataUrl || ''));
+  const match = /^data:([^;]+);base64,(.+)$/s.exec(String(dataUrl || ''));
   if (!match) return null;
-  return { mimeType: match[1], base64Data: match[2] };
+  const b64 = match[2];
+  if (!b64 || !b64.trim()) return null;    // reject empty payloads: server would 400 & trip the breaker
+  return { mimeType: match[1], base64Data: b64 };
 }
 
 async function callGeminiVisionForOCR(cfg, base64Data, mimeType, promptText, signal) {
-  // The API key goes in a header, never in the URL (URLs end up in history, proxy logs, devtools).
+  // The API key goes in a header, never in the URL.
   const baseUrl = String(cfg.apiUrl || '')
     .replace(/([?&])key=[^&]*&?/i, '$1')
     .replace(/[?&]$/, '');
@@ -727,7 +729,11 @@ async function callGeminiVisionForOCR(cfg, base64Data, mimeType, promptText, sig
         { inline_data: { mime_type: mimeType, data: base64Data } }
       ]
     }],
-    generationConfig: { temperature: 0 }
+    // maxOutputTokens prevents huge transcriptions from being silently truncated by the default cap.
+    generationConfig: {
+      temperature: 0,
+      maxOutputTokens: Math.max(2048, _ocrNum('VISION_MAX_OUTPUT_TOKENS', 8192))
+    }
   };
   const response = await fetch(baseUrl, {
     method: 'POST',
@@ -795,22 +801,31 @@ async function callVisionModelForOCR(cfg, dataUrl, label, promptText, signal) {
 }
 
 // ---- AI vision step: ONE attempt per configured model, then give up ----------------
-// Rules (so OCR can always finish):
-//   * every model is tried exactly once, one after the other (a failure -> next model)
-//   * every attempt has a time limit; a hanging request counts as a failure
-//   * a model that answers "no text here" is a real answer -> the other models are not asked again
-//   * calls run one at a time
-//   * a model that fails VISION_MODEL_MAX_FAILS times in a row is skipped for the rest of the run
-//   * if EVERY model failed with an error, vision is switched off for a while (VISION_BREAKER_MS)
 let _visionChain = Promise.resolve();
 const _visionBreaker = { until: 0, notified: false };
 const _visionModelFails = new Map();
+let _visionModelFailsResetAt = 0;
 
-function resetVisionBreaker() { _visionBreaker.until = 0; _visionBreaker.notified = false; _visionModelFails.clear(); }
+function resetVisionBreaker() {
+  _visionBreaker.until = 0;
+  _visionBreaker.notified = false;
+  _visionModelFails.clear();
+  _visionModelFailsResetAt = Date.now();
+}
 window.resetVisionBreaker = resetVisionBreaker;
 
 function _visionBreakerActive() { return Date.now() < _visionBreaker.until; }
 function _visionModelKey(cfg) { return String((cfg && (cfg.id || cfg.modelId || cfg.name)) || 'model'); }
+
+// Transient network/API errors should not permanently disable a model for a long doc.
+// Soft-reset the per-model fail counters every VISION_MODEL_FAILS_RESET_MS (default 60 s).
+function _maybeSoftResetVisionFails() {
+  const now = Date.now();
+  const interval = Math.max(5000, _ocrNum('VISION_MODEL_FAILS_RESET_MS', 60000));
+  if (now - _visionModelFailsResetAt < interval) return;
+  _visionModelFailsResetAt = now;
+  _visionModelFails.clear();
+}
 
 async function _callVisionModelOnce(cfg, dataUrl, label, promptText, timeoutMs) {
   const controller = new AbortController();
@@ -822,7 +837,7 @@ async function _callVisionModelOnce(cfg, dataUrl, label, promptText, timeoutMs) 
     }, timeoutMs);
   });
   const call = callVisionModelForOCR(cfg, dataUrl, label, promptText, controller.signal);
-  call.catch(() => {}); // aborted request rejecting after the timeout won the race
+  call.catch(() => {});
   try {
     return await Promise.race([call, timeout]);
   } finally {
@@ -833,6 +848,7 @@ async function _callVisionModelOnce(cfg, dataUrl, label, promptText, timeoutMs) 
 async function _runVisionPass(dataUrl, label, promptText) {
   if (_figCfg('VISION_FALLBACK_ENABLED', true) === false) return '';
   if (_visionBreakerActive()) return '';
+  _maybeSoftResetVisionFails();
   const all = getVisionFallbackModelCandidates();
   if (!all.length) return '';
   const maxFails = Math.max(1, _ocrNum('VISION_MODEL_MAX_FAILS', 3));
@@ -848,7 +864,7 @@ async function _runVisionPass(dataUrl, label, promptText) {
       const text = await _callVisionModelOnce(cfg, dataUrl, label, promptText, timeoutMs);
       _visionModelFails.set(key, 0);
       if (text && String(text).trim()) return text;
-      answered = true;                 // the model worked and found no text
+      answered = true;
       if (stopOnEmpty) return '';
     } catch (err) {
       failed++;
@@ -888,7 +904,6 @@ async function runOcrOnImageFile(file) {
     if (tok) return { text: tok, confidence: 0, skipped: false, keptAsImage: true, figureTokens: [tok] };
   }
 
-  // decode through an object URL: no giant base64 string unless a fallback really needs one
   const objUrl = URL.createObjectURL(file);
   let canvas = null, cleanCanvas = null;
   try {
@@ -899,8 +914,6 @@ async function runOcrOnImageFile(file) {
       image.src = objUrl;
     });
 
-    // A big { [ ( spanning several lines (piecewise function, matrix, system): Tesseract cannot read that
-    // structure, so ask AI vision for \begin{cases}..\end{cases} first. Without vision, keep the picture.
     const tallPolicy = _ocrTallPolicy();
     if (tallPolicy !== 'off' && !_ocrCancelled() && _ocrDetectMathLayout(img)) {
       const tallUrl = await getDataUrl();
@@ -912,7 +925,6 @@ async function runOcrOnImageFile(file) {
         const tallTok = await _keepImageFileAsImage(tallUrl);
         if (tallTok) return { text: tallTok, confidence: 0, skipped: false, keptAsImage: true, figureTokens: [tallTok], tallDelimiter: true };
       }
-      // 'vision' policy and vision unavailable: continue with plain Tesseract below
     }
 
     const longEdge = Math.max(img.naturalWidth || 1, img.naturalHeight || 1);
@@ -929,13 +941,10 @@ async function runOcrOnImageFile(file) {
     };
     const hasText = (r) => !!String(r && r.text || '').trim();
 
-    // Tesseract is trusted only for text it can read reliably. If its output shows math structure
-    // (symbols, accents, scripts, stacked fractions, piecewise lines ...), AI vision re-reads the picture.
     const textSuspect = tallPolicy !== 'off' ? _ocrTextLooksComplexMath(result && result.text) : { complex: false, reasons: [] };
     if (textSuspect.complex) console.info('OCR: complex math suspected (' + textSuspect.reasons.join(', ') + ') -> AI vision');
     if (hasText(result) && !isWeakOcrResult(result) && !textSuspect.complex) return result;
 
-    // weak (but non-empty) result: one retry on the un-preprocessed picture
     if (hasText(result) && !_ocrCancelled() && !textSuspect.complex) {
       try {
         cleanCanvas = document.createElement('canvas');
@@ -953,7 +962,6 @@ async function runOcrOnImageFile(file) {
       }
     }
 
-    // local OCR failed or is unsure -> AI vision (if configured and allowed)
     const dataUrl = await getDataUrl();
     const visionText = await runGeminiVisionOCRFromDataUrl(dataUrl, file.name);
     if (visionText) {
@@ -967,7 +975,6 @@ async function runOcrOnImageFile(file) {
       };
     }
 
-    // nothing (or only junk) could be read -> keep the original picture instead of junk text / an error
     const veryWeak = !hasText(result) || (Number(result.confidence) || 0) < 30;
     if (veryWeak) {
       const keptTok = await _keepImageFileAsImage(dataUrl);
@@ -991,7 +998,7 @@ async function runOCRWithAIFallback(file, options = {}) {
         const result = await runOcrOnImageFile(file);
         if (result && String(result.text || '').trim()) return { ...result, source: result.source || 'ocr' };
       } catch (localErr) {
-        console.warn('Local OCR failed, trying AI fallback:', localErr); // do not skip the fallback below
+        console.warn('Local OCR failed, trying AI fallback:', localErr);
       }
     }
     const dataUrl = await new Promise((resolve, reject) => {
@@ -1017,10 +1024,13 @@ async function runOCRWithAIFallback(file, options = {}) {
     throw new Error(message);
   }
 }
+// (options retained for API compatibility; the public entry point so external callers can use it)
+window.runOCRWithAIFallback = runOCRWithAIFallback;
 
 // ===== EXTRACT TEXT FROM IMAGES =====
 async function extractTextFromImageFilesWithOCR(files, options = {}) {
   resetVisionBreaker();
+  _cancelScheduledHide();
   if (!Array.isArray(files) || files.length === 0) return [];
 
   const progressKeys = Array.isArray(options.progressKeys) ? options.progressKeys : files.map((file, index) => `${file.name}#ocr#${index}`);
@@ -1107,12 +1117,10 @@ async function extractTextFromImageFilesWithOCR(files, options = {}) {
 function normalizeOcrMathLine(line) {
   let t = String(line || '').trim();
   if (!t) return '';
-  // Accents over a letter. A BAR (x̄ = mean, \bar{x}) and a CAP / HAT (x̂ = estimate, \hat{x}) are different things:
-  // keep each as its own command so they can never be mixed up later. Must run before "−" is turned into "-".
+  // Accents over a letter. A BAR (x̄ = mean, \bar{x}) and a CAP / HAT (x̂ = estimate, \hat{x}) are different things.
   const ACC = { '\u0304': 'bar', '\u0305': 'bar', '\u00AF': 'bar', '\u02C9': 'bar', '\u203E': 'bar', '\u0302': 'hat', '\u02C6': 'hat',
     '\u0303': 'tilde', '\u02DC': 'tilde', '\u20D7': 'vec', '\u0307': 'dot', '\u02D9': 'dot', '\u0308': 'ddot' };
   t = t.replace(/([A-Za-z])([\u0304\u0305\u00AF\u02C9\u203E\u0302\u02C6\u0303\u02DC\u20D7\u0307\u02D9\u0308])/g, (m, L, a) => `\\${ACC[a]}{${L}}`);
-  // OCR often writes the bar as a superscript minus / macron: "x^-", "x^¯", "x ¯"  (but not x^-1, x^-n, x^{-1})
   t = t.replace(/([A-Za-z])\s*\^?\s*[\u00AF\u02C9\u203E\u2015]/g, '\\bar{$1}');
   t = t.replace(/\b([A-Za-z])\s*\^\s*[-\u2212\u2013](?![0-9A-Za-z{(\\])/g, '\\bar{$1}');
   t = t.replace(/[−–—]/g, '-').replace(/×/g, '\\times ').replace(/÷/g, '\\div ')
@@ -1122,18 +1130,14 @@ function normalizeOcrMathLine(line) {
     .replace(/[→⟶]/g, '\\to ').replace(/∈/g, '\\in ')
     .replace(/\s+/g, ' ').trim();
 
-  // number sets: blackboard-bold letters keep their look (Unicode ℝ or the \mathbb form)
   const SETS = { 'ℝ': 'R', 'ℕ': 'N', 'ℤ': 'Z', 'ℚ': 'Q', 'ℂ': 'C' };
   t = t.replace(/[ℝℕℤℚℂ]/g, ch => `\\mathbb{${SETS[ch]}}`);
   if (_figCfg('OCR_NUMBER_SET_GUESS', true) !== false) {
-    // Tesseract cannot tell ℝ from R. In "f: A -> R", "x in R", "R^n" the letter is the number set, and
-    // OCR also reads the double stem as "IR" / "lR" / "|R".
     t = t.replace(/(\\to|\\in|->|\\subset(?:eq)?)\s*[Il|]?([RNZQC])(?![A-Za-z0-9_{])(\s*\^\s*(?:\{[^{}]*\}|[A-Za-z0-9]))?/g,
       (m, op, L, pw) => `${op} \\mathbb{${L}}${pw ? pw.replace(/\s+/g, '') : ''}`);
   }
 
   if (/[=<>]|\\times|\\div|\\sqrt|\^/.test(t)) {
-    // x1 -> x_1 only for a lone variable letter glued to 1-2 digits (not "Page 12", "H2O", "\pi2")
     t = t.replace(/(^|[^A-Za-z0-9\\])([A-Za-z])(\d{1,2})\b/g, '$1$2_$3');
   }
   if (/^[A-Za-z0-9()\s.+\-\\^_]+\/[A-Za-z0-9()\s.+\-\\^_]+$/.test(t)) {
@@ -1147,9 +1151,8 @@ function looksLikeOcrEquation(line) {
   const t = String(line || '').trim();
   if (!t || t.length > 180) return false;
   if (/^[-•*\d]+\s*(steps?|example|definition|important)/i.test(t)) return false;
-  if (/https?:\/\/|www\.|\S+@\S+\.\S+/i.test(t)) return false;                 // URLs / e-mail addresses
-  if (/(?![\p{Script=Latin}\p{Script=Greek}\u2102\u210D\u2115\u2119\u211A\u211D\u2124\u{1D538}-\u{1D56B}])\p{L}/u.test(t)) return false;      // Bengali etc. is prose, not an equation
-  // prose guard: after removing function names, an equation has no real words ("Total = 5 apples" is text)
+  if (/https?:\/\/|www\.|\S+@\S+\.\S+/i.test(t)) return false;
+  if (/(?![\p{Script=Latin}\p{Script=Greek}\u2102\u210D\u2115\u2119\u211A\u211D\u2124\u{1D538}-\u{1D56B}])\p{L}/u.test(t)) return false;
   const stripped = t.replace(/\\[A-Za-z]+/g, ' ')
     .replace(/\b(sin|cos|tan|cot|sec|csc|log|ln|exp|lim|sqrt|min|max|det|mod|frac)\b/gi, ' ');
   if ((stripped.match(/[A-Za-z]{4,}/g) || []).length > 0) return false;
@@ -1159,23 +1162,24 @@ function looksLikeOcrEquation(line) {
   return mathSignals >= 1 && (digits >= 1 || letters >= 2);
 }
 
-// Only meant for OCR output (images / scanned PDFs). Do NOT run it on DOCX / TXT text.
+// Only meant for OCR output. Do NOT run it on DOCX / TXT text.
 function postProcessOCRTextForMath(text) {
   const raw = String(text || '');
   if (!raw) return '';
   const lines = raw.split(/\r?\n/);
   const out = [];
-  // A multi-line equation (\begin{cases} ... \end{cases}, $$ ... $$, \[ ... \]) must pass through untouched.
-  // Wrapping each inner row (\frac{1}{4}, & x=0 \\) in its own $$..$$ used to destroy it.
   let ddOpen = false, brOpen = false, envDepth = 0;
   const countOf = (str, re) => (str.match(re) || []).length;
   for (const line of lines) {
     const trimmed = line.trim();
     if (!trimmed) { out.push(''); continue; }
     const wasInside = ddOpen || brOpen || envDepth > 0;
+    // FIX: a line that contains BOTH `\[` and `\]` should close and stay closed, not leak `brOpen = true`.
+    const opensBr = /\\\[/.test(trimmed);
+    const closesBr = /\\\]/.test(trimmed);
     if (countOf(trimmed, /\$\$/g) % 2 === 1) ddOpen = !ddOpen;
-    if (/\\\[/.test(trimmed) && !/\\\]/.test(trimmed)) brOpen = true;
-    else if (/\\\]/.test(trimmed) && !/\\\[/.test(trimmed)) brOpen = false;
+    if (closesBr) brOpen = false;
+    else if (opensBr) brOpen = true;
     envDepth = Math.max(0, envDepth + countOf(trimmed, /\\begin\s*\{/g) - countOf(trimmed, /\\end\s*\{/g));
     if (wasInside || ddOpen || brOpen || envDepth > 0 || /\\begin\s*\{|\\end\s*\{/.test(trimmed)) { out.push(line); continue; }
     if (/^\s*(\$\$|\\\[|\\\()/.test(trimmed)) { out.push(trimmed); continue; }
@@ -1190,27 +1194,14 @@ function postProcessOCRTextForMath(text) {
 }
 
 // ========================================================================
-// SELECTIVE FIGURE EXTRACTION  (Hybrid Preservation Mode)
-// ------------------------------------------------------------------------
-// For PDF pages that DO have a text layer, find the parts that are really
-// pictures (embedded images + vector drawings such as graphs, circuits,
-// diagrams), crop ONLY those regions from the rendered page, and put a
-// placeholder token  [[FIG_<tag>_p<page>_<n>]]  into the extracted text at the
-// position where the figure sits. The rest of the page stays normal text.
-//   - text that lies INSIDE a figure (axis labels, circuit values) is removed from
-//     the text, because it is already part of the picture (never re-typed by OCR)
-//   - pages that are scans still use the normal OCR path
-//   - anything doubtful (full-page images, text boxes, table lines, tiny
-//     decorations, header/footer logos) is NOT cut -> normal text behaviour
-// The cropped pictures live in PDF_FIGURE_STORE (in memory); the Copy command
-// swaps the tokens for <img> tags after the AI has restyled the text.
+// SELECTIVE FIGURE EXTRACTION
 // ========================================================================
-const PDF_FIGURE_STORE = new Map(); // token -> { dataUrl, widthPt, heightPt, page }
+const PDF_FIGURE_STORE = new Map();
 const PDF_FIGURE_TOKEN_REGEX = /\[\[FIG_[A-Za-z0-9]+_p\d+_\d+\]\]/g;
 window.PDF_FIGURE_STORE = PDF_FIGURE_STORE;
 window.PDF_FIGURE_TOKEN_REGEX = PDF_FIGURE_TOKEN_REGEX;
 
-function _figMul(m1, m2) { // same convention as pdf.js Util.transform
+function _figMul(m1, m2) {
   return [
     m1[0] * m2[0] + m1[2] * m2[1], m1[1] * m2[0] + m1[3] * m2[1],
     m1[0] * m2[2] + m1[2] * m2[3], m1[1] * m2[2] + m1[3] * m2[3],
@@ -1226,7 +1217,6 @@ function _figBox(pts) {
 function _figNear(a, b, gap) { return !(a[2] + gap < b[0] || b[2] + gap < a[0] || a[3] + gap < b[1] || b[3] + gap < a[1]); }
 function _figUnion(a, b) { return [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[2], b[2]), Math.max(a[3], b[3])]; }
 
-// Returns { figures: [{bbox:[x0,y0,x1,y1] (PDF user space), hasImage, hasVector}], rects, removed: Set(text item index) }
 async function _detectPdfFigures(page, textContent) {
   const OPS = (typeof pdfjsLib !== 'undefined' && pdfjsLib.OPS) ? pdfjsLib.OPS : null;
   if (!OPS) return { figures: [], removed: new Set(), rects: [] };
@@ -1238,7 +1228,6 @@ async function _detectPdfFigures(page, textContent) {
   const gap = _figCfg('FIGURE_MERGE_GAP_PT', 10);
   const minScore = _figCfg('FIGURE_MIN_VECTOR_SCORE', 3);
 
-  // ---- 1. text boxes ----
   const items = textContent.items || [];
   const rects = items.map(it => {
     const tr = it.transform || [1, 0, 0, 1, 0, 0];
@@ -1248,7 +1237,6 @@ async function _detectPdfFigures(page, textContent) {
     return { x0, y0, x1: x0 + w, y1: y0 + h, cx: x0 + w / 2, cy: y0 + h / 2, len: String(it.str || '').trim().length };
   });
 
-  // ---- 2. walk the drawing operators, tracking the transform matrix ----
   const opList = await page.getOperatorList();
   const fn = opList.fnArray, args = opList.argsArray;
   const imageOps = new Set([OPS.paintImageXObject, OPS.paintInlineImageXObject, OPS.paintImageMaskXObject, OPS.paintJpegXObject].filter(v => v !== undefined));
@@ -1259,7 +1247,7 @@ async function _detectPdfFigures(page, textContent) {
   let ctm = [1, 0, 0, 1, 0, 0];
   const stack = [];
   let pending = null;
-  const entries = []; // { bbox, img:bool, score, thin }
+  const entries = [];
 
   const commitPending = (op) => {
     const p = pending; pending = null;
@@ -1267,11 +1255,11 @@ async function _detectPdfFigures(page, textContent) {
     const bbox = _figBox(p.pts);
     const w = bbox[2] - bbox[0], h = bbox[3] - bbox[1];
     if (!isFinite(w) || !isFinite(h)) return;
-    if (w * h > 0.85 * pageArea) return;                                    // page background / border
-    if ((w > 0.6 * pageW && h < 2) || (h > 0.6 * pageH && w < 2)) return;  // full-width rules, separators
+    if (w * h > 0.85 * pageArea) return;
+    if ((w > 0.6 * pageW && h < 2) || (h > 0.6 * pageH && w < 2)) return;
     const complexity = p.curves + p.diag;
     const score = complexity === 0 ? 0 : (complexity >= 6 ? 3 : 1);
-    if (score === 0 && fillOnly.has(op) && w * h > 0.35 * pageArea) return; // big plain filled box
+    if (score === 0 && fillOnly.has(op) && w * h > 0.35 * pageArea) return;
     entries.push({ bbox, img: false, score, thin: (w < 1.5 || h < 1.5) });
   };
 
@@ -1309,14 +1297,12 @@ async function _detectPdfFigures(page, textContent) {
     }
     else if (paintOps.has(op)) { commitPending(op); }
     else if (dropOps.has(op)) { pending = null; }
-    if (entries.length > 6000) break; // absurdly complex page (maps etc.) — use what was found so far
+    if (entries.length > 6000) break;
   }
 
-  // ---- 3. cluster nearby entries ----
   const useful = entries.filter(e => !(e.thin && Math.max(e.bbox[2] - e.bbox[0], e.bbox[3] - e.bbox[1]) > 0.6 * Math.max(pageW, pageH)));
   const parent = useful.map((_, i) => i);
   const find = (x) => { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; };
-  // sort indices by x0 and sweep; a box is compared with later boxes while their x0 is within reach of the widest box seen
   const order = useful.map((_, i) => i).sort((p, q) => useful[p].bbox[0] - useful[q].bbox[0]);
   for (let a = 0; a < order.length; a++) {
     const i = order[a];
@@ -1326,7 +1312,6 @@ async function _detectPdfFigures(page, textContent) {
       if (_figNear(useful[i].bbox, useful[j].bbox, gap)) parent[find(j)] = find(i);
     }
   }
-  // the sweep above can miss a link when a big box sits between small ones; one more pass over group boxes fixes it
   for (let pass = 0; pass < 3; pass++) {
     const gb = new Map();
     useful.forEach((e, i) => { const r = find(i); gb.set(r, gb.has(r) ? _figUnion(gb.get(r), e.bbox) : e.bbox.slice()); });
@@ -1345,7 +1330,6 @@ async function _detectPdfFigures(page, textContent) {
     g.bbox = _figUnion(g.bbox, e.bbox); g.n++; g.score += e.score; if (e.img) g.imgCount++;
   });
 
-  // ---- 4. decide which clusters are real figures ----
   const bandTop = view[3] - 0.06 * pageH, bandBottom = view[1] + 0.06 * pageH;
   const unrotated = !page.rotate;
   const figs = [];
@@ -1353,13 +1337,12 @@ async function _detectPdfFigures(page, textContent) {
     const [x0, y0, x1, y1] = g.bbox;
     const w = x1 - x0, h = y1 - y0;
     if (w < minSize || h < minSize || w * h < 2000) continue;
-    if (w * h > 0.92 * pageArea) continue;                        // whole-page picture -> normal handling
-    if (g.imgCount === 0 && g.score < minScore) continue;         // plain lines / boxes / table borders
-    if (unrotated && h < 80 && ((y0 + y1) / 2 >= bandTop || (y0 + y1) / 2 <= bandBottom)) continue; // header/footer logos
+    if (w * h > 0.92 * pageArea) continue;
+    if (g.imgCount === 0 && g.score < minScore) continue;
+    if (unrotated && h < 80 && ((y0 + y1) / 2 >= bandTop || (y0 + y1) / 2 <= bandBottom)) continue;
     figs.push({ bbox: [x0, y0, x1, y1], hasImage: g.imgCount > 0, hasVector: g.imgCount < g.n });
   }
 
-  // ---- 5. absorb short labels that belong to the figure, reject text boxes ----
   const accepted = [];
   for (const f of figs) {
     let [x0, y0, x1, y1] = f.bbox;
@@ -1367,12 +1350,15 @@ async function _detectPdfFigures(page, textContent) {
     rects.forEach((r) => {
       if (r.cx >= x0 - 2 && r.cx <= x1 + 2 && r.cy >= y0 - 2 && r.cy <= y1 + 2) { sumLen += r.len; if (r.len > maxLen) maxLen = r.len; }
     });
-    if (!f.hasImage && (sumLen > 220 || maxLen > 45)) continue;   // bordered text box, not a diagram
-    if (f.hasImage && sumLen > 400) continue;                     // text printed over a background picture
+    if (!f.hasImage && (sumLen > 220 || maxLen > 45)) continue;
+    if (f.hasImage && sumLen > 400) continue;
+    // FIX: absorb short labels against the ORIGINAL bbox, not the growing bbox.
+    // Growing the box while comparing caused a small figure to slowly swallow an entire paragraph.
+    const bx0 = x0, by0 = y0, bx1 = x1, by1 = y1;
     const ring = 12;
     rects.forEach((r) => {
       if (r.len === 0 || r.len > 14) return;
-      if (r.cx >= x0 - ring && r.cx <= x1 + ring && r.cy >= y0 - ring && r.cy <= y1 + ring) {
+      if (r.cx >= bx0 - ring && r.cx <= bx1 + ring && r.cy >= by0 - ring && r.cy <= by1 + ring) {
         x0 = Math.min(x0, r.x0); y0 = Math.min(y0, r.y0 - 1); x1 = Math.max(x1, r.x1); y1 = Math.max(y1, r.y1);
       }
     });
@@ -1393,9 +1379,9 @@ async function _detectPdfFigures(page, textContent) {
   const area = (f) => (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]);
   accepted.sort((p, q) => area(q) - area(p));
   const final = accepted.slice(0, _figCfg('FIGURE_MAX_PER_PAGE', 8));
-  final.sort((p, q) => q.bbox[3] - p.bbox[3]); // top of the page first
+  final.sort((p, q) => q.bbox[3] - p.bbox[3]);
 
-  const removed = new Set(); // text that is already inside a kept picture
+  const removed = new Set();
   rects.forEach((r, idx) => {
     for (const f of final) {
       if (r.cx >= f.bbox[0] && r.cx <= f.bbox[2] && r.cy >= f.bbox[1] && r.cy <= f.bbox[3]) { removed.add(idx); break; }
@@ -1404,7 +1390,6 @@ async function _detectPdfFigures(page, textContent) {
   return { figures: final, removed, rects };
 }
 
-// Prompt for a picture cut out of a text-layer page: transcribe only if it is mainly text.
 const GEMINI_VISION_FIGURE_PROMPT =
   'You are an OCR engine reading a picture that was cut out of a document page. ' +
   'If the picture is mainly TEXT (printed or handwritten sentences, equations, a table of words), transcribe ALL of it exactly as written, ' +
@@ -1422,7 +1407,6 @@ function _figTextStats(text) {
   return { words, chars: nonSpace, ratio: nonSpace ? wordy / nonSpace : 0, lines: lines.length, avgLine };
 }
 
-// "Readable" = real running text, not the stray digits/labels OCR finds inside a drawing or photo.
 function _figLooksReadable(text, confidence, viaVision) {
   const s = _figTextStats(text);
   if (viaVision) return s.words >= _figCfg('FIGURE_VISION_MIN_WORDS', 4);
@@ -1433,7 +1417,6 @@ function _figLooksReadable(text, confidence, viaVision) {
     s.avgLine >= 15;
 }
 
-// Render the page once, cut every figure out of it -> array of canvases (null where the cut failed).
 async function _cropPdfFigureCanvases(page, figures) {
   let scale = Math.max(1, Math.min(4, _figCfg('FIGURE_RENDER_SCALE', 2.2)));
   const base = page.getViewport({ scale: 1 });
@@ -1466,10 +1449,7 @@ function _encodeFigureCanvas(canvas, f) {
   return dataUrl;
 }
 
-// Cascade for ONE picture region of a text-layer page:
-//   1) local OCR (quick: 2 passes, no rotation)  ->  2) AI vision  ->  3) keep it as a cropped picture.
 async function _readFigureRegion(canvas, label) {
-  // 1. local OCR (on a copy — the original crop must stay clean for the picture fallback)
   let copy = null;
   try {
     copy = document.createElement('canvas');
@@ -1485,35 +1465,30 @@ async function _readFigureRegion(canvas, label) {
     _ocrFreeCanvas(copy);
   }
   if (_ocrCancelled()) return { kind: 'image' };
-  // 2. AI vision (returns '' when no model is configured, on API errors, or when the picture is not text)
   try {
     const url = canvas.toDataURL('image/jpeg', 0.92);
     const v = await runGeminiVisionOCRFromDataUrl(url, label, GEMINI_VISION_FIGURE_PROMPT);
     if (v && _figLooksReadable(v, 100, true)) return { kind: 'text', text: String(v).trim(), source: 'vision' };
   } catch (e) { console.warn(`Figure AI vision failed (${label}):`, e); }
-  // 3. neither could read it -> keep the original picture
   return { kind: 'image' };
 }
 
-// One text-layer page. Returns null when there is no reliable figure, otherwise
-// { text, tokens }: pictures OCR/AI could read are now plain text; the rest are [[FIG_..]] placeholders.
 async function _extractFiguresForTextPage(page, textContent, pageNum, fileTag, budget) {
   if (_figCfg('FIGURE_EXTRACT_ENABLED', true) === false) return null;
   if (budget.left <= 0) return null;
   const det = await _detectPdfFigures(page, textContent);
   if (!det.figures.length) return null;
+  // NOTE: budget.left = remaining STORED-IMAGE slots for the whole document; `tokens.length` is subtracted
+  // at the end. Figures that resolve to plain text do not count (they are not stored).
   const figures = det.figures.slice(0, budget.left);
   const canvases = await _cropPdfFigureCanvases(page, figures);
   if (!budget.stats) budget.stats = { ocr: 0, vision: 0, image: 0 };
 
-  // ---- decide, per picture: text (OCR / vision) or keep as picture ----
   const outcomes = [];
   for (let n = 0; n < figures.length; n++) {
     const f = figures[n], canvas = canvases[n];
     if (!canvas) { outcomes.push(null); continue; }
     let o = { kind: 'image' };
-    // A pure vector drawing (graph, circuit) has its labels in the text layer already and cannot be "read" as
-    // text, so it goes straight to the picture fallback. Pictures that contain a raster image run the cascade.
     if ((f.hasImage || _figCfg('FIGURE_CASCADE_VECTOR', false)) && !_ocrCancelled()) {
       if (typeof ProgressUI !== 'undefined' && ProgressUI.setLabel) ProgressUI.setLabel(`Page ${pageNum}: reading picture ${n + 1}/${figures.length} (OCR → AI vision → keep as image)…`);
       o = await _readFigureRegion(canvas, `page ${pageNum} picture ${n + 1}`);
@@ -1524,7 +1499,6 @@ async function _extractFiguresForTextPage(page, textContent, pageNum, fileTag, b
   }
   canvases.forEach(c => _ocrFreeCanvas(c));
 
-  // ---- text inside a resolved picture is now covered by the picture / the recognized text ----
   const items = textContent.items;
   const rects = det.rects;
   const removed = new Set();
@@ -1534,7 +1508,6 @@ async function _extractFiguresForTextPage(page, textContent, pageNum, fileTag, b
     });
   });
 
-  // ---- reading-order position of every resolved picture ----
   const placed = [];
   const tokens = [];
   figures.forEach((f, n) => {
@@ -1557,15 +1530,15 @@ async function _extractFiguresForTextPage(page, textContent, pageNum, fileTag, b
     };
     const live = (i) => !removed.has(i) && String(items[i].str || '').trim();
     let at = -1;
-    for (let i = 0; i < items.length; i++) {            // first text after the picture (same column)
+    for (let i = 0; i < items.length; i++) {
       if (live(i) && rects[i].cy < f.bbox[3] - 1 && overlapX(rects[i])) { at = i; break; }
     }
-    if (at < 0) {                                       // no text under it in its own column: first text anywhere below its top
+    if (at < 0) {
       for (let i = 0; i < items.length; i++) {
         if (live(i) && rects[i].cy < f.bbox[3] - 1) { at = i; break; }
       }
     }
-    if (at < 0) at = items.length;                      // nothing below at all: end of the page
+    if (at < 0) at = items.length;
     placed.push({ at, payload });
   });
   if (!placed.length) return null;
@@ -1581,7 +1554,6 @@ async function _extractFiguresForTextPage(page, textContent, pageNum, fileTag, b
 }
 
 // ---- Persist cropped pictures in IndexedDB so [[FIG_..]] tokens still work after a page reload ----
-// (the in-memory Map is empty after a reload while the attachment text still holds the tokens)
 const _FIG_DB = { name: 'aiPdfStudio_figures_v1', store: 'figs', dbp: null };
 function _figDb() {
   if (_FIG_DB.dbp) return _FIG_DB.dbp;
@@ -1597,8 +1569,14 @@ function _figDb() {
   });
   return _FIG_DB.dbp;
 }
-function _figDbPruneOld(db) { // pictures nobody asked for in N days are dropped, so storage never grows forever
+// Full scan is throttled to once per day using localStorage, so opening the DB on every page load stays cheap.
+function _figDbPruneOld(db) {
   try {
+    const lastKey = 'aiPdfStudio_figureLastPrune';
+    const now = Date.now();
+    const last = Number((typeof localStorage !== 'undefined' && localStorage.getItem(lastKey)) || 0);
+    if (now - last < 86400000) return; // once per day
+    try { if (typeof localStorage !== 'undefined') localStorage.setItem(lastKey, String(now)); } catch (_) {}
     const maxAge = (_figCfg('FIGURE_DB_MAX_AGE_DAYS', 14)) * 86400000;
     const tx = db.transaction(_FIG_DB.store, 'readwrite');
     const rq = tx.objectStore(_FIG_DB.store).openCursor();
@@ -1644,9 +1622,11 @@ async function figureDbDelete(tokens) {
 }
 function _storeFigure(token, rec) {
   PDF_FIGURE_STORE.set(token, rec);
-  figureDbPut(token, rec); // fire-and-forget; failure just means "no persistence"
+  // Persistence is best-effort but we still surface failures so a reload-loss is diagnosable.
+  figureDbPut(token, rec).then(ok => {
+    if (!ok) console.warn('Figure persistence failed (reload will lose this picture):', token);
+  });
 }
-// Returns the figure record from memory, or (after a reload) from IndexedDB.
 async function loadFigure(token) {
   if (PDF_FIGURE_STORE.has(token)) return PDF_FIGURE_STORE.get(token);
   const rec = await figureDbGet(token);
@@ -1656,18 +1636,14 @@ async function loadFigure(token) {
 window.figureDbGet = figureDbGet;
 window.loadFigure = loadFigure;
 
-// Same picture on many pages (logo, watermark, letterhead) is decoration, not content.
 function _figHash(dataUrl) {
   let h = 2166136261 >>> 0;
   const str = String(dataUrl);
-  const step = Math.max(1, Math.floor(str.length / 4000)); // sample ~4000 chars
+  const step = Math.max(1, Math.floor(str.length / 4000));
   for (let i = 0; i < str.length; i += step) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
   return `${str.length}:${h}`;
 }
 
-// ---- Unreadable page / image -> keep it as the ORIGINAL picture (never an error) ----
-// Used for pages without a usable text layer (scanned pages) and for image files when
-// local OCR and AI vision could not read them.
 function _newFigureTag() {
   return Math.random().toString(36).replace(/[^a-z0-9]/g, '').slice(2, 8) || 'f0';
 }
@@ -1679,7 +1655,6 @@ function _keptImageToken(tag, pageNum, dataUrl, widthPt, heightPt) {
 function _previewText(t) {
   return String(t || '').replace(new RegExp(PDF_FIGURE_TOKEN_REGEX.source, 'g'), '[image kept]');
 }
-// Render a whole PDF page to a data URL at a bounded size -> { dataUrl, width, height } or null.
 async function _renderPageDataUrl(page, longEdgePx, quality) {
   let canvas = null;
   try {
@@ -1699,13 +1674,11 @@ async function _renderPageDataUrl(page, longEdgePx, quality) {
     _ocrFreeCanvas(canvas);
   }
 }
-// Render a whole PDF page as a clean picture (no OCR preprocessing) -> token, or '' on failure.
 async function _keepPdfPageAsImage(page, tag, pageNum) {
   const r = await _renderPageDataUrl(page, _figCfg('SCANNED_PAGE_IMAGE_LONG_EDGE', 1800), 0.86);
   if (!r) return '';
   return _keptImageToken(tag, pageNum, r.dataUrl, r.width, r.height);
 }
-// An uploaded image file (png/jpg/...) -> token, or '' on failure.
 async function _keepImageFileAsImage(dataUrl) {
   let canvas = null;
   try {
@@ -1740,17 +1713,16 @@ function releasePdfFigures(tokens) {
 window.releasePdfFigures = releasePdfFigures;
 
 // ===== PDF TEXT EXTRACTION WITH OCR =====
-// preloadedDoc (optional): an already opened pdf.js document, so the file is not parsed twice.
-// The caller keeps ownership of a preloaded document.
 async function extractTextFromPDFWithOCRFallback(file, startPage, endPage, preloadedDoc) {
   resetVisionBreaker();
+  _cancelScheduledHide();
   extractTextFromPDFWithOCRFallback.lastVisionDataUrls = [];
   extractTextFromPDFWithOCRFallback.lastFigureTokens = [];
   const _figTag = _newFigureTag();
   const _figBudget = { left: _figCfg('FIGURE_MAX_PER_DOC', 80) };
   const _figTokens = [];
   const _keptPages = { kept: 0, dropped: 0 };
-  const _scannedPolicy = _figCfg('SCANNED_PAGE_POLICY', 'ocr-then-image'); // 'ocr-then-image' | 'image-only'
+  const _scannedPolicy = _figCfg('SCANNED_PAGE_POLICY', 'ocr-then-image');
   const _keptPageMax = _figCfg('SCANNED_PAGE_IMAGE_MAX', 120);
   const ownsDoc = !preloadedDoc;
   const pdfDoc = preloadedDoc || await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
@@ -1780,8 +1752,6 @@ async function extractTextFromPDFWithOCRFallback(file, startPage, endPage, prelo
       if (isLikelyScanned) {
         needsOcr.push({ idx, pageNum, page });
       } else {
-        // Hybrid Preservation: cut out only the picture parts of this text page and leave
-        // a [[FIG_..]] placeholder in the text. Any failure -> the page keeps plain text.
         let pageTextOut = pageText;
         try {
           const fx = await _extractFiguresForTextPage(page, textContent, pageNum, _figTag, _figBudget);
@@ -1793,7 +1763,7 @@ async function extractTextFromPDFWithOCRFallback(file, startPage, endPage, prelo
         if (typeof ProgressUI !== 'undefined' && ProgressUI.addPagePreview) {
           ProgressUI.addPagePreview(` Page ${pageNum} (text)`, pageText.slice(0, 120) + (pageText.length > 120 ? '…' : ''), 'done');
         }
-        try { page.cleanup(); } catch (_) {}   // release page resources early on big documents
+        try { page.cleanup(); } catch (_) {}
       }
     }
 
@@ -1808,7 +1778,6 @@ async function extractTextFromPDFWithOCRFallback(file, startPage, endPage, prelo
         ProgressUI.setLabel(`OCR reading ${needsOcr.length} scanned page(s) with full pipeline...`);
       }
 
-      // A page that no OCR / AI vision could read is NOT an error: it is kept as the original page picture.
       const keepPageAsImage = async (page, pageNum) => {
         if (_keptPages.kept >= _keptPageMax) { _keptPages.dropped++; return ''; }
         const token = await _keepPdfPageAsImage(page, _figTag, pageNum);
@@ -1826,13 +1795,11 @@ async function extractTextFromPDFWithOCRFallback(file, startPage, endPage, prelo
         }
         let canvas = null;
         try {
-          // 1. scale to the target long edge
           const baseViewport = page.getViewport({ scale: 1 });
           const longEdge = Math.max(baseViewport.width, baseViewport.height);
           const targetLongEdge = _ocrNum('OCR_TARGET_LONG_EDGE', 4200);
           const scale = Math.min(3.2, Math.max(1, targetLongEdge / longEdge));
 
-          // 2. render
           const viewport = page.getViewport({ scale });
           canvas = document.createElement('canvas');
           canvas.width = Math.ceil(viewport.width);
@@ -1842,11 +1809,9 @@ async function extractTextFromPDFWithOCRFallback(file, startPage, endPage, prelo
           ctx.fillRect(0, 0, canvas.width, canvas.height);
           await page.render({ canvasContext: ctx, viewport }).promise;
 
-          // 3. light preprocessing, then the full OCR pipeline
           await _ocrTick();
           preprocessCanvasForOcr(canvas);
 
-          // big multi-line bracket on the page (cases / matrix): Tesseract loses it -> AI vision, else keep page picture
           const _tallPolicy = _ocrTallPolicy();
           if (_tallPolicy !== 'off' && _ocrDetectMathLayout(canvas)) {
             const cleanTall = _figCfg('VISION_FALLBACK_ENABLED', true) === false ? null
@@ -1862,7 +1827,7 @@ async function extractTextFromPDFWithOCRFallback(file, startPage, endPage, prelo
           }
 
           const result = await recognizeImageWithOcr(canvas);
-          _ocrFreeCanvas(canvas); canvas = null;   // free the big canvas before any slow fallback
+          _ocrFreeCanvas(canvas); canvas = null;
 
           const resultText = String(result?.text || '').trim();
           const resultLines = Number(result?.lineCount) || getOcrLineCount(resultText);
@@ -1880,7 +1845,6 @@ async function extractTextFromPDFWithOCRFallback(file, startPage, endPage, prelo
             };
           }
 
-          // Local OCR found nothing usable: AI vision on a clean, bounded-size render (smaller upload than the OCR canvas)
           const clean = _figCfg('VISION_FALLBACK_ENABLED', true) === false ? null
             : await _renderPageDataUrl(page, _ocrNum('VISION_PAGE_LONG_EDGE', 2400), 0.9);
           const visionDataUrl = clean ? clean.dataUrl : '';
@@ -1897,8 +1861,6 @@ async function extractTextFromPDFWithOCRFallback(file, startPage, endPage, prelo
               source: 'gemini-vision'
             };
           }
-          // Tesseract read it fine but it looked like complex math, and vision is unavailable: keep Tesseract's
-          // text and remember the clean picture so it can still be sent to AI vision later.
           if (_suspect.complex && resultText && !resultIsWeak) {
             return {
               idx, pageNum, text: result.text || '', confidence: result.confidence || 0,
@@ -1906,7 +1868,6 @@ async function extractTextFromPDFWithOCRFallback(file, startPage, endPage, prelo
               needsVision: !!visionDataUrl, visionDataUrl
             };
           }
-          // OCR and AI vision both failed -> keep the original page as a picture
           const keptToken = await keepPageAsImage(page, pageNum);
           return {
             idx, pageNum,
@@ -1931,9 +1892,9 @@ async function extractTextFromPDFWithOCRFallback(file, startPage, endPage, prelo
         }
       };
 
-      // Concurrency is capped: rendering a page is the memory-heavy step, so never render more pages than workers.
       const renderLimit = Math.max(1, _ocrNum('OCR_RENDER_CONCURRENCY', _ocrPoolTarget()));
-      const ocrResults = await _ocrMapLimit(needsOcr, renderLimit, async (item) => {
+      // FIX: don't keep an unused `ocrResults` array (previous code had `void ocrResults`).
+      await _ocrMapLimit(needsOcr, renderLimit, async (item) => {
         const res = await processScannedPage(item);
         results[res.idx] = {
           text: res.text,
@@ -1965,7 +1926,6 @@ async function extractTextFromPDFWithOCRFallback(file, startPage, endPage, prelo
         return res;
       });
 
-      // Average confidence
       let totalConfidence = 0, confCount = 0;
       for (const r of results) {
         if (r && r.ocr && !r.keptAsImage && r.confidence > 0) {
@@ -1974,7 +1934,6 @@ async function extractTextFromPDFWithOCRFallback(file, startPage, endPage, prelo
         }
       }
       avgConf = confCount > 0 ? Math.round(totalConfidence / confCount) : 0;
-      void ocrResults;
     }
 
     if (_ocrCancelled() && typeof displayToastNotification === 'function') {
@@ -2009,7 +1968,6 @@ async function extractTextFromPDFWithOCRFallback(file, startPage, endPage, prelo
       ProgressUI.setLabel(`OCR finished: ${pagesToProcess}/${pagesToProcess} pages processed${ocrPageCount ? `; ${ocrPageCount} scanned page(s)` : ''}.`);
       ProgressUI.finish();
     }
-    // A picture that shows up on 3+ pages (logo, watermark, letterhead) is decoration: drop it again.
     let _repeatedDropped = 0;
     if (_figBudget.hashes) {
       const minRepeat = _figCfg('FIGURE_REPEAT_MIN_PAGES', 3);
@@ -2038,7 +1996,6 @@ async function extractTextFromPDFWithOCRFallback(file, startPage, endPage, prelo
       if (_keptPages.kept > 0) displayToastNotification(`🖼️ ${_keptPages.kept} page(s) could not be read as text — kept as original page images`);
       if (_keptPages.dropped > 0) displayToastNotification(`ℹ️ ${_keptPages.dropped} page(s) were left blank (image limit of ${_keptPageMax} reached or page could not be rendered).`);
     }
-    // math formatting is applied here (OCR output) and only here: callers must not run it a second time
     return postProcessOCRTextForMath(fullText);
   } finally {
     if (ownsDoc) { try { await pdfDoc.destroy(); } catch (_) {} }
@@ -2051,7 +2008,6 @@ function makeAttachedFileContent(file, extractedContent) {
   const maxChars = _ocrNum('ATTACHMENT_MAX_TEXT_CHARS', 100000);
   if (content.length > maxChars) {
     let cut = content.substring(0, maxChars);
-    // never leave half of a [[FIG_..]] placeholder at the cut
     const open = cut.lastIndexOf('[[FIG_');
     if (open >= 0 && open > cut.lastIndexOf(']]')) cut = cut.substring(0, open);
     content = cut + `\n...[ATTACHMENT CONTENT LIMIT: first ${maxChars} characters preserved]`;
@@ -2063,6 +2019,7 @@ async function handleFileUploads(fileList) {
   const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'webp', 'bmp'];
   const files = Array.from(fileList || []);
   if (!files.length) return;
+  _cancelScheduledHide();
 
   const imageJobs = [];
   const otherJobs = [];
@@ -2085,7 +2042,6 @@ async function handleFileUploads(fileList) {
   if (typeof renderAttachmentBar === 'function') renderAttachmentBar();
 
   try {
-    // Images: always local OCR
     if (imageJobs.length) {
       if (typeof ProgressUI !== 'undefined' && ProgressUI.show) {
         ProgressUI.show(
@@ -2131,11 +2087,10 @@ async function handleFileUploads(fileList) {
       if (typeof ProgressUI !== 'undefined') {
         ProgressUI.setLabel(`Studio OCR complete: ${imageJobs.length}/${imageJobs.length} image(s) processed.`);
         ProgressUI.finish();
-        setTimeout(() => { if (typeof ProgressUI !== 'undefined' && ProgressUI.hide) ProgressUI.hide(); }, 700);
+        _scheduleHideProgress(700);
       }
     }
 
-    // PDFs/DOCX/TXT: always use local extraction/OCR
     for (const job of otherJobs) {
       const file = job.file;
       let extractedContent = '';
@@ -2144,7 +2099,6 @@ async function handleFileUploads(fileList) {
           if (typeof ProgressUI !== 'undefined' && ProgressUI.show) {
             ProgressUI.show(`Reading ${file.name}`, 'Extracting document text locally...');
           }
-          // plain document text: NO math post-processing (it is not OCR output)
           extractedContent = (await mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() })).value || '[Empty DOCX]';
         } else if (job.ext === 'pdf') {
           const pdfDocForCount = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
@@ -2154,6 +2108,10 @@ async function handleFileUploads(fileList) {
             if (!range) {
               delete window.APP_STATE.fileObjects[job.fileId];
               delete window.APP_STATE.attachedFiles[job.fileId];
+              // FIX: user should know what happened.
+              if (typeof displayToastNotification === 'function') {
+                displayToastNotification(`Cancelled reading "${file.name}"`);
+              }
               continue;
             }
             if (typeof ProgressUI !== 'undefined' && ProgressUI.show) {
@@ -2161,7 +2119,6 @@ async function handleFileUploads(fileList) {
               ProgressUI.clearPreview();
             }
             try {
-              // reuse the already opened document; math formatting is applied inside
               extractedContent = await extractTextFromPDFWithOCRFallback(file, range.start, range.end, pdfDocForCount);
             } catch (pdfError) {
               delete window.APP_STATE.fileObjects[job.fileId];
@@ -2178,16 +2135,16 @@ async function handleFileUploads(fileList) {
           if (typeof ProgressUI !== 'undefined') {
             ProgressUI.setLabel('Studio OCR complete.');
             ProgressUI.finish();
-            setTimeout(() => { if (typeof ProgressUI !== 'undefined' && ProgressUI.hide) ProgressUI.hide(); }, 500);
+            _scheduleHideProgress(500);
           }
         } else {
           if (typeof ProgressUI !== 'undefined' && ProgressUI.show) {
             ProgressUI.show(`Reading ${file.name}`, 'Reading text locally...');
           }
-          extractedContent = await file.text(); // plain text: NO math post-processing
+          extractedContent = await file.text();
           if (typeof ProgressUI !== 'undefined') {
             ProgressUI.finish();
-            setTimeout(() => { if (typeof ProgressUI !== 'undefined' && ProgressUI.hide) ProgressUI.hide(); }, 400);
+            _scheduleHideProgress(400);
           }
         }
         window.APP_STATE.attachedFiles[job.fileId] = {
@@ -2207,7 +2164,7 @@ async function handleFileUploads(fileList) {
           name: file.name, content: '', sent: false, status: 'error', sourceMode: 'ocr', order: job.index
         };
         if (typeof displayToastNotification === 'function') {
-          displayToastNotification(`Error Error reading ${file.name}: ${error.message}`);
+          displayToastNotification(`Error reading ${file.name}: ${error.message}`);
         }
       }
     }
@@ -2223,7 +2180,7 @@ async function handleFileUploads(fileList) {
   }
 }
 
-// ===== ATTACHMENT BAR (built with DOM APIs: file names are never parsed as HTML) =====
+// ===== ATTACHMENT BAR =====
 function renderAttachmentBar() {
   const bar = document.getElementById('attachment-bar');
   if (!bar) return;
@@ -2285,6 +2242,7 @@ function handleSidebarFileDrop(event) {
 
 async function handleFileWithStudioOCR(fileId) {
   if (!window.APP_STATE) return;
+  _cancelScheduledHide();
   const fileData = window.APP_STATE.attachedFiles[fileId];
   const file = window.APP_STATE.fileObjects && window.APP_STATE.fileObjects[fileId];
   if (!fileData || !file) {
@@ -2295,7 +2253,7 @@ async function handleFileWithStudioOCR(fileId) {
   }
   const ext = file.name.split('.').pop().toLowerCase();
   const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'webp', 'bmp'];
-  // old figure tokens are released only AFTER the new read succeeded, so a failed retry never leaves dangling tokens
+  // release old figure tokens only AFTER the new read succeeded, so a failed retry never leaves dangling tokens
   const oldTokens = Array.isArray(fileData.figureTokens) ? fileData.figureTokens.slice() : [];
   try {
     let extractedContent = '';
@@ -2323,7 +2281,7 @@ async function handleFileWithStudioOCR(fileId) {
           ProgressUI.show(`Retrying OCR: ${file.name}`, `Pages ${range.start}–${range.end}...`);
           ProgressUI.clearPreview();
         }
-        extractedContent = await extractTextFromPDFWithOCRFallback(file, range.start, range.end, pdfDoc); // math already applied
+        extractedContent = await extractTextFromPDFWithOCRFallback(file, range.start, range.end, pdfDoc);
       } finally {
         try { await pdfDoc.destroy(); } catch (_) {}
       }
@@ -2367,7 +2325,7 @@ async function handleFileWithStudioOCR(fileId) {
     }
     if (typeof ProgressUI !== 'undefined') {
       ProgressUI.finish();
-      setTimeout(() => { if (typeof ProgressUI !== 'undefined' && ProgressUI.hide) ProgressUI.hide(); }, 500);
+      _scheduleHideProgress(500);
     }
     renderAttachmentBar();
     if (typeof TAB_MANAGER !== 'undefined' && TAB_MANAGER.activeId) {
@@ -2391,9 +2349,10 @@ async function handleFileWithAIVision(fileId) {
 
 // ===== OCR CONFIDENCE BADGE =====
 function getConfidenceBadge(confidence) {
-  if (confidence >= 75) return '<span class="ocr-confidence-badge ocr-conf-high">High </span>';
-  if (confidence >= 45) return '<span class="ocr-confidence-badge ocr-conf-med">Medium ~</span>';
-  return '<span class="ocr-confidence-badge ocr-conf-low">Low Warning</span>';
+  // a11y: the emoji is decorative, the aria-label carries the meaning for screen readers
+  if (confidence >= 75) return '<span class="ocr-confidence-badge ocr-conf-high" aria-label="High confidence">High <span aria-hidden="true">✓</span></span>';
+  if (confidence >= 45) return '<span class="ocr-confidence-badge ocr-conf-med" aria-label="Medium confidence">Medium <span aria-hidden="true">~</span></span>';
+  return '<span class="ocr-confidence-badge ocr-conf-low" aria-label="Low confidence">Low <span aria-hidden="true">⚠</span></span>';
 }
 
 // ============================================================
