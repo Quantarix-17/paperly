@@ -1,25 +1,26 @@
 // ========================================================================
 // DOCUMENT EDITOR - History, Pagination, Page Management, and Core Editing
 // ========================================================================
-// PAGINATION-BOUNCE FIX (final round):
-// The prior "fix" hid the container with `visibility: hidden` during
-// pagination, which made the user see a BLANK FLASH (worse than a bounce).
-// This version:
-//   1. Uses a real DOM overlay (#pagination-overlay) fixed over the doc area
-//      — document stays visible, dimmed, with a spinner. No blank flash.
-//   2. Locks container min-height for the entire rebuild so scroll doesn't
-//      collapse to 0 and back (this was the scroll bounce).
-//   3. `overflow-anchor: none` prevents the browser fighting the restore.
-//   4. Clears pending debounce/style-reflow timers at the start so a stray
-//      reflow can't fire mid-pagination.
+// SILENT PAGINATION (this round):
+//   Pagination now runs completely silently in the background — no overlay,
+//   no spinner, no modal, no visual indicator of any kind. The user simply
+//   sees the document when it's ready. To make this pleasant (no flash of
+//   empty content, no scroll jump, no second reflow after the page settle),
+//   all the previous stability fixes remain in force:
+//   1. `overflow-anchor: none` on the container.
+//   2. `min-height` lock on the container during rebuild so the outer
+//      layout (and page scroll) doesn't collapse and snap back.
+//   3. `_enterPagination` / `_exitPagination` are pure ref-counter calls now
+//      — no DOM overlay, no CSS class, no `visibility`/`pointer-events`.
+//   4. Settle runs BEFORE the first `await` so the first paint already shows
+//      the final layout.
 //   5. input/blur handlers check `isConnected` — phantom events from pages
-//      removed by `innerHTML = ''` can no longer schedule reflows.
-//   6. Equation repair is done SYNCHRONOUSLY inside pagination (was a 180 ms
-//      delayed `scheduleEquationRecovery` which was a second visible reflow).
+//      removed by `innerHTML = ''` cannot schedule reflows.
+//   6. Equation repair runs SYNCHRONOUSLY inside pagination (no delayed
+//      180 ms `scheduleEquationRecovery` reflow).
 //   7. `_suppressFontSettleUntil` (3 s) prevents the `document.fonts`
-//      loadingdone handler from triggering a re-settle right after.
-//   8. Settle runs BEFORE the first `await` so the first paint already shows
-//      the final layout, not an unsettled one.
+//      loadingdone handler from re-settling right after pagination.
+//   8. Pending debounce / style-reflow timers are cleared at the start.
 // ========================================================================
 
 // ===== DOM REFS =====
@@ -150,7 +151,8 @@ window.__setEditorVirtualRender = function(on) {
   document.documentElement.classList.toggle('perf-no-cv', !on);
 };
 
-// ---- WORD-NATIVE: square, flat editing pages ----
+// ---- WORD-NATIVE: square, flat editing pages (silent pagination) ----
+// No overlay CSS, no spinner, no visibility hiding — pagination is silent.
 (function injectWordNativePageStyles() {
   if (document.getElementById('word-native-page-styles')) return;
   const st = document.createElement('style');
@@ -161,44 +163,6 @@ window.__setEditorVirtualRender = function(on) {
       overflow-anchor: none;
       transition: none !important;
     }
-    /* PAGINATION-BOUNCE FIX:
-       The container no longer changes visibility during pagination.
-       Instead a real fixed-position overlay (#pagination-overlay) covers
-       the document area with a spinner. This avoids the previous
-       "blank white flash" that the visibility:hidden approach produced. */
-    #pagination-overlay {
-      position: fixed;
-      display: none;
-      align-items: center;
-      justify-content: center;
-      flex-direction: column;
-      gap: 12px;
-      background: rgba(241, 245, 249, 0.78);
-      backdrop-filter: blur(2px);
-      -webkit-backdrop-filter: blur(2px);
-      z-index: 99998;
-      pointer-events: all;
-      border-radius: 4px;
-      font-family: system-ui, -apple-system, sans-serif;
-      font-size: 13px;
-      color: #475569;
-    }
-    body.dark-mode #pagination-overlay,
-    body[data-theme="dark"] #pagination-overlay {
-      background: rgba(15, 23, 42, 0.82);
-      color: #cbd5e1;
-    }
-    #pagination-overlay.pag-active { display: flex; }
-    #pagination-overlay .pag-spinner {
-      width: 34px;
-      height: 34px;
-      border: 3px solid rgba(100, 116, 139, 0.25);
-      border-top-color: rgba(100, 116, 139, 0.9);
-      border-radius: 50%;
-      animation: pag-spin 0.8s linear infinite;
-    }
-    @keyframes pag-spin { to { transform: rotate(360deg); } }
-
     #document-view-container .doc-page-canvas,
     #document-view-container .doc-page-canvas[class*="pdf-format-"] {
       border-radius: 0 !important;
@@ -226,50 +190,18 @@ window.__setEditorVirtualRender = function(on) {
 })();
 
 // ============================================================
-// PAGINATION OVERLAY (real DOM, no pseudo-element, no visibility:hidden)
+// SILENT PAGINATION — ref counter only (no DOM overlay, no CSS)
+// Kept as a pure state counter so internal code can still check
+// "is a pagination currently in progress?" without any visual side effect.
 // ============================================================
-function _getOrCreatePaginationOverlay() {
-  let ov = document.getElementById('pagination-overlay');
-  if (!ov) {
-    ov = document.createElement('div');
-    ov.id = 'pagination-overlay';
-    ov.innerHTML = '<div class="pag-spinner"></div><div>Laying out pages…</div>';
-    document.body.appendChild(ov);
-  }
-  return ov;
-}
-
-function _showPaginationOverlay() {
-  if (!docContainer) return;
-  const ov = _getOrCreatePaginationOverlay();
-  const rect = docContainer.getBoundingClientRect();
-  ov.style.left = Math.max(0, rect.left) + 'px';
-  ov.style.top = Math.max(0, rect.top) + 'px';
-  ov.style.width = rect.width + 'px';
-  ov.style.height = Math.max(rect.height, 200) + 'px';
-  ov.classList.add('pag-active');
-}
-
-function _hidePaginationOverlay() {
-  const ov = document.getElementById('pagination-overlay');
-  if (ov) ov.classList.remove('pag-active');
-}
-
-// Ref-count so nested calls (font settle, style reflow) don't fight.
 let _paginationActiveCount = 0;
 
 function _enterPagination() {
   _paginationActiveCount++;
-  _showPaginationOverlay();
-  if (docContainer) docContainer.classList.add('editor-paginating');
 }
 
 function _exitPagination() {
   _paginationActiveCount = Math.max(0, _paginationActiveCount - 1);
-  if (_paginationActiveCount === 0) {
-    _hidePaginationOverlay();
-    if (docContainer) docContainer.classList.remove('editor-paginating');
-  }
 }
 
 // ---- Incremental "does it fit" measurer ----
@@ -417,10 +349,6 @@ function _pageIsActive(page) {
 // PAGINATION STABILITY HELPERS
 // ============================================================
 let _slicingDepth = 0;
-// PAGINATION-BOUNCE FIX: timestamp before which the font-loadingdone handler
-// must NOT trigger a full re-settle. Fonts routinely finish loading the
-// moment pagination ends, and a second reflow right then is the second
-// bounce. Set to Date.now()+3000 in the finally block of both paginators.
 let _suppressFontSettleUntil = 0;
 
 async function _warmFonts(tempSource) {
@@ -483,7 +411,6 @@ function _reflowAfterStyleChange() {
   } finally { restoreCaretPosition(marker); }
 }
 
-// THEME-CHANGE BOUNCE FIX: run synchronously when possible.
 let _styleReflowTimer = null;
 function _scheduleStyleReflow() {
   if (_slicingDepth === 0 && _renderInFlight === 0 && _paginationActiveCount === 0) {
@@ -499,7 +426,6 @@ function _scheduleStyleReflow() {
   }, 120);
 }
 
-// Pagination loop shared by both pagination paths
 async function _paginateNodesSliced(nodes, firstPage, createdPages, contentFits, createPage, runId, slicing) {
   let cur = firstPage;
   let t = performance.now();
@@ -529,12 +455,7 @@ function _syncVirtualRender() {
     n > 40 && !document.documentElement.classList.contains('perf-no-cv'));
 }
 
-// Font loadingdone debounce.
-// PAGINATION-BOUNCE FIX:
-//   - Skip entirely for 3 s after pagination ends (`_suppressFontSettleUntil`).
-//   - `data-tight` is a NORMAL end state; treating it as bad was forcing a
-//     reflow on almost every media-heavy page 800 ms after pagination.
-//   - Skip while pagination is active (`_paginationActiveCount`).
+// Font loadingdone debounce (silent — no overlay during this reflow either).
 if (document.fonts && document.fonts.addEventListener && !window.__fontSettleBound) {
   window.__fontSettleBound = true;
   let _fontSettleTimer = null;
@@ -1104,8 +1025,6 @@ if (docContainer) {
 function scheduleReflow() {
   clearTimeout(paginationDebounceTimer);
   if (_paginationActiveCount > 0) {
-    // PAGINATION-BOUNCE FIX: never schedule a reflow while pagination is
-    // running. Re-check once it finishes.
     paginationDebounceTimer = setTimeout(() => scheduleReflow(), 300);
     return;
   }
@@ -1278,23 +1197,17 @@ function _renderDocumentHTMLPlainFallback(rawHtml, triggerSave) {
 }
 
 // ========================================================================
-// PAGINATION-BOUNCE FIX (FINAL)
-//   - Overlay spinner (real DOM) — no more blank flash.
-//   - min-height lock on the container — scroll cannot collapse during
-//     rebuild (this was the scroll bounce).
-//   - overflow-anchor: none — prevents browser anchor fighting restore.
-//   - Clears pending debounce / style-refresh timers first.
-//   - Settle BEFORE the first await so the first paint shows final layout.
-//   - Scroll restored immediately after the first full settle.
-//   - Equation repair synchronous (no 180 ms delayed reflow).
-//   - Finally: _suppressFontSettleUntil = now + 3 s.
+// SILENT PAGINATION — no overlay, no spinner, no visual of any kind.
+// All bounce-prevention logic is kept so that even though the user sees
+// no indicator, they also see no flash, no scroll jump, and no second
+// reflow after the pages have settled.
 // ========================================================================
 async function _paginateDocumentHTMLCore(rawHtml, triggerSave = true) {
   if (typeof invalidatePDFPreviewCache === 'function') invalidatePDFPreviewCache();
   if (!docContainer) return;
   const runId = ++_paginateRunId;
 
-  // Cancel pending timers — a stray reflow mid-pagination is another bounce.
+  // Cancel pending timers — a stray reflow mid-pagination would be visible.
   clearTimeout(paginationDebounceTimer);
   clearTimeout(_styleReflowTimer);
   paginationDebounceTimer = null;
@@ -1302,7 +1215,8 @@ async function _paginateDocumentHTMLCore(rawHtml, triggerSave = true) {
   _dirtyPages.clear();
 
   // Lock the container height so the outer layout (scrollbar, other UI)
-  // does not jump when innerHTML = '' collapses it.
+  // does not jump when innerHTML = '' collapses it. This is the #1 scroll
+  // stability fix; it is invisible to the user.
   const prevHeight = Math.max(docContainer.scrollHeight || 0, 400);
   const prevMinHeight = docContainer.style.minHeight;
   docContainer.style.minHeight = prevHeight + 'px';
@@ -1350,7 +1264,8 @@ async function _paginateDocumentHTMLCore(rawHtml, triggerSave = true) {
 
     if (typeof forceRenderAllEquations === 'function') forceRenderAllEquations();
 
-    // PAGINATION-BOUNCE FIX: settle SYNCHRONOUSLY now, before any await.
+    // Settle SYNCHRONOUSLY now, before any await, so the first paint
+    // already shows the final layout (no visible intermediate state).
     _wfPostPaginate();
     _settleOverflowingPages();
     normalizeAllEditorPagesToA4();
@@ -1360,7 +1275,6 @@ async function _paginateDocumentHTMLCore(rawHtml, triggerSave = true) {
     // Restore scroll as early as possible so the user's viewport is stable.
     docContainer.scrollTop = savedScrollPos;
 
-    // Small yield so late-loading images / fonts can layout, then re-settle.
     await new Promise(r => setTimeout(r, 30));
     if (runId !== _paginateRunId) return;
     _settleOverflowingPages();
@@ -1371,9 +1285,8 @@ async function _paginateDocumentHTMLCore(rawHtml, triggerSave = true) {
     if (!(await _perfPostProcessPages(runId))) return;
     if (typeof applyPDFVisualFormat === 'function') applyPDFVisualFormat(typeof getActivePDFVisualFormat === 'function' ? getActivePDFVisualFormat() : 'default');
 
-    // PAGINATION-BOUNCE FIX: run equation repair SYNCHRONOUSLY (await it)
-    // instead of relying on a delayed scheduleEquationRecovery(180). That
-    // 180 ms delay used to fire a reflow right after pagination finished.
+    // Synchronous equation repair — replaces the old 180 ms delayed
+    // scheduleEquationRecovery which was a second visible reflow.
     if (typeof repairEquationsInNewContent === 'function') {
       try { await repairEquationsInNewContent(); } catch (_) {}
     }
@@ -1406,9 +1319,7 @@ async function _paginateDocumentHTMLCore(rawHtml, triggerSave = true) {
     // Release the min-height lock and restore overflow-anchor.
     docContainer.style.minHeight = prevMinHeight || '';
     docContainer.style.overflowAnchor = prevOverflowAnchor || '';
-    // Suppress font-loadingdone re-settle for 3 s (fonts usually finish
-    // loading just as pagination ends — a second reflow right then would
-    // be the exact bounce the user reported).
+    // Suppress font-loadingdone re-settle for 3 s.
     _suppressFontSettleUntil = Date.now() + 3000;
     _exitPagination();
   }
@@ -1946,7 +1857,7 @@ function _processPaginationNode(node, currentPageElement, createdPages, contentF
 
 
 // ========================================================================
-// CHUNKED / ASYNC PAGINATION (same fixes applied)
+// CHUNKED / ASYNC PAGINATION (silent — no overlay, no spinner)
 // ========================================================================
 async function paginateDocumentCanvasAsync(rawHtml, triggerSave = true) {
   if (!docContainer) return;
@@ -1981,25 +1892,24 @@ async function _paginateDocumentCanvasAsyncCore(rawHtml, triggerSave = true) {
 }
 
 // ========================================================================
-// PAGINATION-BOUNCE FIX (FINAL) — chunked path mirrors the non-chunked one:
-//   - real DOM overlay (no visibility:hidden, no blank flash)
-//   - min-height lock + overflow-anchor:none on the container
-//   - clears pending debounce / style-reflow timers first
-//   - settle BEFORE the first await
-//   - synchronous equation repair (no 180 ms delayed reflow)
-//   - _suppressFontSettleUntil = now + 3 s in the finally block
+// SILENT PAGINATION — chunked path. No overlay, no spinner, no visual.
+// All bounce-prevention logic kept so the user sees no flash, no scroll
+// jump, and no second reflow after the pages have settled.
 // ========================================================================
 async function _paginateDocumentCanvasAsyncCoreImpl(rawHtml, triggerSave, scratch) {
   if (typeof invalidatePDFPreviewCache === 'function') invalidatePDFPreviewCache();
   if (!docContainer) return;
   const runId = ++_paginateRunId;
 
+  // Cancel pending timers — a stray reflow mid-pagination would be visible.
   clearTimeout(paginationDebounceTimer);
   clearTimeout(_styleReflowTimer);
   paginationDebounceTimer = null;
   _styleReflowTimer = null;
   _dirtyPages.clear();
 
+  // Lock the container height so the outer layout doesn't jump during
+  // innerHTML = '' — this is the #1 scroll stability fix. Invisible.
   const prevHeight = Math.max(docContainer.scrollHeight || 0, 400);
   const prevMinHeight = docContainer.style.minHeight;
   docContainer.style.minHeight = prevHeight + 'px';
@@ -2101,8 +2011,8 @@ async function _paginateDocumentCanvasAsyncCoreImpl(rawHtml, triggerSave, scratc
     if (!(await _perfPostProcessPages(runId))) return;
     if (typeof applyPDFVisualFormat === 'function') applyPDFVisualFormat(typeof getActivePDFVisualFormat === 'function' ? getActivePDFVisualFormat() : 'default');
 
-    // Synchronous equation repair — replaces the old scheduleEquationRecovery(180)
-    // which was a second visible reflow right after pagination.
+    // Synchronous equation repair — replaces the old 180 ms delayed
+    // scheduleEquationRecovery which was a second visible reflow.
     if (typeof repairEquationsInNewContent === 'function') {
       try { await repairEquationsInNewContent(); } catch (_) {}
     }
@@ -2296,13 +2206,10 @@ function handlePageKeydown(e) {
   }
 }
 
-// ===== INPUT / BLUR — both guard on isConnected =====
-// PAGINATION-BOUNCE FIX (root cause #2):
-// When `docContainer.innerHTML = ''` runs, the previously-focused page fires
-// `blur` synchronously, and any text node edits in the removed subtree can
-// also fire `input`. Both used to schedule a reflow right AFTER pagination
-// finished — the second bounce. The `isConnected` guards below neutralise
-// every phantom event coming from pages that were removed during pagination.
+// PAGINATION-BOUNCE FIX: input/blur handlers guard on isConnected. When
+// `docContainer.innerHTML = ''` runs, phantom events fire on removed pages.
+// Without these guards they would schedule a reflow right AFTER pagination
+// finished — the visible second bounce.
 function handleCanvasInput(event) {
   const page = event && event.currentTarget;
   if (!page || !page.isConnected) return;
@@ -2335,9 +2242,6 @@ function handlePageBlur(event) {
   if (!_pageNeedsMathPass(page)) return;
   if (typeof processMathEquationsInContainer === 'function') processMathEquationsInContainer(page);
   if (typeof renderAllKatexVisuals === 'function') renderAllKatexVisuals(page);
-  // If the page STILL needs a math pass after processing, the pass had no
-  // effect (typical: plain "$5" text with no real delimiters). Reflowing in
-  // that case is pointless and creates a blur → reflow → blur loop.
   if (_pageNeedsMathPass(page)) return;
   debouncedAutoSaveAndPaginate();
 }
@@ -4510,7 +4414,6 @@ function choosePDFLanguageFormat(formatId) {
   if (typeof displayToastNotification === 'function') displayToastNotification('✅ Language format applied');
 }
 
-// THEME-CHANGE BOUNCE FIX: 2-op class swap per page (was 11).
 function applyPDFVisualFormat(formatId) {
   const id = PDF_VISUAL_FORMAT_IDS.includes(formatId) ? formatId : 'default';
   const monochrome = !!(document.body && document.body.classList.contains('photocopy-mode'));
