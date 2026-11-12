@@ -105,6 +105,124 @@ const PERF = {
 
 let _paginateRunId = 0;
 
+// ============================================================
+// FIX 1 — EXPORT NEVER SEES AN EMPTY / HALF-BUILT DOCUMENT
+// While a pagination run is in flight the container is cleared
+// (innerHTML = '') and refilled page by page. Anything reading the
+// canvas in that window (export, save, preview) got '' or a partial
+// document. We remember the source HTML of the running pagination and
+// hand THAT out until the pages are fully built.
+// ============================================================
+let _activeSourceHTML = null;
+
+function _sourceHtmlForExport() {
+  const t = document.createElement('div');
+  try { t.innerHTML = _safeHTML(_activeSourceHTML); } catch (_) { t.innerHTML = String(_activeSourceHTML || ''); }
+  t.querySelectorAll('.page-footer-number').forEach(f => f.remove());
+  try { if (typeof stripEmojiFromNode === 'function') stripEmojiFromNode(t); } catch (_) {}
+  return t.innerHTML;
+}
+
+// Export code can `await window.whenPaginationIdle()` before reading the DOM.
+window.whenPaginationIdle = function(timeoutMs) {
+  const limit = Date.now() + (timeoutMs || 15000);
+  return new Promise(resolve => {
+    const tick = () => {
+      let busy = false;
+      try {
+        busy = _activeSourceHTML != null || _paginationActiveCount > 0 || _renderInFlight > 0 ||
+               (typeof _paginateProgressiveBusy !== 'undefined' && _paginateProgressiveBusy);
+      } catch (_) { busy = false; }
+      if (!busy || Date.now() > limit) { resolve(!busy); return; }
+      setTimeout(tick, 50);
+    };
+    tick();
+  });
+};
+
+// Run `fn` with content-visibility virtualisation switched off, so every
+// page is really laid out (html2canvas / measuring exporters need that).
+window.withFullRender = async function(fn) {
+  const root = document.documentElement;
+  const hadNoCv = root.classList.contains('perf-no-cv');
+  root.classList.add('perf-no-cv');
+  root.classList.remove('perf-cv-on');
+  void (docContainer && docContainer.offsetHeight);
+  try { return await fn(); }
+  finally {
+    if (!hadNoCv) root.classList.remove('perf-no-cv');
+    try { _syncVirtualRender(); } catch (_) {}
+  }
+};
+
+// ============================================================
+// FIX 2 — NO "SCROLL FROM THE TOP" WHEN CONTENT IS REBUILT / UPDATED
+// - finds the REAL scrolling element (docContainer or an ancestor)
+// - keeps the scroll range alive while the pages are rebuilt (bottom
+//   padding), so the position can never clamp to 0
+// - forces scroll-behavior:auto so restoring is instant, never animated
+// ============================================================
+function _getScrollEl() {
+  let el = docContainer;
+  while (el && el !== document.body && el !== document.documentElement) {
+    let oy = '';
+    try { oy = getComputedStyle(el).overflowY; } catch (_) {}
+    if (/(auto|scroll|overlay)/.test(oy) && el.scrollHeight > el.clientHeight + 1) return el;
+    el = el.parentElement;
+  }
+  return document.scrollingElement || document.documentElement;
+}
+
+function _beginScrollLock() {
+  if (!docContainer) return null;
+  const el = _getScrollEl();
+  const st = {
+    el,
+    top: el.scrollTop,
+    left: el.scrollLeft,
+    prevBehavior: el.style.scrollBehavior,
+    prevRootBehavior: document.documentElement.style.scrollBehavior,
+    prevPad: docContainer.style.paddingBottom,
+    userMoved: false,
+    listeners: []
+  };
+  el.style.scrollBehavior = 'auto';
+  document.documentElement.style.scrollBehavior = 'auto';
+  try {
+    const basePad = parseFloat(getComputedStyle(docContainer).paddingBottom) || 0;
+    const extra = Math.max(el.scrollHeight || 0, docContainer.scrollHeight || 0);
+    docContainer.style.paddingBottom = (basePad + extra) + 'px';
+  } catch (_) {}
+  const mark = () => { st.userMoved = true; };
+  [docContainer, el].forEach(t => {
+    if (!t || !t.addEventListener) return;
+    ['wheel', 'touchmove'].forEach(ev => {
+      t.addEventListener(ev, mark, { passive: true });
+      st.listeners.push([t, ev, mark]);
+    });
+  });
+  return st;
+}
+
+function _applyScrollLock(st) {
+  if (!st || st.userMoved) return;
+  try { st.el.scrollTop = st.top; st.el.scrollLeft = st.left; } catch (_) {}
+}
+
+function _endScrollLock(st) {
+  if (!st) return;
+  try { docContainer.style.paddingBottom = st.prevPad || ''; } catch (_) {}
+  _applyScrollLock(st);
+  st.listeners.forEach(([t, ev, fn]) => { try { t.removeEventListener(ev, fn); } catch (_) {} });
+  st.listeners = [];
+  const finish = () => {
+    _applyScrollLock(st);
+    st.el.style.scrollBehavior = st.prevBehavior || '';
+    document.documentElement.style.scrollBehavior = st.prevRootBehavior || '';
+  };
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(finish); else finish();
+}
+
 function _perfYield() {
   return new Promise(resolve => {
     try {
@@ -932,6 +1050,7 @@ document.addEventListener('keydown', (e) => {
 // ===== CANVAS HTML HELPERS =====
 function getAllCanvasHTML() {
   if (!docContainer) return '';
+  if (_activeSourceHTML != null) return _sourceHtmlForExport();   // pagination in flight: DOM is half-built
   if (_pageCacheObserver) _perfInvalidateFromRecords(_pageCacheObserver.takeRecords());
   const parts = [];
   const pages = docContainer.querySelectorAll('.doc-page-canvas');
@@ -952,6 +1071,7 @@ function getAllCanvasHTML() {
 
 function getCanvasSnapshotHTML() {
   if (!docContainer) return '';
+  if (_activeSourceHTML != null) return _activeSourceHTML;        // pagination in flight: DOM is half-built
   if (_pageCacheObserver) _perfInvalidateFromRecords(_pageCacheObserver.takeRecords());
   const entries = [];
   docContainer.querySelectorAll('.doc-page-canvas').forEach(page => {
@@ -1206,6 +1326,7 @@ async function _paginateDocumentHTMLCore(rawHtml, triggerSave = true) {
   if (typeof invalidatePDFPreviewCache === 'function') invalidatePDFPreviewCache();
   if (!docContainer) return;
   const runId = ++_paginateRunId;
+  _activeSourceHTML = rawHtml;
 
   // Cancel pending timers — a stray reflow mid-pagination would be visible.
   clearTimeout(paginationDebounceTimer);
@@ -1226,7 +1347,7 @@ async function _paginateDocumentHTMLCore(rawHtml, triggerSave = true) {
   _enterPagination();
   document.documentElement.classList.remove('perf-cv-on');
   window.__mathLastOverflowSig = null;
-  const savedScrollPos = docContainer.scrollTop;
+  const scrollLock = _beginScrollLock();
   const markerId = _saveCaretOffset();
   try {
     docContainer.innerHTML = '';
@@ -1273,7 +1394,7 @@ async function _paginateDocumentHTMLCore(rawHtml, triggerSave = true) {
     _removeEmptyEditorPages();
 
     // Restore scroll as early as possible so the user's viewport is stable.
-    docContainer.scrollTop = savedScrollPos;
+    _applyScrollLock(scrollLock);
 
     await new Promise(r => setTimeout(r, 30));
     if (runId !== _paginateRunId) return;
@@ -1297,7 +1418,7 @@ async function _paginateDocumentHTMLCore(rawHtml, triggerSave = true) {
     _syncVirtualRender();
 
     if (typeof fitEditorPagesToScreen === 'function') fitEditorPagesToScreen();
-    docContainer.scrollTop = savedScrollPos;
+    _applyScrollLock(scrollLock);
     _restoreCaretOffset(markerId);
 
     if (triggerSave) HISTORY.saveState();
@@ -1319,6 +1440,8 @@ async function _paginateDocumentHTMLCore(rawHtml, triggerSave = true) {
     // Release the min-height lock and restore overflow-anchor.
     docContainer.style.minHeight = prevMinHeight || '';
     docContainer.style.overflowAnchor = prevOverflowAnchor || '';
+    if (runId === _paginateRunId) _activeSourceHTML = null;
+    _endScrollLock(scrollLock);
     // Suppress font-loadingdone re-settle for 3 s.
     _suppressFontSettleUntil = Date.now() + 3000;
     _exitPagination();
@@ -1900,6 +2023,7 @@ async function _paginateDocumentCanvasAsyncCoreImpl(rawHtml, triggerSave, scratc
   if (typeof invalidatePDFPreviewCache === 'function') invalidatePDFPreviewCache();
   if (!docContainer) return;
   const runId = ++_paginateRunId;
+  _activeSourceHTML = rawHtml;
 
   // Cancel pending timers — a stray reflow mid-pagination would be visible.
   clearTimeout(paginationDebounceTimer);
@@ -1919,7 +2043,7 @@ async function _paginateDocumentCanvasAsyncCoreImpl(rawHtml, triggerSave, scratc
   _enterPagination();
   document.documentElement.classList.remove('perf-cv-on');
   window.__mathLastOverflowSig = null;
-  const savedScrollPos = docContainer.scrollTop;
+  const scrollLock = _beginScrollLock();
   const markerId = _saveCaretOffset();
   try {
     docContainer.innerHTML = '';
@@ -1998,7 +2122,7 @@ async function _paginateDocumentCanvasAsyncCoreImpl(rawHtml, triggerSave, scratc
     _settleOverflowingPages();
     normalizeAllEditorPagesToA4();
     _syncVirtualRender();
-    if (!userScrolledDuringPagination) docContainer.scrollTop = savedScrollPos;
+    if (!userScrolledDuringPagination) _applyScrollLock(scrollLock);
 
     await new Promise(r => setTimeout(r, 30));
     if (runId !== _paginateRunId) return;
@@ -2023,7 +2147,7 @@ async function _paginateDocumentCanvasAsyncCoreImpl(rawHtml, triggerSave, scratc
     _syncVirtualRender();
 
     if (typeof fitEditorPagesToScreen === 'function') fitEditorPagesToScreen();
-    if (!userScrolledDuringPagination) docContainer.scrollTop = savedScrollPos;
+    if (!userScrolledDuringPagination) _applyScrollLock(scrollLock);
     _restoreCaretOffset(markerId);
 
     if (triggerSave) HISTORY.saveState();
@@ -2044,6 +2168,8 @@ async function _paginateDocumentCanvasAsyncCoreImpl(rawHtml, triggerSave, scratc
   } finally {
     docContainer.style.minHeight = prevMinHeight || '';
     docContainer.style.overflowAnchor = prevOverflowAnchor || '';
+    if (runId === _paginateRunId) _activeSourceHTML = null;
+    _endScrollLock(scrollLock);
     _suppressFontSettleUntil = Date.now() + 3000;
     _exitPagination();
   }
@@ -2108,7 +2234,7 @@ function _pgCaretAtPageEnd(page, range) {
 
 function _pgPlaceCaret(page, where, x) {
   if (!page) return;
-  page.focus();
+  try { page.focus({ preventScroll: true }); } catch (_) { page.focus(); }
   const sel = window.getSelection();
   const footer = page.querySelector(':scope > .page-footer-number');
   const base = document.createRange();
@@ -2665,6 +2791,11 @@ function getPageCount() {
 
 // ===== UPDATE PAGE BY NUMBER =====
 function updateSpecificPageByNumber(pageNumber, newHtml, opts) {
+  const _lock = _beginScrollLock();
+  try { return _updateSpecificPageByNumberImpl(pageNumber, newHtml, opts); }
+  finally { _endScrollLock(_lock); }
+}
+function _updateSpecificPageByNumberImpl(pageNumber, newHtml, opts) {
   const pageNum = Number.parseInt(pageNumber, 10);
   if (!Number.isInteger(pageNum) || pageNum < 1 || typeof newHtml !== 'string') {
     return false;
@@ -2707,6 +2838,11 @@ function updateSpecificPageByNumber(pageNumber, newHtml, opts) {
 
 // ===== INSERT NEW CONTENT RIGHT AFTER A PAGE =====
 async function insertHtmlAfterPage(pageNumber, newHtml) {
+  const _lock = _beginScrollLock();
+  try { return await _insertHtmlAfterPageImpl(pageNumber, newHtml); }
+  finally { _endScrollLock(_lock); }
+}
+async function _insertHtmlAfterPageImpl(pageNumber, newHtml) {
   const n = Number.parseInt(pageNumber, 10);
   if (!docContainer || !Number.isInteger(n) || n < 1 || typeof newHtml !== 'string' || !newHtml.trim()) return false;
   const pages = Array.from(docContainer.querySelectorAll('.doc-page-canvas'));
@@ -2724,6 +2860,11 @@ async function insertHtmlAfterPage(pageNumber, newHtml) {
 window.insertHtmlAfterPage = insertHtmlAfterPage;
 
 function updateSpecificPagesByNumber(updates) {
+  const _lock = _beginScrollLock();
+  try { return _updateSpecificPagesByNumberImpl(updates); }
+  finally { _endScrollLock(_lock); }
+}
+function _updateSpecificPagesByNumberImpl(updates) {
   if (!Array.isArray(updates) || !updates.length) return false;
   if (!docContainer) return false;
   const pages = Array.from(docContainer.querySelectorAll('.doc-page-canvas'));
@@ -2763,6 +2904,11 @@ function updateSpecificPagesByNumber(updates) {
 
 // ===== UPDATE SECTION BY HEADING =====
 async function updateSpecificSectionByHeading(targetHeading, newHtml) {
+  const _lock = _beginScrollLock();
+  try { return await _updateSpecificSectionByHeadingImpl(targetHeading, newHtml); }
+  finally { _endScrollLock(_lock); }
+}
+async function _updateSpecificSectionByHeadingImpl(targetHeading, newHtml) {
   if (typeof targetHeading !== 'string' || !targetHeading.trim() || typeof newHtml !== 'string') {
     return false;
   }
