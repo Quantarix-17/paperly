@@ -636,7 +636,7 @@ function initializeSidebarResize(event) {
 
   function onMouseMove(ev) {
     const newWidth = startWidth + (ev.clientX - startX);
-    if (newWidth >= 300 && newWidth <= 550) sidebar.style.width = newWidth + 'px';
+    if (newWidth >= 300 && newWidth <= 720) sidebar.style.width = newWidth + 'px';
   }
 
   function onMouseUp() {
