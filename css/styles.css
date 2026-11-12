@@ -7278,3 +7278,40 @@ body.omr-font-ready .doc-page-canvas .omr-bubble.omr-bubble.omr-bubble.omr-bubbl
   border-top-color: var(--primary-color);
   animation: pdf-spin 0.7s linear infinite;
 }
+
+
+/* ============================================================
+   CHAT INPUT FOCUS: বেগুনি বর্ডার/আউটলাইন নেই, শুধু নরম শ্যাডো
+   ============================================================ */
+:root {
+  --float-focus-shadow: 0 8px 22px -8px rgba(30, 36, 80, 0.28);
+}
+.dark {
+  --float-focus-shadow: 0 10px 26px -8px rgba(0, 0, 0, 0.75);
+}
+
+/* বাইরের ভাসমান কার্ড: ফোকাসে বর্ডারের রং বদলাবে না, শ্যাডো একটু গভীর হবে */
+#sidebar #chat-form:focus-within {
+  border-color: var(--float-card-border) !important;
+  box-shadow: var(--float-card-shadow), var(--float-focus-shadow) !important;
+}
+
+/* টেক্সট বক্স: ফোকাসে কোনো বর্ডার/আউটলাইন/রিং নয় */
+#sidebar #chat-form #chat-input-textarea,
+#sidebar #chat-form #chat-input-textarea:hover,
+#sidebar #chat-form #chat-input-textarea:focus,
+#sidebar #chat-form #chat-input-textarea:focus-visible {
+  outline: none !important;
+  border-color: transparent !important;
+}
+#sidebar #chat-form #chat-input-textarea:focus,
+#sidebar #chat-form #chat-input-textarea:focus-visible {
+  background: var(--float-input-bg) !important;
+  box-shadow: var(--float-focus-shadow) !important;
+}
+.dark #sidebar #chat-form #chat-input-textarea:focus,
+.dark #sidebar #chat-form #chat-input-textarea:focus-visible {
+  background: var(--float-input-bg) !important;
+  border-color: transparent !important;
+  box-shadow: var(--float-focus-shadow) !important;
+}
