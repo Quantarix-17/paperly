@@ -888,13 +888,21 @@ function _ensureAtSelXStyle() {
     '.at-sel-x:hover{background:rgba(148,163,184,.55)}' +
     '.at-intent-card.selected{position:relative}' +
     '.at-intent-card .at-sel-x{position:absolute;top:4px;right:4px;margin:0}' +
-    '.at-chip.at-chip-format{background:rgba(148,163,184,.16)!important;color:inherit!important;border:1px solid rgba(255,255,255,.55)!important;' +
+    // GLASS look for every selectable option (chat-panel chips + menu cards/chips). No colour anywhere.
+    '.at-chip,.at-chip.at-chip-create,.at-chip.at-chip-format,.at-intent-card,.at-intent-card.at-intent-create,.at-subscope-chip,.at-modifier-chip,.at-recent-chip{' +
+    'background:rgba(148,163,184,.16)!important;color:inherit!important;border:1px solid rgba(255,255,255,.55)!important;' +
     '-webkit-backdrop-filter:blur(12px) saturate(170%);backdrop-filter:blur(12px) saturate(170%);' +
     'box-shadow:0 2px 10px rgba(15,23,42,.08),inset 0 1px 0 rgba(255,255,255,.6)!important}' +
-    'html.dark .at-chip.at-chip-format{background:rgba(255,255,255,.08)!important;border-color:rgba(255,255,255,.18)!important;' +
+    '.at-intent-card.selected,.at-subscope-chip.selected,.at-modifier-chip.selected{background:rgba(148,163,184,.30)!important;' +
+    'border-color:rgba(100,116,139,.55)!important;box-shadow:0 2px 12px rgba(15,23,42,.12),inset 0 1px 0 rgba(255,255,255,.7)!important}' +
+    'html.dark .at-chip,html.dark .at-chip.at-chip-create,html.dark .at-chip.at-chip-format,html.dark .at-intent-card,html.dark .at-intent-card.at-intent-create,' +
+    'html.dark .at-subscope-chip,html.dark .at-modifier-chip,html.dark .at-recent-chip{background:rgba(255,255,255,.08)!important;border-color:rgba(255,255,255,.18)!important;' +
     'box-shadow:0 2px 10px rgba(0,0,0,.3),inset 0 1px 0 rgba(255,255,255,.14)!important}' +
-    '.at-chip-format .at-chip-format-text{font-size:11px;font-weight:800;letter-spacing:.3px}' +
-    '.at-chip-format .at-chip-remove{background:rgba(148,163,184,.25)!important;color:inherit!important}';
+    'html.dark .at-intent-card.selected,html.dark .at-subscope-chip.selected,html.dark .at-modifier-chip.selected{background:rgba(255,255,255,.16)!important;' +
+    'border-color:rgba(255,255,255,.45)!important}' +
+    '.at-chip .at-chip-icon,.at-intent-icon{background:transparent!important;color:inherit!important}' +
+    '.at-chip .at-chip-remove{background:rgba(148,163,184,.25)!important;color:inherit!important}' +
+    '.at-chip-format .at-chip-format-text{font-size:11px;font-weight:800;letter-spacing:.3px}';
   document.head.appendChild(st);
 }
 function _makeAtSelectedX(id, label) {
@@ -950,38 +958,23 @@ function _applyLanguageFormatChoice(id) {
 window.refreshFormatChip = function () { renderSelectedCommandChips(); };
 
 // ===== RENDER CHIPS =====
-// The Copy and Copy & Refine commands are shown in the chat panel as "@Create" (it creates a new
-// document from the typed text). Only the DISPLAY changes: the stored command
-// ids stay 'copy_text' / 'copy_refine', so every Copy rule and the payload are untouched.
-function _chipDisplayLabel(c) {
-  return c && _COPY_CMD_IDS.includes(c.id) ? 'Create' : (c ? c.label : '');
-}
-function _chipDisplayIcon(c) {
-  if (c && _COPY_CMD_IDS.includes(c.id)) {
-    const base = getAtCommandById('create_pdf');
-    const slides = window.APP_STATE && window.APP_STATE.creationMode === 'slides';
-    return slides ? 'slides' : ((base && base.icon) || c.icon);
-  }
-  return c ? c.icon : '';
-}
-// Chips that mean the same thing to the person (Create / Copy / Copy & Refine /
-// implicit Create parent all read "@Create"; the same id twice) are merged into ONE
-// chip, so the chat panel never shows a double selection. The merged chip's ×
-// removes every command it stands for.
-function _chipDedupeKey(c) {
-  if (c && (c.id === 'create_pdf' || _COPY_CMD_IDS.includes(c.id))) return 'create';
-  return (c && c.id) + '|' + (c && c.param != null ? c.param : '');
-}
+// Chat-panel chips show the command's own title (Create / Copy / Copy & Refine ...), WITHOUT a leading "@".
+// Display only: the stored command ids are never changed.
+function _chipDisplayLabel(c) { return c ? c.label : ''; }
+function _chipDisplayIcon(c) { return c ? c.icon : ''; }
+// Chips that are really the same selection (the same id twice) are merged into ONE chip, so the chat panel never
+// shows a double selection. A hidden auto-added Create parent is not shown next to an explicit Copy chip.
+function _chipDedupeKey(c) { return (c && c.id) + '|' + (c && c.param != null ? c.param : ''); }
 function _dedupeChipCommands(list) {
+  list = (list || []).filter(Boolean);
+  if (list.some(c => _COPY_CMD_IDS.includes(c.id) && !c.implicit)) list = list.filter(c => !(c.id === 'create_pdf' && c.implicit));
   const groups = new Map();
-  (list || []).forEach(c => {
-    if (!c) return;
+  list.forEach(c => {
     const key = _chipDedupeKey(c);
     const g = groups.get(key);
     if (!g) { groups.set(key, { c, ids: [c.id] }); return; }
     if (!g.ids.includes(c.id)) g.ids.push(c.id);
-    // prefer the explicit (non-implicit) one as the visible chip
-    if (g.c.implicit && !c.implicit) g.c = c;
+    if (g.c.implicit && !c.implicit) g.c = c;      // prefer the explicit one as the visible chip
   });
   return Array.from(groups.values());
 }
@@ -996,16 +989,15 @@ function renderSelectedCommandChips() {
     const hasSelection = selectedCommands.length > 0;
     commandButton.classList.toggle('has-selection', hasSelection);
     commandButton.setAttribute('aria-pressed', hasSelection ? 'true' : 'false');
-    commandButton.setAttribute('aria-label', hasSelection ? `Selected ${_dedupeChipCommands(selectedCommands).map(g => '@' + _chipDisplayLabel(g.c)).join(', ')}` : 'Select intent');
+    commandButton.setAttribute('aria-label', hasSelection ? `Selected ${_dedupeChipCommands(selectedCommands).map(g => _chipDisplayLabel(g.c)).join(', ')}` : 'Select intent');
   }
   if (!window.APP_STATE) return;
   _dedupeChipCommands(selectedCommands).forEach(({ c, ids }) => {
     const chip = document.createElement('span');
     chip.className = 'at-chip';
     const _dispLabel = _chipDisplayLabel(c);
-    const labelText = c.param ? `@${_dispLabel.replace(/\s*\[.*?\]/, '')}:${c.param}` : `@${_dispLabel}`;
+    const labelText = c.param ? `${_dispLabel.replace(/\s*\[.*?\]/, '')}:${c.param}` : _dispLabel;
     if (c.implicit) chip.classList.add('at-chip-implicit');
-    if (c.id === 'create_pdf' || c.id === 'create_slides' || c.id === 'add') chip.classList.add('at-chip-create');   // @Create / @Add chip: green
     const labelSpan = document.createElement('span');
     labelSpan.innerHTML = `<span class="at-chip-icon">${renderCommandIcon(_chipDisplayIcon(c))}</span><span>${labelText}</span>`;
     const removeBtn = document.createElement('button');
@@ -1090,7 +1082,6 @@ function _buildAtIntentGrid() {
       : memberCmds.every(c => isAtCommandDisabled(c)));
     const card = document.createElement('div');
     card.className = 'at-intent-card' +
-      (group.key === 'create' ? ' at-intent-create' : '') +   // Create / Add card: styled green
       (selectedMember ? ' selected' : '') +
       (AT_MENU_STATE.expandedGroup === group.key ? ' expanded' : '') +
       (allDisabled ? ' disabled' : '');
