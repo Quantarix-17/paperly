@@ -31,9 +31,10 @@
   // static while exporting, so one style object per element is enough.
   let _csCache = new WeakMap();
   function getComputedStyle(el, pseudo) {
-    if (pseudo || !el || el.nodeType !== 1) return window.getComputedStyle(el, pseudo);
+    const win = (el && el.ownerDocument && el.ownerDocument.defaultView) || window;
+    if (pseudo || !el || el.nodeType !== 1) return win.getComputedStyle(el, pseudo);
     let cs = _csCache.get(el);
-    if (!cs) { cs = window.getComputedStyle(el); _csCache.set(el, cs); }
+    if (!cs) { cs = win.getComputedStyle(el); _csCache.set(el, cs); }
     return cs;
   }
 
@@ -930,7 +931,7 @@
     holder.style.cssText = `display:inline-block; padding:2px 4px; font-size:${pcs.fontSize}; color:${pcs.color}; line-height:normal; white-space:nowrap;`;
     holder.appendChild(eq.cloneNode(true));
     holderStage.appendChild(holder);
-    document.body.appendChild(holderStage);
+    (_sandbox ? _sandbox.doc : document).body.appendChild(holderStage);
     try {
       // Wait for KaTeX's web fonts to actually be loaded, and let one frame
       // pass so layout has settled, before snapshotting — otherwise complex
@@ -2426,7 +2427,7 @@
   function markerOf(li) {
     const out = { lst: getComputedStyle(li).listStyleType, color: null, bold: false };
     try {
-      const m = window.getComputedStyle(li, '::marker');
+      const m = ((li.ownerDocument && li.ownerDocument.defaultView) || window).getComputedStyle(li, '::marker');
       out.color = hexColor(m.color);
       out.bold = (parseInt(m.fontWeight, 10) || 400) >= 600;
     } catch (_) { /* ::marker not readable: keep defaults */ }
@@ -2762,6 +2763,56 @@
   const THEME_NAMES = ['aurora', 'editorial', 'midnight', 'blueprint', 'sage', 'minimal', 'rose', 'ocean', 'highcontrast'];
   const isDarkUI = () => !!((document.documentElement && document.documentElement.classList.contains('dark')) ||
     (document.body && document.body.classList.contains('dark')));
+  // ---- invisible light-theme sandbox --------------------------------------
+  // Dark mode = `.dark ...` CSS rules driven by a class on <html>/<body>; they turned black ink light
+  // grey on the white Word page. Instead of flipping the visible UI to light (it would flash), the
+  // export stage is built inside a hidden, off-screen same-origin <iframe> that gets the SAME
+  // stylesheets and root classes/attributes as the app EXCEPT the dark ones. The user never sees
+  // anything change; the iframe is removed when the export ends.
+  let _sandbox = null;
+  async function createLightSandbox(L) {
+    const frame = document.createElement('iframe');
+    try {
+      frame.setAttribute('aria-hidden', 'true');
+      frame.tabIndex = -1;
+      // same viewport width as the app, so @media rules behave exactly like before
+      frame.style.cssText = `position:fixed;left:-30000px;top:0;width:${Math.max(window.innerWidth || 0, L.width)}px;height:${Math.max(window.innerHeight || 0, 800)}px;border:0;opacity:0;pointer-events:none;`;
+      frame.srcdoc = `<!doctype html><html><head><meta charset="utf-8"><base href="${String(document.baseURI).replace(/"/g, '&quot;')}"></head><body></body></html>`;
+      const loaded = new Promise(res => { frame.onload = () => res(); });
+      document.body.appendChild(frame);
+      await withTimeout(loaded, 4000, 'sandbox load');
+      const doc = frame.contentDocument;
+      if (!doc || !doc.body || !doc.head) throw new Error('sandbox unavailable');
+
+      const DARK = /^(dark|dark-mode|dark-theme|theme-dark)$/i;
+      const copyAttrs = (from, to) => Array.from(from.attributes).forEach(a => {
+        if (a.name === 'class') to.className = a.value.split(/\s+/).filter(c => c && !DARK.test(c)).join(' ');
+        else if (/^data-(theme|color-scheme|bs-theme|mode)$/i.test(a.name) && /dark/i.test(a.value)) to.setAttribute(a.name, 'light');
+        else to.setAttribute(a.name, a.value);
+      });
+      copyAttrs(document.documentElement, doc.documentElement);
+      copyAttrs(document.body, doc.body);
+      doc.documentElement.style.colorScheme = 'light';
+
+      const pending = [];
+      document.querySelectorAll('link[rel~="stylesheet"], style').forEach(n => {
+        const c = n.cloneNode(true);
+        if (n.localName === 'link') {
+          c.href = n.href;   // absolute URL
+          pending.push(new Promise(r => { c.onload = c.onerror = () => r(); }));
+        } else if (!(n.textContent || '').trim() && n.sheet) {   // rules added through the CSSOM
+          try { c.textContent = Array.from(n.sheet.cssRules).map(r => r.cssText).join('\n'); } catch (_) { /* ignore */ }
+        }
+        doc.head.appendChild(c);
+      });
+      await withTimeout(Promise.all(pending), 8000, 'sandbox css', undefined);
+      return { frame, doc };
+    } catch (e) {
+      frame.remove();
+      throw e;
+    }
+  }
+
   function liveCanvas() {
     const all = Array.from(document.querySelectorAll('.doc-page-canvas')).filter(c => !c.classList.contains('pdf-export-measure-page'));
     return all.find(c => /(^|\s)pdf-format-/.test(c.className)) || all[0] || document.querySelector('.doc-page-canvas');
@@ -2807,27 +2858,29 @@
   function mountStage(fragmentHost) {
     const L = pageLayout();
     const live = liveCanvas();
-    const stage = document.createElement('div');
+    const hostDoc = _sandbox ? _sandbox.doc : document;
+    const stage = hostDoc.createElement('div');
     stage.className = themeClasses(live).join(' ');
     const set = (k, v) => stage.style.setProperty(k, v, 'important');
     // Dark mode: the `.dark .doc-page-canvas:where(:not(.pdf-export-measure-page))` rules (and the
     // dark theme palettes) would paint light ink on the white Word page. The PDF export avoids this
     // with .pdf-export-measure-page, which forces the light palette; do the same here, but keep the
     // real font size and let the page grow (that class would otherwise fix size / clip overflow).
-    if (isDarkUI()) {
+    if (!_sandbox && isDarkUI()) {   // fallback only: with the sandbox there are no dark rules to fight
       stage.classList.add('pdf-export-measure-page');
       const fs = live ? window.getComputedStyle(live).fontSize : '';
       if (fs) set('font-size', fs);
       set('max-width', 'none');
     }
-    set('position', 'fixed'); set('left', '-20000px'); set('top', '0');
+    set('position', _sandbox ? 'absolute' : 'fixed'); set('left', _sandbox ? '0' : '-20000px'); set('top', '0');
     set('width', L.width + 'px'); set('height', 'auto'); set('min-height', '0'); set('max-height', 'none');
     set('padding', `${L.top}px ${L.right}px ${L.bottom}px ${L.left}px`);
     set('margin', '0'); set('box-sizing', 'border-box'); set('overflow', 'visible');
     set('background', '#fff'); set('box-shadow', 'none'); set('border', 'none'); set('border-radius', '0');
     set('pointer-events', 'none'); set('z-index', '-1'); set('transform', 'none');
     while (fragmentHost.firstChild) stage.appendChild(fragmentHost.firstChild);
-    document.body.appendChild(stage);
+    hostDoc.body.appendChild(stage);
+    if (_sandbox) _sandbox.frame.style.height = Math.max(parseFloat(_sandbox.frame.style.height) || 0, stage.offsetHeight + 40) + 'px';
     return stage;
   }
 
@@ -2859,8 +2912,13 @@
       temp.querySelectorAll('.page-footer-number').forEach(f => f.remove());
       Array.from(temp.querySelectorAll('*')).forEach(el => { el.removeAttribute('contenteditable'); el.removeAttribute('spellcheck'); });
 
+      // light-theme sandbox (invisible); if it cannot be created we silently use the old in-page stage
+      try { _sandbox = await createLightSandbox(pageLayout()); }
+      catch (e) { _sandbox = null; console.warn('[WordExport] light sandbox unavailable, using in-page stage:', e); }
       stage = mountStage(temp);
-      if (document.fonts && document.fonts.ready) { try { await withTimeout(document.fonts.ready, 1200, 'fonts', undefined); } catch (_) { /* ignore */ } }
+      const fontDoc = _sandbox ? _sandbox.doc : document;
+      void stage.offsetHeight;   // layout first, so the fonts the text needs start loading
+      if (fontDoc.fonts && fontDoc.fonts.ready) { try { await withTimeout(fontDoc.fonts.ready, _sandbox ? 3000 : 1200, 'fonts', undefined); } catch (_) { /* ignore */ } }
 
       const L = pageLayout();
       const contentTw = A4.w - Math.round((L.left + L.right) * TW);
@@ -2943,6 +3001,7 @@
       console.error('[WordExport] native .docx build failed:', e);
     } finally {
       if (stage) stage.remove();
+      if (_sandbox) { try { _sandbox.frame.remove(); } catch (_) { /* ignore */ } _sandbox = null; }
       busy(btn, false);
     }
 
