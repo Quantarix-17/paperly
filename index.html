@@ -280,6 +280,52 @@
     html.dark #export-menu-panel button:hover,html.dark #export-menu-panel button:focus-visible{background:rgba(255,255,255,.12)}
   </style>
 
+  <!-- ===== Settings panel: section styles (new) ===== -->
+  <style id="settings-sections-css">
+    /* Modal card should scroll if the content grows tall */
+    #ai-models-modal .ai-models-modal-card{
+      max-height:calc(100vh - 28px);
+      overflow-y:auto;
+    }
+    /* Section divider + header */
+    .settings-section{
+      margin:14px 0 4px;
+      padding:14px 0 4px;
+      border-top:1px solid rgba(148,163,184,.28);
+    }
+    .settings-section:first-of-type{ margin-top:6px; }
+    .settings-section-title{
+      margin:0 0 10px;
+      font-size:14px;
+      font-weight:700;
+      letter-spacing:.01em;
+      color:var(--text-primary,#0f172a);
+      display:flex;
+      align-items:center;
+      gap:8px;
+    }
+    .settings-section-title::before{
+      content:"";
+      display:inline-block;
+      width:4px;
+      height:15px;
+      border-radius:2px;
+      background:#4f7df3;
+    }
+    html.dark .settings-section{ border-top-color:rgba(148,163,184,.22); }
+    html.dark .settings-section-title{ color:#f1f5f9; }
+    /* Add AI section: button + form host */
+    #settings-add-ai-section .settings-add-ai-btn{
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      margin-bottom:6px;
+    }
+    /* Model list section: nothing extra needed — the existing toolbar/list keep their look */
+    /* Switches section: just host container */
+    #settings-switches-container{ min-height:10px; }
+  </style>
+
     <!-- OMR bubbles are drawn by the font "Nazrul OMR" (fonts/NazrulOMR-Regular.ttf): load it early so it is ready
        when exam-library.js writes the bubbles (exam-library.js also waits for it before building). -->
   <link rel="preload" href="fonts/NazrulOMR-Regular.ttf" as="font" type="font/ttf" crossorigin>
@@ -334,7 +380,7 @@
         <span id="mode-toggle-label" class="mode-label">Color</span>
       </button>
       <button class="topbar-btn" onclick="openAIModelsModal()">
-        <span class="ui-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v7A2.5 2.5 0 0 1 17.5 15H11l-4.5 4v-4.6A2.5 2.5 0 0 1 4 12.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg></span>AI Models
+        <span class="ui-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v7A2.5 2.5 0 0 1 17.5 15H11l-4.5 4v-4.6A2.5 2.5 0 0 1 4 12.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg></span>Settings
       </button>
       <button class="topbar-btn" onclick="startNewProject()">
         <span class="ui-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h9l3 3V20H6z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M14.5 3.5V7H18" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></span>New
@@ -634,13 +680,16 @@
     </div>
   </div>
 
-  <!-- AI MODELS MODAL -->
+  <!-- SETTINGS MODAL (formerly AI Models modal). Three sections:
+       (1) AI যুক্ত করুন — add form
+       (2) AI মডেল লিস্ট — toolbar + list
+       (3) সুইচ ও পারমিশন — permission switches (rendered by JS) -->
   <div id="ai-models-modal" style="display:none; position:fixed; inset:0; z-index:10000; align-items:center; justify-content:center; padding:14px; box-sizing:border-box;">
     <div class="ai-models-modal-card">
       <div class="ai-models-modal-header">
         <div class="ai-models-modal-title-wrap">
-          <h3>AI Models</h3>
-          <div class="ai-models-modal-subtitle">Manage active model and fallback order</div>
+          <h3>Settings</h3>
+          <div class="ai-models-modal-subtitle">Manage AI models, permissions &amp; preferences</div>
         </div>
         <button type="button" class="ai-model-head-btn" onclick="toggleAIModelsInfo()" aria-label="Information" title="Information">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 10v6"/><circle cx="12" cy="7.2" r=".8" fill="currentColor" stroke="none"/></svg>
@@ -664,83 +713,98 @@
         </div>
       </div>
 
-      <div class="ai-models-toolbar">
-        <button class="topbar-btn" onclick="document.getElementById('ai-models-import-input').click()">
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V4"/><path d="m8 8 4-4 4 4"/><path d="M5 13v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"/></svg>
-          <span class="label-desktop">Import</span>
-        </button>
-        <button class="topbar-btn" onclick="exportAIModels()">
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 9V20"/><path d="m8 16 4 4 4-4"/><path d="M5 4h14v6"/></svg>
-          <span class="label-desktop">Export</span>
-        </button>
-        <button class="topbar-btn" id="ai-models-testall-btn" onclick="handleTestAllModels()" title="Test every model one by one automatically">
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12a8 8 0 0 1 13.7-5.7"/><path d="M20 12a8 8 0 0 1-13.7 5.7"/><path d="M17 3v4h-4M7 21v-4h4"/></svg>
-          <span class="label-desktop" id="ai-models-testall-label">Test all</span>
-        </button>
-        <button class="topbar-btn" id="ai-models-remove-btn" onclick="toggleAIModelsRemoveMode()" title="Mark models and remove them together">
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 7h14M9 7V4h6v3M8 10v7M12 10v7M16 10v7M7 7l1 14h8l1-14"/></svg>
-          <span class="label-desktop" id="ai-models-remove-label">Remove</span>
-        </button>
-        <div class="ai-models-toolbar-spacer"></div>
-        <button class="topbar-btn btn-primary" onclick="toggleAIModelAddForm()">
+      <!-- ========== SECTION 1: AI যুক্ত করুন ========== -->
+      <section class="settings-section" id="settings-add-ai-section">
+        <h4 class="settings-section-title">AI যুক্ত করুন</h4>
+        <button type="button" class="topbar-btn btn-primary settings-add-ai-btn" onclick="toggleAIModelAddForm()">
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-          <span class="label-desktop">Add model</span>
+          <span>Add new AI model</span>
         </button>
-        <input type="file" id="ai-models-import-input" accept=".json" style="display:none;" onchange="importAIModels(this.files)">
-      </div>
-
-      <div id="ai-models-list" class="ai-models-list"></div>
-
-      <div class="ai-model-add-form" id="ai-model-add-form">
-        <h4 class="ai-model-add-title">Add model</h4>
-        <div style="font-size:.8rem;opacity:.75;margin:-4px 0 10px;">Only the <b>API URL</b> is required. Key, Model ID and Name are optional — local servers (FreeLLMAPI, Ollama, LM Studio…) often need neither.</div>
-        <details style="margin-bottom:12px;">
-          <summary style="cursor:pointer;font-size:.88rem;font-weight:600;">⚡ Paste anything (curl, URL, JSON, .env, “url key model”)</summary>
-          <textarea id="ai-model-paste-input" rows="4" placeholder="curl http://localhost:3001/v1/chat/completions -H 'Authorization: Bearer sk-...' -d '{&quot;model&quot;:&quot;auto&quot;}'&#10;or: http://localhost:3001&#10;or: base_url=...  api_key=...  model=..." style="width:100%;box-sizing:border-box;padding:9px 11px;border:1.5px solid var(--border-color);border-radius:var(--radius-sm);background:var(--bg-color);color:var(--text-primary);font-size:.85rem;font-family:monospace;margin-top:8px;"></textarea>
-          <button type="button" class="topbar-btn" style="margin-top:6px;" onclick="handleSmartPasteModel()">Fill the form from this text</button>
-        </details>
-        <div class="ai-model-form-grid">
-          <div class="ai-field ai-field-full"><label for="ai-model-url-input">API URL <span style="opacity:.6">(required)</span></label><input type="text" id="ai-model-url-input" placeholder="https://api.openai.com/v1/chat/completions  or  http://localhost:3001"></div>
-          <div class="ai-field ai-field-full"><label for="ai-model-key-input">API Key <span style="opacity:.6">(optional — leave blank for local servers)</span></label><input type="password" id="ai-model-key-input" placeholder="API key"></div>
-          <div class="ai-field"><label for="ai-model-id-input">Model ID <span style="opacity:.6">(optional)</span></label><input type="text" id="ai-model-id-input" list="ai-model-id-list" placeholder="blank = server decides"><datalist id="ai-model-id-list"></datalist></div>
-          <div class="ai-field"><label for="ai-model-name-input">Name <span style="opacity:.6">(optional)</span></label><input type="text" id="ai-model-name-input" placeholder="e.g. My local router"></div>
-          <div class="ai-field">
-            <label for="ai-model-api-type-select">API Type</label>
-            <select id="ai-model-api-type-select">
-              <option value="auto" selected>Auto-detect from URL</option>
-              <option value="openai">OpenAI-compatible</option>
-              <option value="gemini">Google Gemini</option>
-              <option value="anthropic">Anthropic (Claude)</option>
-              <option value="ollama">Ollama (native)</option>
-            </select>
+        <div class="ai-model-add-form" id="ai-model-add-form">
+          <h4 class="ai-model-add-title">Add model</h4>
+          <div style="font-size:.8rem;opacity:.75;margin:-4px 0 10px;">Only the <b>API URL</b> is required. Key, Model ID and Name are optional — local servers (FreeLLMAPI, Ollama, LM Studio…) often need neither.</div>
+          <details style="margin-bottom:12px;">
+            <summary style="cursor:pointer;font-size:.88rem;font-weight:600;">⚡ Paste anything (curl, URL, JSON, .env, “url key model”)</summary>
+            <textarea id="ai-model-paste-input" rows="4" placeholder="curl http://localhost:3001/v1/chat/completions -H 'Authorization: Bearer sk-...' -d '{&quot;model&quot;:&quot;auto&quot;}'&#10;or: http://localhost:3001&#10;or: base_url=...  api_key=...  model=..." style="width:100%;box-sizing:border-box;padding:9px 11px;border:1.5px solid var(--border-color);border-radius:var(--radius-sm);background:var(--bg-color);color:var(--text-primary);font-size:.85rem;font-family:monospace;margin-top:8px;"></textarea>
+            <button type="button" class="topbar-btn" style="margin-top:6px;" onclick="handleSmartPasteModel()">Fill the form from this text</button>
+          </details>
+          <div class="ai-model-form-grid">
+            <div class="ai-field ai-field-full"><label for="ai-model-url-input">API URL <span style="opacity:.6">(required)</span></label><input type="text" id="ai-model-url-input" placeholder="https://api.openai.com/v1/chat/completions  or  http://localhost:3001"></div>
+            <div class="ai-field ai-field-full"><label for="ai-model-key-input">API Key <span style="opacity:.6">(optional — leave blank for local servers)</span></label><input type="password" id="ai-model-key-input" placeholder="API key"></div>
+            <div class="ai-field"><label for="ai-model-id-input">Model ID <span style="opacity:.6">(optional)</span></label><input type="text" id="ai-model-id-input" list="ai-model-id-list" placeholder="blank = server decides"><datalist id="ai-model-id-list"></datalist></div>
+            <div class="ai-field"><label for="ai-model-name-input">Name <span style="opacity:.6">(optional)</span></label><input type="text" id="ai-model-name-input" placeholder="e.g. My local router"></div>
+            <div class="ai-field">
+              <label for="ai-model-api-type-select">API Type</label>
+              <select id="ai-model-api-type-select">
+                <option value="auto" selected>Auto-detect from URL</option>
+                <option value="openai">OpenAI-compatible</option>
+                <option value="gemini">Google Gemini</option>
+                <option value="anthropic">Anthropic (Claude)</option>
+                <option value="ollama">Ollama (native)</option>
+              </select>
+            </div>
+            <div class="ai-field">
+              <label for="ai-model-auth-select">Authentication</label>
+              <select id="ai-model-auth-select">
+                <option value="auto" selected>Auto (Bearer key; none if no key)</option>
+                <option value="bearer">Authorization: Bearer</option>
+                <option value="x-api-key">x-api-key header</option>
+                <option value="api-key">api-key header (Azure)</option>
+                <option value="none">No authentication</option>
+              </select>
+            </div>
           </div>
-          <div class="ai-field">
-            <label for="ai-model-auth-select">Authentication</label>
-            <select id="ai-model-auth-select">
-              <option value="auto" selected>Auto (Bearer key; none if no key)</option>
-              <option value="bearer">Authorization: Bearer</option>
-              <option value="x-api-key">x-api-key header</option>
-              <option value="api-key">api-key header (Azure)</option>
-              <option value="none">No authentication</option>
-            </select>
+          <details style="margin-top:10px;">
+            <summary style="cursor:pointer;font-size:.85rem;">Advanced: extra headers / extra body (JSON)</summary>
+            <label for="ai-model-headers-input" style="display:block;font-size:.78rem;margin:8px 0 4px;">Extra headers</label>
+            <textarea id="ai-model-headers-input" rows="2" placeholder='{"X-Custom-Header": "value"}' style="width:100%;box-sizing:border-box;padding:9px 11px;border:1.5px solid var(--border-color);border-radius:var(--radius-sm);background:var(--bg-color);color:var(--text-primary);font-size:.85rem;font-family:monospace;"></textarea>
+            <label for="ai-model-body-input" style="display:block;font-size:.78rem;margin:8px 0 4px;">Extra body fields <span style="opacity:.6">(a null value removes a field, e.g. {"temperature": null})</span></label>
+            <textarea id="ai-model-body-input" rows="2" placeholder='{"max_tokens": 16000}' style="width:100%;box-sizing:border-box;padding:9px 11px;border:1.5px solid var(--border-color);border-radius:var(--radius-sm);background:var(--bg-color);color:var(--text-primary);font-size:.85rem;font-family:monospace;"></textarea>
+          </details>
+          <label class="ai-model-json-label"><input type="checkbox" id="ai-model-json-checkbox" checked> Supports JSON response format</label>
+          <label class="ai-model-json-label"><input type="checkbox" id="ai-model-search-checkbox" checked> Enable Google Search grounding (Gemini only)</label>
+          <div id="ai-model-add-status" class="ai-model-add-status"></div>
+          <div class="ai-model-form-actions">
+            <button type="button" class="topbar-btn" onclick="clearAIModelForm()">Clear</button>
+            <button type="button" class="topbar-btn" onclick="handleDetectAIModels()" title="Ask the server which models it offers">Detect models</button>
+            <button type="button" class="topbar-btn btn-primary" id="ai-model-add-btn" onclick="handleAddNewAIModel()">Verify &amp; Add</button>
           </div>
         </div>
-        <details style="margin-top:10px;">
-          <summary style="cursor:pointer;font-size:.85rem;">Advanced: extra headers / extra body (JSON)</summary>
-          <label for="ai-model-headers-input" style="display:block;font-size:.78rem;margin:8px 0 4px;">Extra headers</label>
-          <textarea id="ai-model-headers-input" rows="2" placeholder='{"X-Custom-Header": "value"}' style="width:100%;box-sizing:border-box;padding:9px 11px;border:1.5px solid var(--border-color);border-radius:var(--radius-sm);background:var(--bg-color);color:var(--text-primary);font-size:.85rem;font-family:monospace;"></textarea>
-          <label for="ai-model-body-input" style="display:block;font-size:.78rem;margin:8px 0 4px;">Extra body fields <span style="opacity:.6">(a null value removes a field, e.g. {"temperature": null})</span></label>
-          <textarea id="ai-model-body-input" rows="2" placeholder='{"max_tokens": 16000}' style="width:100%;box-sizing:border-box;padding:9px 11px;border:1.5px solid var(--border-color);border-radius:var(--radius-sm);background:var(--bg-color);color:var(--text-primary);font-size:.85rem;font-family:monospace;"></textarea>
-        </details>
-        <label class="ai-model-json-label"><input type="checkbox" id="ai-model-json-checkbox" checked> Supports JSON response format</label>
-        <label class="ai-model-json-label"><input type="checkbox" id="ai-model-search-checkbox" checked> Enable Google Search grounding (Gemini only)</label>
-        <div id="ai-model-add-status" class="ai-model-add-status"></div>
-        <div class="ai-model-form-actions">
-          <button type="button" class="topbar-btn" onclick="clearAIModelForm()">Clear</button>
-          <button type="button" class="topbar-btn" onclick="handleDetectAIModels()" title="Ask the server which models it offers">Detect models</button>
-          <button type="button" class="topbar-btn btn-primary" id="ai-model-add-btn" onclick="handleAddNewAIModel()">Verify &amp; Add</button>
+      </section>
+
+      <!-- ========== SECTION 2: AI মডেল লিস্ট ========== -->
+      <section class="settings-section" id="settings-model-list-section">
+        <h4 class="settings-section-title">AI মডেল লিস্ট</h4>
+        <div class="ai-models-toolbar">
+          <button class="topbar-btn" onclick="document.getElementById('ai-models-import-input').click()">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V4"/><path d="m8 8 4-4 4 4"/><path d="M5 13v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"/></svg>
+            <span class="label-desktop">Import</span>
+          </button>
+          <button class="topbar-btn" onclick="exportAIModels()">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 9V20"/><path d="m8 16 4 4 4-4"/><path d="M5 4h14v6"/></svg>
+            <span class="label-desktop">Export</span>
+          </button>
+          <button class="topbar-btn" id="ai-models-testall-btn" onclick="handleTestAllModels()" title="Test every model one by one automatically">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12a8 8 0 0 1 13.7-5.7"/><path d="M20 12a8 8 0 0 1-13.7 5.7"/><path d="M17 3v4h-4M7 21v-4h4"/></svg>
+            <span class="label-desktop" id="ai-models-testall-label">Test all</span>
+          </button>
+          <button class="topbar-btn" id="ai-models-remove-btn" onclick="toggleAIModelsRemoveMode()" title="Mark models and remove them together">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 7h14M9 7V4h6v3M8 10v7M12 10v7M16 10v7M7 7l1 14h8l1-14"/></svg>
+            <span class="label-desktop" id="ai-models-remove-label">Remove</span>
+          </button>
+          <div class="ai-models-toolbar-spacer"></div>
+          <input type="file" id="ai-models-import-input" accept=".json" style="display:none;" onchange="importAIModels(this.files)">
         </div>
-      </div>
+        <div id="ai-models-list" class="ai-models-list"></div>
+      </section>
+
+      <!-- ========== SECTION 3: সুইচ ও পারমিশন ========== -->
+      <section class="settings-section" id="settings-switches-section">
+        <h4 class="settings-section-title">সুইচ ও পারমিশন</h4>
+        <div class="settings-section-body" id="settings-switches-container">
+          <!-- window.renderStudioSwitches() will populate this on DOMContentLoaded -->
+        </div>
+      </section>
     </div>
   </div>
 
@@ -776,6 +840,17 @@
         const previewScroll = document.getElementById('progress-live-preview-scroll');
         if (previewScroll) {
             previewScroll.innerHTML = '';
+        }
+
+        // Populate the "সুইচ ও পারমিশন" section with the two switches defined
+        // in tab-manager.js (OCR image policy + text-figure policy).
+        try {
+            const swContainer = document.getElementById('settings-switches-container');
+            if (swContainer && typeof window.renderStudioSwitches === 'function') {
+                window.renderStudioSwitches(swContainer, { idPrefix: 'settings-switch' });
+            }
+        } catch (e) {
+            console.warn('[Settings] could not render studio switches:', e);
         }
     });
   </script>
