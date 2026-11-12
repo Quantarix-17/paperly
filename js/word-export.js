@@ -104,6 +104,60 @@
     return monoHex([mix(c.r), mix(c.g), mix(c.b)].map(v => v.toString(16).padStart(2, '0')).join('').toUpperCase());
   }
 
+  // ---- gradient backgrounds -> solid fill / rule line ---------------------
+  // Themes (aurora, midnight, rose ...) paint table headers and some headings with
+  // `background: linear-gradient(...)` and put WHITE text on top. Only
+  // background-color used to be read, so in Word the fill vanished and the white
+  // text became invisible on the white page. Here a gradient is turned into:
+  //   * a solid fill (average of its opaque stops) when it covers the element, or
+  //   * a thin rule line (border) when it is only a 2-12px accent strip
+  //     (e.g. the bar under h1/h2).
+  function splitTop(str) {
+    const out = []; let depth = 0, cur = '';
+    for (const ch of String(str || '')) {
+      if (ch === '(') depth++;
+      else if (ch === ')') depth--;
+      if (ch === ',' && depth === 0) { out.push(cur.trim()); cur = ''; } else cur += ch;
+    }
+    if (cur.trim()) out.push(cur.trim());
+    return out;
+  }
+  const _gradCache = new WeakMap();
+  function gradientInfo(cs) {
+    const img = cs.backgroundImage || '';
+    if (!/gradient\(/i.test(img)) return null;
+    const layers = splitTop(img), sizes = splitTop(cs.backgroundSize || ''), poss = splitTop(cs.backgroundPosition || '');
+    for (let i = 0; i < layers.length; i++) {
+      if (!/gradient\(/i.test(layers[i])) continue;
+      const stops = (layers[i].match(/rgba?\([^)]*\)/gi) || []).map(parseCssColor).filter(c => c && c.a > 0.05);
+      if (!stops.length) continue;
+      const toHex = (c) => [c.r, c.g, c.b].map(v => Math.round(v * c.a + 255 * (1 - c.a)).toString(16).padStart(2, '0')).join('').toUpperCase();
+      const avg = { r: 0, g: 0, b: 0, a: 1 };
+      stops.forEach(c => { avg.r += (c.r * c.a + 255 * (1 - c.a)) / stops.length; avg.g += (c.g * c.a + 255 * (1 - c.a)) / stops.length; avg.b += (c.b * c.a + 255 * (1 - c.a)) / stops.length; });
+      const size = (sizes[i] || sizes[sizes.length - 1] || 'auto').trim().split(/\s+/);
+      const sh = size[1] || size[0] || 'auto';
+      const thin = (/px$/.test(sh) && px(sh) > 0 && px(sh) <= 12) || (/%$/.test(sh) && parseFloat(sh) > 0 && parseFloat(sh) <= 15);
+      if (thin) {
+        const pos = ((poss[i] || poss[poss.length - 1] || '').trim().split(/\s+/)[1] || '100%');
+        return { strip: { color: monoHex(toHex(stops[0])), thick: /px$/.test(sh) ? px(sh) : 3, atTop: pos === '0%' || pos === 'top' || pos === '0px' } };
+      }
+      return { fill: monoHex(toHex(avg)) };
+    }
+    return null;
+  }
+  function gradientOf(el_or_cs) {
+    const cs = el_or_cs && el_or_cs.backgroundImage !== undefined ? el_or_cs : null;
+    if (!cs) return null;
+    return gradientInfo(cs);
+  }
+  // solid background colour of a computed style: background-color, else a covering gradient
+  function bgFill(cs) {
+    const solid = hexColor(cs.backgroundColor);
+    if (solid) return solid;
+    const g = gradientOf(cs);
+    return g && g.fill ? g.fill : null;
+  }
+
   // ---- font helpers -----------------------------------------------------
   const GENERIC_FONTS = new Set(['serif', 'sans-serif', 'monospace', 'cursive', 'fantasy', 'system-ui',
     'ui-serif', 'ui-sans-serif', 'ui-monospace', 'ui-rounded', 'emoji', 'math', 'fangsong',
@@ -258,7 +312,7 @@
     for (let n = el; n && isEl(n); n = n.parentElement) {
       const cs = getComputedStyle(n);
       if (cs.display !== 'inline' && cs.display !== 'inline-block') break;
-      const bg = isMono() ? null : hexColor(cs.backgroundColor);
+      const bg = isMono() ? null : bgFill(cs);
       if (bg) return bg;
     }
     return null;
@@ -1564,7 +1618,15 @@
     };
     // Monochrome: no shading and no left/right (side) borders on any block.
     if (isMono()) { own.left = null; own.right = null; }
-    const bg = isMono() ? null : hexColor(cs.backgroundColor);
+    const bg = isMono() ? null : bgFill(cs);
+    // accent strip drawn with a thin gradient (theme underline bars) -> a real rule line
+    if (!isMono() && !bg) {
+      const g = gradientOf(cs);
+      if (g && g.strip) {
+        const spec = { style: window.docx.BorderStyle.SINGLE, size: Math.min(96, Math.max(4, Math.round(g.strip.thick * EIGHTH_PT))), color: g.strip.color, space: 1 };
+        if (g.strip.atTop) { if (!own.top) own.top = spec; } else if (!own.bottom) own.bottom = spec;
+      }
+    }
     return { bg, own, box: !!(bg || own.left || own.right) };
   }
 
@@ -2360,8 +2422,48 @@
       'lower-roman': L.LOWER_ROMAN, 'upper-roman': L.UPPER_ROMAN
     })[type] || L.DECIMAL;
   }
+  // Theme list markers: glyph (\"\u25B8\", \"\u25CF\" ...) and ::marker colour come from the CSS
+  function markerOf(li) {
+    const out = { lst: getComputedStyle(li).listStyleType, color: null, bold: false };
+    try {
+      const m = window.getComputedStyle(li, '::marker');
+      out.color = hexColor(m.color);
+      out.bold = (parseInt(m.fontWeight, 10) || 400) >= 600;
+    } catch (_) { /* ::marker not readable: keep defaults */ }
+    return out;
+  }
+  function bulletGlyph(lst) {
+    const q = /^["'](.*)["']$/.exec((lst || '').trim());
+    if (q) { const g = q[1].replace(/\\[0-9a-fA-F]{1,6}\s?/g, ' ').trim(); return g || '\u2022'; }
+    return ({ disc: '\u2022', circle: '\u25E6', square: '\u25AA' })[lst] || '\u2022';
+  }
+  function bulletRef(list, st) {
+    const D = window.docx;
+    const li = Array.from(list.children).find(c => tagOf(c) === 'li' && !isHidden(c));
+    if (!li) return 'bul';
+    const mk = markerOf(li);
+    if (mk.lst === 'none') return 'bul';
+    const glyph = bulletGlyph(mk.lst);
+    const key = glyph + '|' + (mk.color || '') + '|' + (mk.bold ? 1 : 0);
+    if (!st.bulMap) st.bulMap = new Map();
+    if (st.bulMap.has(key)) return st.bulMap.get(key);
+    const ref = 'bul-' + (st.bulMap.size + 1);
+    const run = {}; if (mk.color) run.color = mk.color; if (mk.bold) run.bold = true;
+    st.numbering.push({
+      reference: ref,
+      levels: Array.from({ length: 9 }, (_, l) => ({
+        level: l, format: D.LevelFormat.BULLET, text: glyph, alignment: D.AlignmentType.LEFT,
+        style: { paragraph: { indent: { left: 720 + 360 * l, hanging: 360 } }, run }
+      }))
+    });
+    st.bulMap.set(key, ref);
+    return ref;
+  }
   function orderedRef(ol, cs, st) {
     const D = window.docx;
+    const firstLi = Array.from(ol.children).find(c => tagOf(c) === 'li' && !isHidden(c));
+    const mk = firstLi ? markerOf(firstLi) : {};
+    const mrun = {}; if (mk.color) mrun.color = mk.color; if (mk.bold) mrun.bold = true;
     const ref = 'ol-' + (++st.olCount);
     const start = parseInt(ol.getAttribute('start'), 10);
     const fmt = listFormat(cs.listStyleType);
@@ -2370,7 +2472,7 @@
       levels: Array.from({ length: 9 }, (_, l) => ({
         level: l, format: fmt, text: `%${l + 1}.`, alignment: D.AlignmentType.LEFT,
         start: Number.isFinite(start) ? start : 1,
-        style: { paragraph: { indent: { left: 720 + 360 * l, hanging: 360 } } }
+        style: { paragraph: { indent: { left: 720 + 360 * l, hanging: 360 } }, run: mrun }
       }))
     });
     return ref;
@@ -2391,7 +2493,7 @@
     const cs = getComputedStyle(list);
     const ordered = tagOf(list) === 'ol';
     const level = Math.min(8, ctx.listDepth || 0);
-    const ref = cs.listStyleType === 'none' ? null : (ordered ? orderedRef(list, cs, st) : 'bul');
+    const ref = cs.listStyleType === 'none' ? null : (ordered ? orderedRef(list, cs, st) : bulletRef(list, st));
     const lc = Object.assign({}, ctx, {
       listDepth: level + 1,
       indentLeft: ctx.indentLeft + tw(cs.marginLeft) + tw(cs.paddingLeft),
@@ -2433,11 +2535,11 @@
   function cellBackground(cell) {
     if (isMono()) return null;
     for (let n = cell; n && n.localName !== 'table'; n = n.parentElement) {
-      const bg = hexColor(getComputedStyle(n).backgroundColor);
+      const bg = bgFill(getComputedStyle(n));
       if (bg) return bg;
     }
     const tbl = cell.closest('table');
-    return tbl ? hexColor(getComputedStyle(tbl).backgroundColor) : null;
+    return tbl ? bgFill(getComputedStyle(tbl)) : null;
   }
 
   function convertTable(tbl, ctx, st, out) {
@@ -2651,12 +2753,73 @@
   function toast(msg) { if (typeof displayToastNotification === 'function') displayToastNotification(msg); }
   function busy(btn, on) { if (typeof _setExportButtonBusy === 'function') _setExportButtonBusy(btn, on, 'Word'); }
 
+  // ---- theme (design format) detection ---------------------------------
+  // The selected theme is a class `pdf-format-<name>` on the page canvas. Reading it
+  // only from the first .doc-page-canvas in the DOM was fragile (that element can be
+  // a stray/hidden/measure canvas without the class -> the export silently fell back
+  // to the default theme). Look at every live canvas, then any element carrying the
+  // class, then the highlighted item of the theme menu.
+  const THEME_NAMES = ['aurora', 'editorial', 'midnight', 'blueprint', 'sage', 'minimal', 'rose', 'ocean', 'highcontrast'];
+  const isDarkUI = () => !!((document.documentElement && document.documentElement.classList.contains('dark')) ||
+    (document.body && document.body.classList.contains('dark')));
+  function liveCanvas() {
+    const all = Array.from(document.querySelectorAll('.doc-page-canvas')).filter(c => !c.classList.contains('pdf-export-measure-page'));
+    return all.find(c => /(^|\s)pdf-format-/.test(c.className)) || all[0] || document.querySelector('.doc-page-canvas');
+  }
+  // The app's own source of truth for the chosen theme (see applyPDFVisualFormat in app.js).
+  function activeThemeName() {
+    try {
+      if (typeof getActivePDFVisualFormat !== 'function') return null;
+      const raw = String(getActivePDFVisualFormat() || '').trim().toLowerCase().replace(/^pdf-format-/, '').replace(/[\s_-]+/g, '');
+      return THEME_NAMES.includes(raw) ? raw : null;   // 'default' / unknown -> default theme
+    } catch (_) { return null; }
+  }
+  function themeClasses(live) {
+    let classes = live ? Array.from(live.classList).filter(c => c !== 'pdf-export-measure-page') : [];
+    const active = activeThemeName();
+    if (active) {
+      // the selected theme wins over whatever class the first canvas happens to carry
+      classes = classes.filter(c => !/^pdf-format-/.test(c));
+      classes.push('pdf-format-' + active);
+    }
+    if (!classes.some(c => /^pdf-format-/.test(c))) {
+      let name = null;
+      const holder = document.querySelector('[class*="pdf-format-"]:not(.pdf-export-measure-page)');
+      if (holder) { const m = /pdf-format-([a-z0-9_-]+)/i.exec(holder.getAttribute('class') || ''); if (m) name = m[1].toLowerCase(); }
+      if (!name || !THEME_NAMES.includes(name)) {
+        name = null;
+        const act = document.querySelector('.at-format-item.active');
+        if (act) {
+          const sw = act.querySelector('.at-format-swatch');
+          if (sw) name = THEME_NAMES.find(n => sw.classList.contains(n)) || null;
+          if (!name) {
+            const hint = ((act.getAttribute('data-format') || act.getAttribute('data-value') || act.getAttribute('data-theme') || act.getAttribute('data-id') || '') + ' ' + (act.textContent || '')).toLowerCase();
+            name = THEME_NAMES.find(n => hint.includes(n)) || null;
+          }
+        }
+      }
+      if (name) classes.push('pdf-format-' + name);
+    }
+    if (!classes.includes('doc-page-canvas')) classes.unshift('doc-page-canvas');
+    return classes;
+  }
+
   function mountStage(fragmentHost) {
     const L = pageLayout();
-    const live = document.querySelector('.doc-page-canvas');
+    const live = liveCanvas();
     const stage = document.createElement('div');
-    stage.className = live ? live.className.replace(/\bpdf-export-measure-page\b/g, '') : 'doc-page-canvas';
+    stage.className = themeClasses(live).join(' ');
     const set = (k, v) => stage.style.setProperty(k, v, 'important');
+    // Dark mode: the `.dark .doc-page-canvas:where(:not(.pdf-export-measure-page))` rules (and the
+    // dark theme palettes) would paint light ink on the white Word page. The PDF export avoids this
+    // with .pdf-export-measure-page, which forces the light palette; do the same here, but keep the
+    // real font size and let the page grow (that class would otherwise fix size / clip overflow).
+    if (isDarkUI()) {
+      stage.classList.add('pdf-export-measure-page');
+      const fs = live ? window.getComputedStyle(live).fontSize : '';
+      if (fs) set('font-size', fs);
+      set('max-width', 'none');
+    }
     set('position', 'fixed'); set('left', '-20000px'); set('top', '0');
     set('width', L.width + 'px'); set('height', 'auto'); set('min-height', '0'); set('max-height', 'none');
     set('padding', `${L.top}px ${L.right}px ${L.bottom}px ${L.left}px`);
@@ -2731,6 +2894,7 @@
         st.nativeCharts = nativeCharts; st.charts = [];
         st.nativeDiagrams = nativeDiagrams !== false; st.diagrams = [];
         st.numbering = [bulletConfig()]; st.olCount = 0; st.pageBreakPending = false; st.maths = [];
+        st.bulMap = new Map();
         st.bubbles = [];
         const blocks = convertChildren(stage, rootCtx, st);
         const children = finalizeBlocks(blocks);
