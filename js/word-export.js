@@ -945,6 +945,7 @@
       // scale 6 on a big equation can exceed canvas limits / take forever: cap total pixels
       const hw = Math.max(1, holder.offsetWidth), hh = Math.max(1, holder.offsetHeight);
       const mathScale = Math.max(1, Math.min(4, Math.sqrt(4e6 / (hw * hh))));   // 4x is still very sharp in Word
+      if (typeof _pdfFixKatexSvg === 'function') { try { _pdfFixKatexSvg(holder); } catch (_) {} }   // pin tall { } [ ] ( ) delimiters before the snapshot
       const canvas = await withTimeout(window.html2canvas(holder, {
         backgroundColor: null,
         scale: mathScale,
