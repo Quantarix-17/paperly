@@ -258,6 +258,10 @@ window.getTextFigurePolicy = function () {
       '.settings-tab-panel>:first-child>:first-child>:first-child{margin-top:0 !important;padding-top:0 !important;}',
       '.settings-tab-panel>:first-child>:is(h1,h2,h3,h4,h5,h6){margin-top:0 !important;padding-top:0 !important;}',
       '.settings-tab-panel>:first-child>:first-child>:is(h1,h2,h3,h4,h5,h6){margin-top:0 !important;padding-top:0 !important;}',
+      /* ---- AI Configuration: collapse the dead band above "Model list" ---- */
+      '[data-studio-gap="hide"]{display:none !important;}',
+      '[data-studio-gap="flat"],[data-studio-gap="flat"] *{margin-top:0 !important;margin-bottom:0 !important;padding-top:0 !important;padding-bottom:0 !important;border-top-width:0 !important;border-bottom-width:0 !important;min-height:0 !important;height:auto !important;max-height:none !important;}',
+      '[data-studio-top="1"]{margin-top:0 !important;padding-top:0 !important;border-top-width:0 !important;}',
       /* ---- green instead of blue: active tab, focus, selection ---- */
       '.settings-tab-bar [data-tab].active,.settings-tab-bar [data-tab][aria-selected="true"]{background:' + GA + ' !important;color:inherit !important;border-color:' + G + ' !important;box-shadow:inset 0 -2px 0 ' + G + ' !important;}',
       '.settings-tab-bar [data-tab]:focus-visible,.settings-tab-panel :is(button,a,input,select,textarea,[role="switch"]):focus-visible{outline:2px solid ' + G + ' !important;outline-offset:2px;}',
@@ -775,6 +779,7 @@ function _studioTrimEmptyPanelSpace() {
       if (!panel.querySelector('button,input,select,textarea,[role="switch"],.studio-setting-row,.studio-settings-list')) return;
       if (_studioTrimLeadingEmpty(panel, 0)) changed = true;
     });
+    if (_studioCollapseAiPanelTop()) changed = true;
   } catch (e) {
     console.warn('[StudioSettings] trim empty panel space failed:', e);
   }
@@ -832,6 +837,147 @@ function _studioIsEmptyLeading(el) {
   }
   return true;
 }
+
+// ---------- AI CONFIGURATION: TOP GAP COLLAPSER ----------
+// Everything that sits between the tab bar and the "Model list" heading but
+// shows no real content (empty wrappers, dividers, the emptied "Add a new
+// model" section, hidden forms ...) is collapsed so "Model list" hugs the
+// tab bar. Nothing is deleted: wrappers that still hold a hidden form are only
+// flattened (no padding / border / margin) and come back automatically if
+// they ever show content again.
+const _STUDIO_INTERACTIVE_SEL = 'button,input:not([type="hidden"]),select,textarea,img,svg,canvas,video,audio,[role="switch"],[contenteditable]';
+
+function _studioIsShown(el) {
+  try {
+    if (typeof el.checkVisibility === 'function') return el.checkVisibility({ visibilityProperty: true });
+  } catch (_) {}
+  return !!(el.getClientRects && el.getClientRects().length);
+}
+
+// True when the element currently renders real, visible content.
+function _studioHasVisibleContent(el) {
+  if (!el || el.nodeType !== 1) return false;
+  const tag = (el.tagName || '').toUpperCase();
+  if (tag === 'HR' || tag === 'SCRIPT' || tag === 'STYLE' || tag === 'TEMPLATE') return false;
+  if (!_studioIsShown(el)) return false;
+  if (tag === 'INPUT') return (el.type || '').toLowerCase() !== 'hidden';
+  if (/^(BUTTON|SELECT|TEXTAREA|IMG|CANVAS|VIDEO|AUDIO|SVG)$/.test(tag)) return true;
+  if (el.matches('[role="switch"],[contenteditable]')) return true;
+  for (let n = el.firstChild; n; n = n.nextSibling) {
+    if (n.nodeType === 3 && n.nodeValue.trim()) return true;
+    if (n.nodeType === 1 && _studioHasVisibleContent(n)) return true;
+  }
+  return false;
+}
+
+// DOM-level check (ignores rendering): any text or interactive descendant?
+function _studioHasAnyContent(el) {
+  return !!((el.textContent || '').trim() || el.querySelector(_STUDIO_INTERACTIVE_SEL));
+}
+
+// Cancels a flex/grid row-gap that a collapsed (zero-height) child would still cause.
+function _studioFixGap(el) {
+  try {
+    const p = el.parentElement;
+    if (!p) return;
+    const cs = window.getComputedStyle(p);
+    const col = cs.display.indexOf('grid') !== -1 ||
+                (cs.display.indexOf('flex') !== -1 && cs.flexDirection.indexOf('column') === 0);
+    if (!col) return;
+    const g = parseFloat(cs.rowGap);
+    if (g > 0) {
+      el.style.setProperty('margin-bottom', '-' + g + 'px', 'important');
+      el.setAttribute('data-studio-gapfix', '1');
+    }
+  } catch (_) {}
+}
+
+function _studioUncollapse(el) {
+  el.removeAttribute('data-studio-gap');
+  if (el.getAttribute('data-studio-gapfix') === '1') {
+    el.style.removeProperty('margin-bottom');
+    el.removeAttribute('data-studio-gapfix');
+  }
+}
+
+// Returns true only when it actually changed something (idempotent).
+function _studioCollapseAiPanelTop() {
+  let changed = false;
+  try {
+    // 1) Revive anything collapsed earlier that has gained content since.
+    document.querySelectorAll('[data-studio-gap]').forEach(function (el) {
+      const mode = el.getAttribute('data-studio-gap');
+      const revive = mode === 'hide' ? _studioHasAnyContent(el) : _studioHasVisibleContent(el);
+      if (revive) { _studioUncollapse(el); changed = true; }
+    });
+
+    // 2) Find the visible "Model list" heading.
+    let heading = null;
+    document.querySelectorAll('.settings-tab-panel').forEach(function (p) {
+      if (heading) return;
+      p.querySelectorAll('*').forEach(function (el) {
+        if (heading || el.children.length) return;
+        if (/^\s*model list\s*$/i.test(el.textContent || '') && _studioIsShown(el)) heading = el;
+      });
+    });
+    if (!heading) return changed;
+
+    const panel = heading.closest('.settings-tab-panel');
+    const tabBar = document.querySelector('.settings-tab-bar');
+
+    // 3) Walk up from the heading; collapse empty leading siblings at each level.
+    let node = heading;
+    let leading = true;        // no real content above this node so far
+    let guard = 0;
+    while (node && node !== document.body && guard++ < 12) {
+      const parent = node.parentElement;
+      if (!parent) break;
+      if (tabBar && node.contains(tabBar)) break;
+
+      for (let s = node.previousElementSibling; s; s = s.previousElementSibling) {
+        if (tabBar && (s === tabBar || s.contains(tabBar))) break;   // never touch the tab bar
+        const tag = (s.tagName || '').toUpperCase();
+        if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'TEMPLATE') continue;
+        if (s.hasAttribute('data-studio-gap')) continue;              // already collapsed
+        const pos = window.getComputedStyle(s).position;
+        if (pos === 'fixed' || pos === 'absolute') continue;          // overlays: leave alone
+        if (_studioHasVisibleContent(s)) { leading = false; continue; }
+
+        const hide = !(s.textContent || '').trim() && !s.querySelector(_STUDIO_INTERACTIVE_SEL);
+        s.setAttribute('data-studio-gap', hide ? 'hide' : 'flat');
+        if (!hide) _studioFixGap(s);
+        changed = true;
+      }
+
+      // Remove the node's own top margin / padding / border while nothing real is above it.
+      if (leading) {
+        if (node.getAttribute('data-studio-top') !== '1') { node.setAttribute('data-studio-top', '1'); changed = true; }
+      } else if (node.hasAttribute('data-studio-top')) {
+        node.removeAttribute('data-studio-top'); changed = true;
+      }
+
+      if (tabBar && parent.contains(tabBar)) break;
+      if (!tabBar && panel && parent === panel.parentElement) break;
+      node = parent;
+    }
+  } catch (e) {
+    console.warn('[StudioSettings] collapse AI panel top failed:', e);
+  }
+  return changed;
+}
+
+// Re-check right after any click inside the settings panels (inline forms
+// opening / closing, tab switches ...), since attribute changes are not observed.
+(function _studioBindGapRecheck() {
+  if (typeof document === 'undefined' || window._studioGapClickBound) return;
+  window._studioGapClickBound = true;
+  document.addEventListener('click', function (e) {
+    const t = e.target;
+    if (!t || !t.closest || !t.closest('.settings-tab-panel, .settings-tab-bar')) return;
+    setTimeout(function () { try { _studioCollapseAiPanelTop(); } catch (_) {} }, 60);
+    setTimeout(function () { try { _studioCollapseAiPanelTop(); } catch (_) {} }, 350);
+  }, true);
+})();
 
 // Runs the DOM moves that depend on the AI Models panel being rendered;
 // keeps watching (cheaply, throttled) until the panel content is stable.
