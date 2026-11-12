@@ -7,6 +7,13 @@ let _aiModelsStorageAvailable = true;
 let _draggedModelId = null;
 let _pendingFailedModelSave = null;
 let _removeMode = { active: false, selected: new Set() };
+let _modelAddDialogOverlay = null;
+let _infoDialogOverlay = null;
+
+// Default storage key for the auto-switch preference (safe if not set elsewhere)
+if (typeof window.AI_MODEL_AUTOSWITCH_KEY === 'undefined') {
+  window.AI_MODEL_AUTOSWITCH_KEY = 'aiModelAutoSwitch_v1';
+}
 
 // ===== LOAD / SAVE STATE =====
 function loadAIModelsState() {
@@ -26,12 +33,6 @@ function loadAIModelsState() {
 }
 
 // ===== DAILY RESET TO FIRST MODEL =====
-// Whichever model the last request happened to land on (after failover
-// through the list) otherwise stays active indefinitely. The first time
-// the app is opened on a new local calendar day (i.e. any time after
-// midnight that day), this jumps the active model back to the first one
-// in the saved list — once per day, not on every load, so switching
-// models by hand during the day isn't fought.
 const AI_MODEL_DAILY_RESET_KEY = 'aiModelDailyResetDate_v1';
 function _applyDailyModelReset() {
   try {
@@ -59,9 +60,6 @@ function getActiveAIModel() {
   return AI_MODELS_STATE.models.find(m => m.id === AI_MODELS_STATE.activeModelId) || null;
 }
 
-// ===== FIND A GEMINI MODEL (for Google Search grounding / Vision OCR fallback) =====
-// Prefers the currently active model if it's Gemini, otherwise falls back to the
-// first configured Gemini model. Returns null if no Gemini model is configured.
 function findGeminiModelConfig() {
   const active = getActiveAIModel();
   if (active && resolveAIModelApiType(active) === 'gemini') return active;
@@ -85,7 +83,7 @@ function setActiveAIModel(id) {
   if (typeof renderAIModelSelectBar === 'function') renderAIModelSelectBar();
   if (typeof renderAIModelsListInModal === 'function') renderAIModelsListInModal();
   const m = getActiveAIModel();
-  if (m && typeof displayToastNotification === 'function') displayToastNotification(`✅ Active model: ${m.name}`);
+  if (m && typeof displayToastNotification === 'function') displayToastNotification(`Active model: ${m.name}`);
 }
 
 // ===== DELETE MODEL =====
@@ -100,20 +98,14 @@ function deleteAIModel(id) {
   saveAIModelsState();
   if (typeof renderAIModelSelectBar === 'function') renderAIModelSelectBar();
   if (typeof renderAIModelsListInModal === 'function') renderAIModelsListInModal();
-  if (typeof displayToastNotification === 'function') displayToastNotification(`🗑️ "${m.name}" deleted`);
+  if (typeof displayToastNotification === 'function') displayToastNotification(`"${m.name}" deleted`);
 }
 
 // ========================================================================
 // UNIVERSAL MODEL ADAPTER
-// Lets almost any endpoint work: only the API URL is required. API key,
-// model ID and name are optional (local routers such as FreeLLMAPI, Ollama,
-// LM Studio, LiteLLM ... often need neither a key nor a model name).
-//   apiType : auto | openai | gemini | anthropic | ollama   (auto = guess from URL)
-//   authType: auto | bearer | x-api-key | api-key | none
-//   extraHeaders / extraBody : optional JSON objects (null value in extraBody removes a field)
 // ========================================================================
 const AI_API_TYPES = ['auto', 'openai', 'gemini', 'anthropic', 'ollama'];
-const AI_ADAPTER_VERSION = 'v4-local-network-access';   // type AI_ADAPTER_VERSION in the browser console to confirm the new file is really loaded
+const AI_ADAPTER_VERSION = 'v4-local-network-access';
 window.AI_ADAPTER_VERSION = AI_ADAPTER_VERSION;
 
 function _aiIsLocalHost(h) {
@@ -122,7 +114,6 @@ function _aiIsLocalHost(h) {
     /^127\./.test(h) || /^10\./.test(h) || /^192\.168\./.test(h) || /^172\.(1[6-9]|2\d|3[01])\./.test(h);
 }
 
-// "localhost:3001" -> "http://localhost:3001", "api.foo.com/v1" -> "https://api.foo.com/v1"
 function completeAIBareUrl(raw) {
   const s = String(raw || '').trim().replace(/^["'`]+|["'`,;]+$/g, '');
   if (!s || /^https?:\/\//i.test(s)) return s;
@@ -182,8 +173,6 @@ function _aiNetworkHint(url) {
   return '';
 }
 
-// Chrome (v142+) asks the user for "Local network access" when an https website talks to a local server.
-// Annotating the request lets Chrome show that prompt (and skip the mixed-content block). Other browsers ignore it.
 function _aiLocalFetchOpts(url) {
   try {
     const h = new URL(url).hostname.toLowerCase();
@@ -193,13 +182,11 @@ function _aiLocalFetchOpts(url) {
   return {};
 }
 
-// Tells "server is down" apart from "server is up but the browser blocked the reply (CORS / local-network permission)".
 async function _aiExplainNetworkFailure(url) {
   let u; try { u = new URL(url); } catch (_) { return ''; }
   const sync = _aiNetworkHint(url);
   if (/HTTPS but the URL is http/.test(sync)) return sync;
   try {
-    // no-cors: resolves (opaque) when something answers at that address, rejects when nothing does
     await fetch(u.origin + '/', Object.assign({ mode: 'no-cors', signal: AbortSignal.timeout ? AbortSignal.timeout(4000) : undefined }, _aiLocalFetchOpts(url)));
     return ' The server IS running, but the browser blocked its reply (CORS or the browser\'s local-network permission). Fix: run  node local-proxy.js ' + u.origin + '  and use http://127.0.0.1:31416 instead; if the browser asks to allow access to local devices, choose Allow.';
   } catch (_) {
@@ -225,7 +212,6 @@ function buildAIRequestHeaders(cfg, type) {
   return h;
 }
 
-// Builds {url, headers, body} for openai / anthropic / ollama types (Gemini keeps its own branch in app.js).
 function buildAIRequest(cfg, type, messages, o = {}) {
   const headers = buildAIRequestHeaders(cfg, type);
   const modelId = String(cfg.modelId || '').trim();
@@ -269,7 +255,7 @@ function buildAIRequest(cfg, type, messages, o = {}) {
     if (o.json) body.format = 'json';
   } else {
     body = { messages };
-    if (modelId) body.model = modelId;          // blank model ID -> field omitted, the server decides
+    if (modelId) body.model = modelId;
     if (temp !== undefined) body.temperature = temp;
     if (o.json) body.response_format = { type: 'json_object' };
     if (o.maxTokens) body.max_tokens = o.maxTokens;
@@ -286,7 +272,6 @@ function _aiNormContent(c) {
   return c == null ? '' : String(c);
 }
 
-// Understands every common reply shape. Returns {content, finishReason} or null if the shape is unknown.
 function extractAIResponseText(data, depth = 0) {
   if (data == null || depth > 3) return null;
   if (typeof data === 'string') return { content: data, finishReason: 'stop' };
@@ -301,19 +286,19 @@ function extractAIResponseText(data, depth = 0) {
     const c = ch.message ? ch.message.content : (ch.delta ? ch.delta.content : undefined);
     return { content: _aiNormContent(c != null ? c : ch.text), finishReason: ch.finish_reason || 'stop' };
   }
-  if (Array.isArray(data.content)) {                       // Anthropic
+  if (Array.isArray(data.content)) {
     return { content: data.content.filter(p => p && p.type === 'text').map(p => p.text || '').join(''), finishReason: data.stop_reason === 'max_tokens' ? 'length' : 'stop' };
   }
-  if (data.message && data.message.content != null) {      // Ollama /api/chat
+  if (data.message && data.message.content != null) {
     return { content: _aiNormContent(data.message.content), finishReason: data.done_reason === 'length' ? 'length' : 'stop' };
   }
-  if (typeof data.response === 'string') return { content: data.response, finishReason: data.done_reason === 'length' ? 'length' : 'stop' };   // Ollama /api/generate
-  if (typeof data.output_text === 'string') return { content: data.output_text, finishReason: 'stop' };                                       // OpenAI Responses
+  if (typeof data.response === 'string') return { content: data.response, finishReason: data.done_reason === 'length' ? 'length' : 'stop' };
+  if (typeof data.output_text === 'string') return { content: data.output_text, finishReason: 'stop' };
   if (Array.isArray(data.output)) {
     const t = data.output.flatMap(it => Array.isArray(it && it.content) ? it.content : []).map(p => (p && typeof p.text === 'string') ? p.text : '').join('');
     return { content: t, finishReason: 'stop' };
   }
-  if (Array.isArray(data.candidates) && data.candidates.length) {                                                                              // Gemini shape behind a proxy
+  if (Array.isArray(data.candidates) && data.candidates.length) {
     const parts = (data.candidates[0].content && data.candidates[0].content.parts) || [];
     return { content: parts.map(p => p.text || '').join(''), finishReason: data.candidates[0].finishReason === 'MAX_TOKENS' ? 'length' : 'stop' };
   }
@@ -325,7 +310,6 @@ function extractAIResponseText(data, depth = 0) {
   return null;
 }
 
-// Accepts a normal JSON body, OR a streamed body (SSE "data: {...}" / NDJSON) from servers that stream no matter what.
 function parseAIResponseText(raw) {
   const t = String(raw == null ? '' : raw).trim();
   if (!t) return null;
@@ -351,7 +335,6 @@ function parseAIResponseText(raw) {
   return any ? { content: acc, finishReason: fin } : null;
 }
 
-// Asks the server which models it has (used when the model name is unknown / blank).
 async function fetchAIModelList(cfg) {
   const type = resolveAIModelApiType(cfg);
   let u; try { u = new URL(completeAIBareUrl(cfg.apiUrl)); } catch (_) { throw new Error('The API URL is not valid.'); }
@@ -378,7 +361,6 @@ function _aiChatCapableFirst(ids) {
   return (ids || []).filter(id => !/embed|whisper|tts|rerank|moderat|dall-?e|stable-?diffusion|image-gen/i.test(id));
 }
 
-// ===== SMART PASTE / IMPORT HELPERS =====
 function _aiMapTypeName(v) {
   const s = String(v || '').toLowerCase();
   if (/gemini|google/.test(s)) return 'gemini';
@@ -388,7 +370,6 @@ function _aiMapTypeName(v) {
   return '';
 }
 
-// Accepts many field spellings: base_url / url / endpoint, api_key / key / token, model / model_id ...
 function coerceImportedModel(m) {
   if (!m || typeof m !== 'object') return null;
   const pick = (...ks) => { for (const k of ks) if (m[k] != null && typeof m[k] !== 'object' && String(m[k]).trim() !== '') return String(m[k]).trim(); return ''; };
@@ -408,11 +389,9 @@ function coerceImportedModel(m) {
   return out;
 }
 
-// Turns pasted text (curl command, JSON, .env / key: value lines, or loose "url key model" tokens) into a model config.
 function parseModelPasteText(text) {
   const raw = String(text || '').trim();
   if (!raw) return null;
-  // 1) JSON
   try {
     const j = JSON.parse(raw);
     const first = Array.isArray(j) ? j[0] : (Array.isArray(j && j.models) ? j.models[0] : j);
@@ -420,7 +399,6 @@ function parseModelPasteText(text) {
     if (c && c.apiUrl) return c;
   } catch (_) {}
   const out = {};
-  // 2) curl
   if (/\bcurl\s/i.test(raw)) {
     const flat = raw.replace(/\\\r?\n/g, ' ');
     let url = (flat.match(/https?:\/\/[^\s'"\\]+/) || [])[0] || '';
@@ -447,7 +425,6 @@ function parseModelPasteText(text) {
     out.apiType = '';
     return out.apiUrl ? out : null;
   }
-  // 3) .env / "key: value" lines
   let kv = 0;
   raw.split(/\r?\n/).forEach(line => {
     if (/^\s*https?:\/\//i.test(line)) return;
@@ -461,7 +438,6 @@ function parseModelPasteText(text) {
     else if (/^(type|apitype|provider)$/.test(k)) { out.apiType = _aiMapTypeName(v); kv++; }
   });
   if (kv && out.apiUrl) { out.apiUrl = completeAIBareUrl(out.apiUrl); return out; }
-  // 4) loose tokens: "http://localhost:3001  sk-xxxx  my-model"
   const rest = [];
   raw.split(/[\s,|;]+/).filter(Boolean).forEach(tok => {
     const t = tok.replace(/^["'`]+|["'`]+$/g, '');
@@ -473,21 +449,11 @@ function parseModelPasteText(text) {
   return out.apiUrl ? out : null;
 }
 
-// ===== API URL AUTO-FIX =====
-// If the person pasted only the base URL (e.g. https://api.groq.com/openai/v1 or https://api.openai.com)
-// and forgot "/chat/completions", add it. Only clear "base URL" shapes are touched:
-//   https://host                      -> https://host/v1/chat/completions
-//   .../v1  .../v4  .../v1beta  .../openai   -> .../chat/completions
-//   .../chat                          -> .../chat/completions
-// URLs that already end in a real endpoint (chat/completions, completions, responses, messages,
-// generateContent ...) and Gemini-type models are never changed.
-// Gemini type: the URL must be the NATIVE endpoint  .../v1beta/models/<model>:generateContent
-// (an OpenAI-compatible Gemini URL ".../v1beta/openai/chat/completions" gives HTTP 400 with the Gemini type).
 function _normalizeGeminiApiUrl(original, modelId) {
   const same = { url: original, changed: false };
   let u;
   try { u = new URL(original); } catch (_) { return same; }
-  if (!/(^|\.)generativelanguage\.googleapis\.com$/i.test(u.hostname)) return same; // custom proxy: leave alone
+  if (!/(^|\.)generativelanguage\.googleapis\.com$/i.test(u.hostname)) return same;
   const path = u.pathname.replace(/\/+$/, '');
   const lower = path.toLowerCase();
   const id = String(modelId || '').trim().replace(/^models\//i, '');
@@ -506,7 +472,7 @@ function _normalizeGeminiApiUrl(original, modelId) {
 
 function normalizeAIModelApiUrl(rawUrl, apiType, modelId) {
   const trimmed = String(rawUrl || '').trim();
-  const original = completeAIBareUrl(trimmed);          // "localhost:3001" -> "http://localhost:3001"
+  const original = completeAIBareUrl(trimmed);
   const same = { url: original, changed: original !== trimmed };
   if (!original) return same;
   const type = resolveAIModelApiType({ apiType, apiUrl: original });
@@ -540,13 +506,9 @@ function normalizeAIModelApiUrl(rawUrl, apiType, modelId) {
 }
 
 // ===== TEST MODEL CONNECTION =====
-// Wrapper: completes a bare URL, detects the API type (when "auto"), fixes a missing "/chat/completions",
-// auto-picks a model if the model ID was left blank, and tries other auth header styles on 401/403.
-// If the fixed URL works it is KEPT on the model; if only the original URL works the original is kept.
 async function _testWithModelAutoPick(cfg) {
   let r = await _testAIModelConnectionOnce(cfg);
   const type = resolveAIModelApiType(cfg);
-  // 401/403 with a key: some servers want "api-key" or "x-api-key" instead of "Authorization: Bearer"
   if (!r.ok && /HTTP (401|403)\b/.test(r.message) && String(cfg.apiKey || '').trim() && type === 'openai' && (!cfg.authType || cfg.authType === 'auto')) {
     for (const alt of ['api-key', 'x-api-key']) {
       cfg.authType = alt;
@@ -555,7 +517,6 @@ async function _testWithModelAutoPick(cfg) {
     }
     cfg.authType = 'auto';
   }
-  // Blank model ID and the server complains -> ask it which models exist and try them
   if (!r.ok && !String(cfg.modelId || '').trim() && /HTTP (400|404|422)\b|model/i.test(r.message)) {
     let ids = [];
     try { ids = _aiChatCapableFirst(await fetchAIModelList(cfg)).slice(0, 4); } catch (_) {}
@@ -578,7 +539,6 @@ async function testAIModelConnection(cfg) {
     cfg.apiType = resolveAIModelApiType(cfg);
     typeNote = ` — type detected: ${cfg.apiType}`;
   } else if (cfg.apiType !== 'gemini' && /generativelanguage\.googleapis\.com/i.test(original) && /:(stream)?generatecontent/i.test(original)) {
-    // A Gemini-native URL saved as another type can only work as Gemini type.
     cfg.apiType = 'gemini';
     typeNote = ' — type switched to Gemini (URL is a Gemini endpoint)';
   }
@@ -593,7 +553,7 @@ async function testAIModelConnection(cfg) {
   cfg.apiUrl = original;
   const r2 = await _testWithModelAutoPick(cfg);
   if (r2.ok) return r2;
-  cfg.apiUrl = fixed.url; // neither worked: keep the completed URL (most likely what was meant)
+  cfg.apiUrl = fixed.url;
   return Object.assign({}, r, { message: `${r.message} (URL auto-completed)` });
 }
 
@@ -700,7 +660,6 @@ function _createAIDialog(innerHTML) {
 }
 
 // ===== IMPORT: ASK THE API TYPE =====
-// Resolves 'openai' | 'gemini' | 'file' (use the type saved in the file) | null (cancelled)
 function askImportApiType(models) {
   return new Promise(resolve => {
     const valid = (models || []).filter(m => m && m.apiUrl);
@@ -734,7 +693,7 @@ function askImportApiType(models) {
   });
 }
 
-// ===== EDIT A MODEL (everything except API URL and API key) =====
+// ===== EDIT A MODEL =====
 function openAIModelEditDialog(id) {
   const m = AI_MODELS_STATE.models.find(x => x.id === id);
   if (!m) return;
@@ -747,7 +706,7 @@ function openAIModelEditDialog(id) {
     <label style="${_AI_DLG_LABEL}">Name (optional)</label>
     <input type="text" id="edit-ai-name" value="${escapeHTML(m.name)}" style="${_AI_DLG_INPUT}">
 
-    <label style="${_AI_DLG_LABEL}">Model ID (optional — blank = the server decides)</label>
+    <label style="${_AI_DLG_LABEL}">Model ID (optional - blank = the server decides)</label>
     <input type="text" id="edit-ai-modelid" value="${escapeHTML(m.modelId)}" style="${_AI_DLG_INPUT}">
 
     <label style="${_AI_DLG_LABEL}">API Type</label>
@@ -808,17 +767,17 @@ function openAIModelEditDialog(id) {
     { const f = normalizeAIModelApiUrl(m.apiUrl, newType, modelId); if (f.changed) m.apiUrl = f.url; }
     m.supportsJson = newJson;
     m.enableGoogleSearch = $('#edit-ai-search').checked;
-    if (coreChanged) { m.status = 'idle'; m.statusMessage = 'Settings changed — test again'; }
+    if (coreChanged) { m.status = 'idle'; m.statusMessage = 'Settings changed - test again'; }
     saveAIModelsState();
     overlay.remove();
     if (typeof renderAIModelSelectBar === 'function') renderAIModelSelectBar();
     if (typeof renderAIModelsListInModal === 'function') renderAIModelsListInModal();
-    if (typeof displayToastNotification === 'function') displayToastNotification(`✏️ "${m.name}" updated${coreChanged ? ' — please test it again' : ''}`);
+    if (typeof displayToastNotification === 'function') displayToastNotification(`"${m.name}" updated${coreChanged ? ' - please test it again' : ''}`);
   };
   setTimeout(() => { const el = $('#edit-ai-name'); if (el) el.focus(); }, 40);
 }
 
-// ===== REMOVE MODE (mark models, then remove them together) =====
+// ===== REMOVE MODE =====
 function toggleAIModelsRemoveMode() {
   if (!AI_MODELS_STATE.models.length) return;
   _removeMode.active = !_removeMode.active;
@@ -855,7 +814,7 @@ function removeMarkedAIModels() {
   saveAIModelsState();
   if (typeof renderAIModelSelectBar === 'function') renderAIModelSelectBar();
   if (typeof renderAIModelsListInModal === 'function') renderAIModelsListInModal();
-  if (typeof displayToastNotification === 'function') displayToastNotification(`🗑️ Removed ${ids.length} model(s)`);
+  if (typeof displayToastNotification === 'function') displayToastNotification(`Removed ${ids.length} model(s)`);
 }
 
 // ===== TEST ALL MODELS =====
@@ -865,7 +824,7 @@ async function handleTestAllModels() {
   if (_testAllState.running) return;
   const models = AI_MODELS_STATE.models.slice();
   if (!models.length) {
-    if (typeof displayToastNotification === 'function') displayToastNotification('⚠️ No models to test.');
+    if (typeof displayToastNotification === 'function') displayToastNotification('No models to test.');
     return;
   }
   _testAllState = { running: true, done: 0, total: models.length, summary: '' };
@@ -873,14 +832,14 @@ async function handleTestAllModels() {
   if (typeof renderAIModelsListInModal === 'function') renderAIModelsListInModal();
 
   let okCount = 0, failCount = 0, next = 0;
-  const lanes = Math.min(4, models.length); // a few at a time, so one provider is not flooded
+  const lanes = Math.min(4, models.length);
   async function lane() {
     while (next < models.length) {
       const m = models[next++];
       let result;
       try { result = await testAIModelConnection(m); }
       catch (err) { result = { ok: false, message: (err && err.message) || 'Test failed' }; }
-      if (AI_MODELS_STATE.models.some(x => x.id === m.id)) { // still exists (not deleted meanwhile)
+      if (AI_MODELS_STATE.models.some(x => x.id === m.id)) {
         m.status = result.ok ? 'ok' : 'error';
         m.statusMessage = result.message;
         m.lastTestedAt = Date.now();
@@ -897,11 +856,10 @@ async function handleTestAllModels() {
     _testAllState.summary = `Tested ${models.length}: ${okCount} working, ${failCount} failed`;
     if (typeof renderAIModelsListInModal === 'function') renderAIModelsListInModal();
     if (typeof renderAIModelSelectBar === 'function') renderAIModelSelectBar();
-    if (typeof displayToastNotification === 'function') displayToastNotification(`🧪 ${_testAllState.summary}`);
+    if (typeof displayToastNotification === 'function') displayToastNotification(_testAllState.summary);
   }
 }
 
-// Keeps the toolbar "Test all" button (in index.html) in step with the test run.
 function _syncTestAllButton() {
   const btn = document.getElementById('ai-models-testall-btn');
   const none = AI_MODELS_STATE.models.length === 0;
@@ -918,56 +876,170 @@ function _syncTestAllButton() {
   }
 }
 
+// ========================================================================
+// MODEL-ADD FORM HELPERS
+// The model-add UI now lives in a centered floating dialog. The old inline
+// form still exists in the HTML for compatibility, but the dialog is what
+// the user sees. These helpers resolve IDs to the dialog's copies first.
+// ========================================================================
+function _addFormEl(id) {
+  if (_modelAddDialogOverlay && _modelAddDialogOverlay.parentNode) {
+    const el = _modelAddDialogOverlay.querySelector('#' + id);
+    if (el) return el;
+  }
+  return document.getElementById(id);
+}
+
 // ===== READ MODEL FORM =====
 function readAIModelForm() {
-  const name = document.getElementById('ai-model-name-input')?.value.trim() || '';
-  const apiUrl = document.getElementById('ai-model-url-input')?.value.trim() || '';
-  const apiKey = document.getElementById('ai-model-key-input')?.value.trim() || '';
-  const modelId = document.getElementById('ai-model-id-input')?.value.trim() || '';
-  const supportsJson = document.getElementById('ai-model-json-checkbox')?.checked !== false;
-  const enableGoogleSearch = document.getElementById('ai-model-search-checkbox')?.checked !== false;
-  const apiType = document.getElementById('ai-model-api-type-select')?.value || 'auto';
-  const authType = document.getElementById('ai-model-auth-select')?.value || 'auto';
-  const extraHeaders = document.getElementById('ai-model-headers-input')?.value.trim() || '';
-  const extraBody = document.getElementById('ai-model-body-input')?.value.trim() || '';
+  const name = _addFormEl('ai-model-name-input')?.value.trim() || '';
+  const apiUrl = _addFormEl('ai-model-url-input')?.value.trim() || '';
+  const apiKey = _addFormEl('ai-model-key-input')?.value.trim() || '';
+  const modelId = _addFormEl('ai-model-id-input')?.value.trim() || '';
+  const supportsJson = _addFormEl('ai-model-json-checkbox')?.checked !== false;
+  const enableGoogleSearch = _addFormEl('ai-model-search-checkbox')?.checked !== false;
+  const apiType = _addFormEl('ai-model-api-type-select')?.value || 'auto';
+  const authType = _addFormEl('ai-model-auth-select')?.value || 'auto';
+  const extraHeaders = _addFormEl('ai-model-headers-input')?.value.trim() || '';
+  const extraBody = _addFormEl('ai-model-body-input')?.value.trim() || '';
   return { name, apiUrl, apiKey, modelId, supportsJson, supportsVision: false, enableGoogleSearch, apiType, authType, extraHeaders, extraBody };
 }
 
 function clearAIModelForm() {
   ['ai-model-name-input', 'ai-model-url-input', 'ai-model-key-input', 'ai-model-id-input', 'ai-model-headers-input', 'ai-model-body-input', 'ai-model-paste-input'].forEach(id => {
-    const el = document.getElementById(id);
+    const el = _addFormEl(id);
     if (el) el.value = '';
   });
-  const typeSel = document.getElementById('ai-model-api-type-select'); if (typeSel) typeSel.value = 'auto';
-  const authSel = document.getElementById('ai-model-auth-select'); if (authSel) authSel.value = 'auto';
-  const jsonCheckbox = document.getElementById('ai-model-json-checkbox');
+  const typeSel = _addFormEl('ai-model-api-type-select'); if (typeSel) typeSel.value = 'auto';
+  const authSel = _addFormEl('ai-model-auth-select'); if (authSel) authSel.value = 'auto';
+  const jsonCheckbox = _addFormEl('ai-model-json-checkbox');
   if (jsonCheckbox) jsonCheckbox.checked = true;
-  const searchCheckbox = document.getElementById('ai-model-search-checkbox');
+  const searchCheckbox = _addFormEl('ai-model-search-checkbox');
   if (searchCheckbox) searchCheckbox.checked = true;
-  const statusEl = document.getElementById('ai-model-add-status');
+  const statusEl = _addFormEl('ai-model-add-status');
   if (statusEl) { statusEl.innerHTML = '';
     statusEl.className = 'ai-model-add-status'; }
   _pendingFailedModelSave = null;
 }
 
-// ===== ADD NEW MODEL =====
+// ===== ADD NEW MODEL (centered dialog) =====
+function toggleAIModelAddForm() {
+  if (_modelAddDialogOverlay && _modelAddDialogOverlay.parentNode) {
+    closeAIModelAddDialog();
+  } else {
+    openAIModelAddDialog();
+  }
+}
+
+function openAIModelAddDialog() {
+  if (_modelAddDialogOverlay && _modelAddDialogOverlay.parentNode) return;
+
+  _modelAddDialogOverlay = _createAIDialog(`
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+      <h3 style="margin:0;font-size:1.05rem;">Add new model</h3>
+      <button type="button" data-act="close" aria-label="Close" style="background:none;border:none;font-size:1.5rem;cursor:pointer;color:var(--text-secondary);line-height:1;padding:0 4px;">&times;</button>
+    </div>
+
+    <label style="${_AI_DLG_LABEL}">API URL (required)</label>
+    <input type="text" id="ai-model-url-input" placeholder="https://api.example.com/v1/chat/completions" style="${_AI_DLG_INPUT}" autocomplete="off">
+
+    <label style="${_AI_DLG_LABEL}">API Key</label>
+    <input type="password" id="ai-model-key-input" placeholder="sk-..." style="${_AI_DLG_INPUT}" autocomplete="off">
+
+    <label style="${_AI_DLG_LABEL}">Model ID</label>
+    <input type="text" id="ai-model-id-input" list="ai-model-id-list" placeholder="gpt-4o" style="${_AI_DLG_INPUT}" autocomplete="off">
+    <datalist id="ai-model-id-list"></datalist>
+
+    <label style="${_AI_DLG_LABEL}">Name</label>
+    <input type="text" id="ai-model-name-input" placeholder="My model" style="${_AI_DLG_INPUT}" autocomplete="off">
+
+    <details style="margin-top:16px;border-top:1px solid var(--border-color);padding-top:10px;">
+      <summary style="cursor:pointer;font-size:.88rem;font-weight:600;color:var(--text-secondary);padding:4px 0;">More options</summary>
+
+      <label style="${_AI_DLG_LABEL}">API Type</label>
+      <select id="ai-model-api-type-select" style="${_AI_DLG_INPUT}">
+        <option value="auto">Auto-detect from URL</option>
+        <option value="openai">OpenAI-compatible</option>
+        <option value="gemini">Google Gemini</option>
+        <option value="anthropic">Anthropic (Claude)</option>
+        <option value="ollama">Ollama (native)</option>
+      </select>
+
+      <label style="${_AI_DLG_LABEL}">Authentication</label>
+      <select id="ai-model-auth-select" style="${_AI_DLG_INPUT}">
+        <option value="auto">Auto (Bearer key; none if no key)</option>
+        <option value="bearer">Authorization: Bearer</option>
+        <option value="x-api-key">x-api-key header</option>
+        <option value="api-key">api-key header (Azure)</option>
+        <option value="none">No authentication</option>
+      </select>
+
+      <label style="${_AI_DLG_LABEL}">Extra headers (JSON)</label>
+      <textarea id="ai-model-headers-input" rows="2" placeholder='{"X-Custom": "value"}' style="${_AI_DLG_INPUT}font-family:monospace;"></textarea>
+
+      <label style="${_AI_DLG_LABEL}">Extra body fields (JSON)</label>
+      <textarea id="ai-model-body-input" rows="2" placeholder='{"max_tokens": 16000}' style="${_AI_DLG_INPUT}font-family:monospace;"></textarea>
+
+      <label style="${_AI_DLG_LABEL}">Smart paste</label>
+      <textarea id="ai-model-paste-input" rows="2" placeholder="curl / JSON / .env lines / url key model" style="${_AI_DLG_INPUT}font-family:monospace;"></textarea>
+      <button type="button" class="topbar-btn" data-act="paste" style="margin-top:6px;">Apply paste</button>
+
+      <label style="display:flex;gap:8px;align-items:center;margin-top:12px;font-size:.88rem;">
+        <input type="checkbox" id="ai-model-json-checkbox" checked> Supports JSON response format
+      </label>
+      <label style="display:flex;gap:8px;align-items:center;margin-top:8px;font-size:.88rem;">
+        <input type="checkbox" id="ai-model-search-checkbox" checked> Enable Google Search grounding (Gemini only)
+      </label>
+    </details>
+
+    <div id="ai-model-add-status" class="ai-model-add-status" style="margin-top:14px;"></div>
+
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;flex-wrap:wrap;">
+      <button type="button" class="topbar-btn" data-act="cancel">Cancel</button>
+      <button type="button" class="topbar-btn" data-act="detect">Detect models</button>
+      <button type="button" class="topbar-btn btn-primary" data-act="add" id="ai-model-add-btn">Verify &amp; Add</button>
+    </div>
+  `);
+
+  const close = () => closeAIModelAddDialog();
+  _modelAddDialogOverlay.addEventListener('click', e => { if (e.target === _modelAddDialogOverlay) close(); });
+  _modelAddDialogOverlay.querySelector('[data-act="close"]').onclick = close;
+  _modelAddDialogOverlay.querySelector('[data-act="cancel"]').onclick = close;
+  _modelAddDialogOverlay.querySelector('[data-act="detect"]').onclick = () => handleDetectAIModels();
+  _modelAddDialogOverlay.querySelector('[data-act="paste"]').onclick = () => handleSmartPasteModel();
+  _modelAddDialogOverlay.querySelector('[data-act="add"]').onclick = () => handleAddNewAIModel();
+
+  setTimeout(() => {
+    const el = document.getElementById('ai-model-url-input');
+    if (el) el.focus();
+  }, 60);
+}
+
+function closeAIModelAddDialog() {
+  if (_modelAddDialogOverlay) {
+    _modelAddDialogOverlay.remove();
+    _modelAddDialogOverlay = null;
+  }
+  _pendingFailedModelSave = null;
+}
+
 async function handleAddNewAIModel() {
   const form = readAIModelForm();
-  const statusEl = document.getElementById('ai-model-add-status');
+  const statusEl = _addFormEl('ai-model-add-status');
   if (!form.apiUrl) {
     statusEl.className = 'ai-model-add-status error';
-    statusEl.innerHTML = '⚠️ Please enter the API URL — it is the only required field. Name, API key and Model ID are optional.';
+    statusEl.innerHTML = 'Please enter the API URL - it is the only required field. Name, API key and Model ID are optional.';
     return;
   }
   if ((form.extraHeaders && !_aiParseJsonObject(form.extraHeaders)) || (form.extraBody && !_aiParseJsonObject(form.extraBody))) {
     statusEl.className = 'ai-model-add-status error';
-    statusEl.innerHTML = '⚠️ Extra headers / Extra body must be a valid JSON object, e.g. {"key": "value"}.';
+    statusEl.innerHTML = 'Extra headers / Extra body must be a valid JSON object, e.g. {"key": "value"}.';
     return;
   }
   form.apiUrl = completeAIBareUrl(form.apiUrl);
   statusEl.className = 'ai-model-add-status testing';
   statusEl.innerHTML = '<span class="ai-model-mini-spinner"></span>Processing... verifying connection.';
-  const addBtn = document.getElementById('ai-model-add-btn');
+  const addBtn = _addFormEl('ai-model-add-btn');
   if (addBtn) addBtn.disabled = true;
 
   const result = await testAIModelConnection(form);
@@ -976,15 +1048,17 @@ async function handleAddNewAIModel() {
   if (result.ok) {
     _pendingFailedModelSave = null;
     statusEl.className = 'ai-model-add-status success';
-    statusEl.innerHTML = `✅ ${result.message} — saving...`;
+    statusEl.innerHTML = `${result.message} - saving...`;
     saveNewAIModel(form, 'ok', result.message);
   } else {
     _pendingFailedModelSave = { form, message: result.message };
-    { const _urlEl = document.getElementById('ai-model-url-input'); if (_urlEl && form.apiUrl) _urlEl.value = form.apiUrl; }
-    { const _idEl = document.getElementById('ai-model-id-input'); if (_idEl && form.modelId) _idEl.value = form.modelId; }
+    const urlEl = _addFormEl('ai-model-url-input');
+    if (urlEl && form.apiUrl) urlEl.value = form.apiUrl;
+    const idEl = _addFormEl('ai-model-id-input');
+    if (idEl && form.modelId) idEl.value = form.modelId;
     statusEl.className = 'ai-model-add-status error';
     statusEl.innerHTML =
-      `❌ Test failed: ${escapeHTML(result.message)}<br><button type="button" class="topbar-btn" style="margin-top:8px;" onclick="handleAddNewAIModel()">Retry</button> <button type="button" class="topbar-btn" style="margin-top:8px;" onclick="saveFailedModelAnyway()">Save anyway</button>`;
+      `Test failed: ${escapeHTML(result.message)}<br><button type="button" class="topbar-btn" style="margin-top:8px;" onclick="handleAddNewAIModel()">Retry</button> <button type="button" class="topbar-btn" style="margin-top:8px;" onclick="saveFailedModelAnyway()">Save anyway</button>`;
   }
 }
 
@@ -1016,21 +1090,22 @@ function saveNewAIModel(form, status, statusMessage) {
   if (!AI_MODELS_STATE.activeModelId) AI_MODELS_STATE.activeModelId = newModel.id;
   saveAIModelsState();
   clearAIModelForm();
+  closeAIModelAddDialog();
   if (typeof renderAIModelSelectBar === 'function') renderAIModelSelectBar();
   if (typeof renderAIModelsListInModal === 'function') renderAIModelsListInModal();
-  if (typeof displayToastNotification === 'function') displayToastNotification(`✅ "${newModel.name}" added!`);
+  if (typeof displayToastNotification === 'function') displayToastNotification(`"${newModel.name}" added.`);
 }
 
 // ===== SMART PASTE + MODEL DETECTION (add form) =====
 function handleSmartPasteModel() {
-  const statusEl = document.getElementById('ai-model-add-status');
-  const text = document.getElementById('ai-model-paste-input')?.value || '';
+  const statusEl = _addFormEl('ai-model-add-status');
+  const text = _addFormEl('ai-model-paste-input')?.value || '';
   const c = parseModelPasteText(text);
   if (!c || !c.apiUrl) {
-    if (statusEl) { statusEl.className = 'ai-model-add-status error'; statusEl.innerHTML = '⚠️ Could not find a URL in the pasted text. Paste a curl command, JSON, .env lines, or "url key model".'; }
+    if (statusEl) { statusEl.className = 'ai-model-add-status error'; statusEl.innerHTML = 'Could not find a URL in the pasted text. Paste a curl command, JSON, .env lines, or "url key model".'; }
     return;
   }
-  const set = (id, v) => { const el = document.getElementById(id); if (el && v != null) el.value = v; };
+  const set = (id, v) => { const el = _addFormEl(id); if (el && v != null) el.value = v; };
   set('ai-model-url-input', c.apiUrl); set('ai-model-key-input', c.apiKey || ''); set('ai-model-id-input', c.modelId || '');
   if (c.name) set('ai-model-name-input', c.name);
   set('ai-model-api-type-select', AI_API_TYPES.includes(c.apiType) && c.apiType ? c.apiType : 'auto');
@@ -1040,36 +1115,36 @@ function handleSmartPasteModel() {
   if (statusEl) {
     const found = ['URL', c.apiKey && 'API key', c.modelId && 'Model ID', c.authType && 'auth style', c.extraHeaders && 'headers'].filter(Boolean).join(', ');
     statusEl.className = 'ai-model-add-status success';
-    statusEl.innerHTML = `✅ Filled: ${found}. Check the fields, then press “Verify &amp; Add”.`;
+    statusEl.innerHTML = `Filled: ${found}. Check the fields, then press "Verify & Add".`;
   }
 }
 
 async function handleDetectAIModels() {
   const form = readAIModelForm();
-  const statusEl = document.getElementById('ai-model-add-status');
-  if (!form.apiUrl) { statusEl.className = 'ai-model-add-status error'; statusEl.innerHTML = '⚠️ Enter the API URL first.'; return; }
+  const statusEl = _addFormEl('ai-model-add-status');
+  if (!form.apiUrl) { statusEl.className = 'ai-model-add-status error'; statusEl.innerHTML = 'Enter the API URL first.'; return; }
   form.apiUrl = completeAIBareUrl(form.apiUrl);
   statusEl.className = 'ai-model-add-status testing';
   statusEl.innerHTML = '<span class="ai-model-mini-spinner"></span>Asking the server which models it has...';
   try {
     const ids = await fetchAIModelList(form);
-    const dl = document.getElementById('ai-model-id-list');
+    const dl = _addFormEl('ai-model-id-list');
     if (dl) dl.innerHTML = ids.map(id => `<option value="${escapeHTML(id)}"></option>`).join('');
-    const idEl = document.getElementById('ai-model-id-input');
-    if (!ids.length) { statusEl.className = 'ai-model-add-status error'; statusEl.innerHTML = 'The server answered but listed no models. You can leave Model ID blank and press “Verify &amp; Add”.'; return; }
+    const idEl = _addFormEl('ai-model-id-input');
+    if (!ids.length) { statusEl.className = 'ai-model-add-status error'; statusEl.innerHTML = 'The server answered but listed no models. You can leave Model ID blank and press "Verify & Add".'; return; }
     if (idEl && !idEl.value.trim()) idEl.value = _aiChatCapableFirst(ids)[0] || ids[0];
     statusEl.className = 'ai-model-add-status success';
-    statusEl.innerHTML = `✅ Found ${ids.length} model(s). Click the Model ID box to choose another one.`;
+    statusEl.innerHTML = `Found ${ids.length} model(s). Click the Model ID box to choose another one.`;
   } catch (e) {
     statusEl.className = 'ai-model-add-status error';
-    statusEl.innerHTML = `⚠️ ${escapeHTML(e.message || 'Could not list models')} — this is fine; leave Model ID blank or type it by hand.`;
+    statusEl.innerHTML = `${escapeHTML(e.message || 'Could not list models')} - this is fine; leave Model ID blank or type it by hand.`;
   }
 }
 
 // ===== EXPORT / IMPORT MODELS =====
 function exportAIModels() {
   if (AI_MODELS_STATE.models.length === 0) {
-    if (typeof displayToastNotification === 'function') displayToastNotification("⚠️ No models to export.");
+    if (typeof displayToastNotification === 'function') displayToastNotification("No models to export.");
     return;
   }
   const data = {
@@ -1099,7 +1174,7 @@ function exportAIModels() {
   link.download = 'ai_models_backup.json';
   link.click();
   URL.revokeObjectURL(link.href);
-  if (typeof displayToastNotification === 'function') displayToastNotification(`📤 Exported ${data.models.length} model(s).`);
+  if (typeof displayToastNotification === 'function') displayToastNotification(`Exported ${data.models.length} model(s).`);
 }
 
 function importAIModels(fileList) {
@@ -1108,11 +1183,10 @@ function importAIModels(fileList) {
   reader.onload = async function(e) {
     try {
       const data = JSON.parse(e.target.result);
-      // Accept {models:[...]}, a bare array, or a single model object; many field spellings are understood.
       const rawList = Array.isArray(data) ? data : (Array.isArray(data && data.models) ? data.models : (data && typeof data === 'object' ? [data] : null));
       const list = (rawList || []).map(coerceImportedModel).filter(m => m && m.apiUrl);
       if (!list.length) {
-        if (typeof displayToastNotification === 'function') displayToastNotification("Error Invalid file — no model with an API URL was found.");
+        if (typeof displayToastNotification === 'function') displayToastNotification("Invalid file - no model with an API URL was found.");
         return;
       }
       const importType = await askImportApiType(list);
@@ -1124,7 +1198,6 @@ function importAIModels(fileList) {
       for (const m of list) {
         const ownType = AI_API_TYPES.includes(m.apiType) && m.apiType ? m.apiType : 'auto';
         const typeForModel = importType === 'file' ? ownType : (importType === 'auto' ? ownType : importType);
-        // Duplicate = same URL + model + KEY (several keys for one model are intentional, for failover).
         if (m.status !== 'ok') { const f = normalizeAIModelApiUrl(m.apiUrl, typeForModel, m.modelId); if (f.changed) m.apiUrl = f.url; }
         const exists = AI_MODELS_STATE.models.some(ex => ex.apiUrl === m.apiUrl && (ex.modelId || '') === (m.modelId || '') && (ex.apiKey || '') === (m.apiKey || ''));
         if (exists) continue;
@@ -1156,9 +1229,9 @@ function importAIModels(fileList) {
       saveAIModelsState();
       if (typeof renderAIModelSelectBar === 'function') renderAIModelSelectBar();
       if (typeof renderAIModelsListInModal === 'function') renderAIModelsListInModal();
-      if (typeof displayToastNotification === 'function') displayToastNotification(`📥 Imported ${added} new model(s).`);
+      if (typeof displayToastNotification === 'function') displayToastNotification(`Imported ${added} new model(s).`);
     } catch (err) {
-      if (typeof displayToastNotification === 'function') displayToastNotification("Error Failed to import: " + err.message);
+      if (typeof displayToastNotification === 'function') displayToastNotification("Failed to import: " + err.message);
     }
   };
   reader.readAsText(fileList[0]);
@@ -1166,9 +1239,16 @@ function importAIModels(fileList) {
   if (input) input.value = '';
 }
 
-// ===== AUTO-SWITCH TOGGLE =====
+// ========================================================================
+// AUTO-SWITCH TOGGLE
+// The preference is a real user choice. Default = OFF. The switch is a
+// toggle button (not a checkbox) and is placed immediately to the left of
+// the "+ Add model" button when the models modal opens.
+// ========================================================================
 function getAutoSwitchEnabled() {
-  return true; // Always enabled
+  try {
+    return localStorage.getItem(AI_MODEL_AUTOSWITCH_KEY) === 'true';
+  } catch (e) { return false; }
 }
 
 function setAutoSwitchEnabled(enabled) {
@@ -1176,14 +1256,125 @@ function setAutoSwitchEnabled(enabled) {
 }
 
 function handleAutoSwitchToggle(checked) {
-  setAutoSwitchEnabled(true);
-  const checkbox = document.getElementById('ai-model-autoswitch-checkbox');
-  if (checkbox) {
-    checkbox.checked = true;
-    checkbox.disabled = true;
-  }
+  const enabled = !!checked;
+  setAutoSwitchEnabled(enabled);
+  _syncAutoSwitchToggleVisual(enabled);
   if (typeof displayToastNotification === 'function') {
-    displayToastNotification('🔄 Auto-switch is always ON — every AI error moves to the next model.');
+    displayToastNotification(enabled
+      ? 'Auto-switch enabled - errors will move to the next model.'
+      : 'Auto-switch disabled - errors will stay on the current model.');
+  }
+}
+
+function _ensureSwitchStyle() {
+  if (document.getElementById('ai-switch-style')) return;
+  const st = document.createElement('style');
+  st.id = 'ai-switch-style';
+  st.textContent = `
+    .ai-toggle-switch{position:relative;display:inline-block;width:42px;height:23px;background:#cbd5e1;border:none;border-radius:999px;cursor:pointer;padding:0;transition:background-color .2s;flex-shrink:0;vertical-align:middle;}
+    .ai-toggle-switch.on{background:#16a34a;}
+    .ai-toggle-switch .ai-toggle-slider{position:absolute;top:3px;left:3px;width:17px;height:17px;background:#fff;border-radius:50%;transition:transform .2s;box-shadow:0 1px 3px rgba(0,0,0,.25);}
+    .ai-toggle-switch.on .ai-toggle-slider{transform:translateX(19px);}
+    .ai-toggle-switch:disabled{opacity:.5;cursor:not-allowed;}
+    html.dark .ai-toggle-switch{background:#475569;}
+    html.dark .ai-toggle-switch.on{background:#22c55e;}
+  `;
+  document.head.appendChild(st);
+}
+
+function _syncAutoSwitchToggleVisual(enabled) {
+  const toggle = document.getElementById('ai-model-autoswitch-toggle');
+  if (toggle) {
+    toggle.classList.toggle('on', !!enabled);
+    toggle.setAttribute('aria-checked', enabled ? 'true' : 'false');
+  }
+  const cb = document.getElementById('ai-model-autoswitch-checkbox');
+  if (cb) cb.checked = !!enabled;
+}
+
+function _findAddModelButton() {
+  const modal = document.getElementById('ai-models-modal');
+  const candidates = [];
+  if (modal) candidates.push(...modal.querySelectorAll('button, a, [role="button"]'));
+  // Also search whole document as a fallback (button might live in a toolbar)
+  candidates.push(...document.querySelectorAll('button[onclick*="toggleAIModelAddForm"], button[onclick*="openAIModelAddDialog"]'));
+
+  const isExcluded = el => {
+    if (!el || !el.id) return false;
+    return el.id === 'ai-model-add-btn' || el.id === 'ai-model-autoswitch-toggle';
+  };
+
+  // 1) by onclick
+  let btn = candidates.find(el => {
+    if (isExcluded(el)) return false;
+    const onclick = el.getAttribute('onclick') || '';
+    return /toggleAIModelAddForm|openAIModelAddDialog/.test(onclick);
+  });
+  if (btn) return btn;
+
+  // 2) by well-known ids
+  const knownIds = ['ai-models-add-btn', 'ai-model-add-toggle', 'add-ai-model-btn', 'ai-models-add-new-btn', 'open-add-model-btn'];
+  for (const id of knownIds) {
+    const el = document.getElementById(id);
+    if (el && !isExcluded(el)) return el;
+  }
+
+  // 3) by text
+  btn = candidates.find(el => {
+    if (isExcluded(el)) return false;
+    const text = (el.textContent || '').trim().toLowerCase().replace(/\s+/g, ' ');
+    return /^\+?\s*add\s+(new\s+)?model\b/.test(text) || text === 'add model' || text === '+ add model';
+  });
+  return btn || null;
+}
+
+function _placeAutoSwitchNearAddButton() {
+  _ensureSwitchStyle();
+  const enabled = getAutoSwitchEnabled();
+
+  let wrapper = document.getElementById('ai-model-autoswitch-wrapper');
+  if (!wrapper) {
+    wrapper = document.createElement('div');
+    wrapper.id = 'ai-model-autoswitch-wrapper';
+    wrapper.style.cssText = 'display:inline-flex;align-items:center;gap:8px;margin-right:10px;font-size:.85rem;color:var(--text-secondary);flex-shrink:0;';
+
+    const label = document.createElement('span');
+    label.textContent = 'Auto-switch';
+
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.id = 'ai-model-autoswitch-toggle';
+    toggle.className = 'ai-toggle-switch';
+    toggle.setAttribute('role', 'switch');
+    toggle.setAttribute('title', 'Auto-switch to the next model on error');
+    toggle.innerHTML = '<span class="ai-toggle-slider"></span>';
+    toggle.onclick = () => {
+      const newState = !getAutoSwitchEnabled();
+      handleAutoSwitchToggle(newState);
+    };
+
+    wrapper.append(label, toggle);
+  }
+
+  _syncAutoSwitchToggleVisual(enabled);
+
+  const addBtn = _findAddModelButton();
+  if (addBtn) {
+    if (wrapper.parentNode !== addBtn.parentNode || wrapper.nextElementSibling !== addBtn) {
+      addBtn.parentNode.insertBefore(wrapper, addBtn);
+    }
+    wrapper.style.marginBottom = '';
+    return;
+  }
+
+  // Fallback: no "+ Add model" button found. Put it at the top of the modal.
+  const modal = document.getElementById('ai-models-modal');
+  if (modal && !wrapper.parentNode) {
+    const container = modal.querySelector('.ai-models-modal-header, .modal-header, .ai-models-modal-body') || modal;
+    if (container) {
+      container.insertBefore(wrapper, container.firstChild);
+      wrapper.style.marginBottom = '10px';
+    }
   }
 }
 
@@ -1256,7 +1447,6 @@ function renderAIModelsListInModal() {
     ? `<div class="ai-models-testall-bar" style="margin-bottom:10px;font-size:.85em;opacity:.8;">${escapeHTML(_testAllState.summary)}</div>`
     : '';
 
-  // ---- remove mode: simple selectable cards + a bar with Mark all / Remove selected ----
   if (_removeMode.active) {
     const total = AI_MODELS_STATE.models.length;
     _removeMode.selected.forEach(id => { if (!AI_MODELS_STATE.models.some(m => m.id === id)) _removeMode.selected.delete(id); });
@@ -1331,7 +1521,6 @@ function toggleModelInfoPopover(modelId) {
   popover.classList.toggle('open');
 }
 
-// Close popovers when clicking outside
 document.addEventListener('click', function(e) {
   if (!e.target.closest('.ai-model-info-btn')) {
     document.querySelectorAll('.ai-model-info-popover.open').forEach(el => el.classList.remove('open'));
@@ -1402,41 +1591,97 @@ function renderAIModelSelectBar() {
   syncActiveModelVisualTheme();
 }
 
-// ===== TOGGLE MODAL PANELS =====
+// ========================================================================
+// MODEL INFO DIALOG
+// The info button used to expand an inline panel inside the models modal.
+// It now opens a centered floating modal with the same content.
+// The legacy auto-switch checkbox row is stripped because the auto-switch
+// lives next to the "+ Add model" button now.
+// ========================================================================
 function toggleAIModelsInfo() {
+  if (_infoDialogOverlay && _infoDialogOverlay.parentNode) {
+    closeAIModelsInfoDialog();
+  } else {
+    openAIModelsInfoDialog();
+  }
+}
+
+function openAIModelsInfoDialog() {
   const panel = document.getElementById('ai-model-info-panel');
-  if (panel) panel.classList.toggle('open');
+  let contentHTML = '';
+
+  if (panel) {
+    const clone = panel.cloneNode(true);
+    // Remove the legacy auto-switch row (moved next to the Add model button)
+    const cb = clone.querySelector('#ai-model-autoswitch-checkbox');
+    if (cb) {
+      const row = cb.closest('label') || cb.parentElement;
+      if (row) row.remove();
+    }
+    // Strip any remaining ids to avoid duplicate-id collisions with the page
+    clone.querySelectorAll('[id]').forEach(el => el.removeAttribute('id'));
+    contentHTML = clone.innerHTML;
+  }
+
+  if (!contentHTML.trim()) {
+    contentHTML = '<p style="color:var(--text-secondary);font-size:.9rem;">No information available.</p>';
+  }
+
+  _infoDialogOverlay = _createAIDialog(`
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+      <h3 style="margin:0;font-size:1.05rem;">Model information</h3>
+      <button type="button" data-act="close" aria-label="Close" style="background:none;border:none;font-size:1.5rem;cursor:pointer;color:var(--text-secondary);line-height:1;padding:0 4px;">&times;</button>
+    </div>
+    <div>${contentHTML}</div>
+  `);
+
+  const close = () => closeAIModelsInfoDialog();
+  _infoDialogOverlay.addEventListener('click', e => { if (e.target === _infoDialogOverlay) close(); });
+  _infoDialogOverlay.querySelector('[data-act="close"]').onclick = close;
 }
 
-function toggleAIModelAddForm() {
-  const form = document.getElementById('ai-model-add-form');
-  if (!form) return;
-  form.classList.toggle('open');
-  if (!form.classList.contains('open')) return;
-  const input = document.getElementById('ai-model-name-input');
-  if (input) setTimeout(() => input.focus(), 60);
+function closeAIModelsInfoDialog() {
+  if (_infoDialogOverlay) {
+    _infoDialogOverlay.remove();
+    _infoDialogOverlay = null;
+  }
 }
 
+// ===== MODAL OPEN/CLOSE =====
 function openAIModelsModal() {
   const modal = document.getElementById('ai-models-modal');
   if (!modal) return;
   modal.style.display = 'flex';
+
+  // Close any stray inline panels; the info and add-form are now dialogs.
   const info = document.getElementById('ai-model-info-panel');
   if (info) info.classList.remove('open');
-  const form = document.getElementById('ai-model-add-form');
-  if (form) form.classList.remove('open');
+  const legacyForm = document.getElementById('ai-model-add-form');
+  if (legacyForm) {
+    legacyForm.classList.remove('open');
+    legacyForm.style.display = 'none';
+  }
+
+  // Keep the legacy auto-switch checkbox in sync but hidden.
   const autoSwitchCheckbox = document.getElementById('ai-model-autoswitch-checkbox');
   if (autoSwitchCheckbox) {
-    autoSwitchCheckbox.checked = true;
-    autoSwitchCheckbox.disabled = true;
-    autoSwitchCheckbox.title = 'Auto-switch is mandatory for all AI requests';
+    autoSwitchCheckbox.checked = getAutoSwitchEnabled();
+    autoSwitchCheckbox.style.display = 'none';
+    autoSwitchCheckbox.disabled = false;
+    autoSwitchCheckbox.removeAttribute('title');
   }
+
   _removeMode.active = false; _removeMode.selected.clear();
   renderAIModelsListInModal();
+
+  // Insert (or refresh) the auto-switch toggle next to "+ Add model".
+  _placeAutoSwitchNearAddButton();
 }
 
 function closeAIModelsModal() {
   _removeMode.active = false; _removeMode.selected.clear();
+  closeAIModelsInfoDialog();
+  closeAIModelAddDialog();
   const modal = document.getElementById('ai-models-modal');
   if (modal) modal.style.display = 'none';
 }
@@ -1461,7 +1706,7 @@ function markModelSuccess(cfg) {
     const stateModel = AI_MODELS_STATE.models.find(m => m.id === cfg.id);
     if (!stateModel) return;
     stateModel.status = 'ok';
-    stateModel.statusMessage = 'Connection successful ✅';
+    stateModel.statusMessage = 'Connection successful';
     stateModel.lastSuccessAt = Date.now();
     stateModel.failureCount = 0;
     saveAIModelsState();
@@ -1480,7 +1725,7 @@ function switchActiveModelTo(cfg, previousCfg) {
   } catch (e) {}
   if (cfg.id !== (previousCfg && previousCfg.id)) {
     if (typeof displayToastNotification === 'function') {
-      displayToastNotification(`🔄 @Thinking switched to "${cfg.name}"`);
+      displayToastNotification(`Switched to "${cfg.name}"`);
     }
   }
 }
@@ -1526,10 +1771,16 @@ function classifyAIError(err) {
 window.openAIModelsModal = openAIModelsModal;
 window.closeAIModelsModal = closeAIModelsModal;
 window.toggleAIModelsInfo = toggleAIModelsInfo;
+window.openAIModelsInfoDialog = openAIModelsInfoDialog;
+window.closeAIModelsInfoDialog = closeAIModelsInfoDialog;
 window.handleAutoSwitchToggle = handleAutoSwitchToggle;
+window.getAutoSwitchEnabled = getAutoSwitchEnabled;
+window.setAutoSwitchEnabled = setAutoSwitchEnabled;
 window.importAIModels = importAIModels;
 window.exportAIModels = exportAIModels;
 window.toggleAIModelAddForm = toggleAIModelAddForm;
+window.openAIModelAddDialog = openAIModelAddDialog;
+window.closeAIModelAddDialog = closeAIModelAddDialog;
 window.clearAIModelForm = clearAIModelForm;
 window.handleAddNewAIModel = handleAddNewAIModel;
 window.loadAIModelsState = loadAIModelsState;
@@ -1549,7 +1800,6 @@ window.normalizeAIModelApiUrl = normalizeAIModelApiUrl;
 window.renderAIModelSelectBar = renderAIModelSelectBar;
 window.sizeAIModelSelect = sizeAIModelSelect;
 window.switchActiveModelTo = switchActiveModelTo;
-window.getAutoSwitchEnabled = getAutoSwitchEnabled;
 window.markModelSuccess = markModelSuccess;
 window.markModelFailure = markModelFailure;
 window.classifyAIError = classifyAIError;
