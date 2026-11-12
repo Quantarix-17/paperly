@@ -767,9 +767,9 @@ html.dark #creation-mode-select,
 }
 
 #sidebar {
-  width: 380px;
+  width: clamp(440px, 36vw, 620px);
   min-width: 300px;
-  max-width: 550px;
+  max-width: 720px;
   height: 100%;
   min-height: 0;
   background: linear-gradient(180deg, var(--surface-color), rgba(255,255,255,0.9));
@@ -1320,6 +1320,20 @@ html.dark #creation-mode-select,
   font-size: 1.3rem;
   font-weight: 700;
 }
+/* Send button: right arrow in green */
+#send-message-btn.icon-btn.primary {
+  background: rgba(255,255,255,0.8);
+  border-color: var(--border-color);
+  color: #16a34a;
+  box-shadow: 0 4px 12px -10px rgba(17, 24, 39, 0.25);
+}
+#send-message-btn.icon-btn.primary:not(:disabled):hover {
+  background: rgba(34, 197, 94, 0.14);
+  box-shadow: 0 4px 12px -6px rgba(22, 163, 74, 0.45);
+}
+.dark #send-message-btn.icon-btn.primary { color: #4ade80 !important; }
+.dark #send-message-btn.icon-btn.primary:not(:disabled):hover { background: rgba(74, 222, 128, 0.14) !important; }
+#send-message-btn svg { display: block; width: 20px; height: 20px; }
 #file-attach-btn svg {
   width: 20px !important;
   height: 20px !important;
@@ -4493,7 +4507,7 @@ html.dark .ai-model-card.active,
    below that width, matching how the rest of the stylesheet is scoped. */
 @media (min-width: 851px) {
   /* Only forcing display back on here — width/min/max/flex are left to the
-     base #sidebar rule (380px, 300–550px range) so the panel stays fluid
+     base #sidebar rule (clamp(440px, 36vw, 620px), 300–720px range) so the panel stays fluid
      and the drag-to-resize handle keeps working, instead of being pinned
      to a fixed 420px that fought both the resize handle and any window
      narrower than sidebar(420) + a usable preview panel. */
@@ -5665,7 +5679,7 @@ html.dark .ai-model-card.active,
   #tab-bar { height:44px !important; min-height:44px !important; padding:0 12px !important; gap:4px !important; }
   #mobile-nav-bar { display:none !important; }
   #main-container { height:calc(100vh - var(--topbar-height) - var(--tabbar-height)) !important; min-height:0 !important; min-width:0 !important; flex:1 1 auto !important; }
-  /* #sidebar sizing (380px, 300–550px range, resizable) now comes only
+  /* #sidebar sizing (clamp(440px, 36vw, 620px), 300–720px range, resizable) now comes only
      from the base #sidebar rule — see the note above the .desktop-view-chat
      block for why a duplicate fixed-width copy here was removed. */
   #editor-toolbar { padding:9px 16px !important; gap:6px !important; }
