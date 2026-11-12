@@ -62,31 +62,68 @@ const APP_CONFIG = {
   SCANNED_PAGE_IMAGE_MAX: 120,       // max kept page images per PDF (keeps the saved tab small)
   SCANNED_PAGE_IMAGE_LONG_EDGE: 1800, // pixel size of a kept page image (higher = sharper but heavier)
 
-  // AI vision step (used by scanned pages, image files AND pictures inside text pages):
+  // ---- AI vision step (used by scanned pages, image files AND pictures inside text pages) ----
+  VISION_FALLBACK_ENABLED: true,     // false = NO uploads at all (local-only mode)
   VISION_MODEL_TIMEOUT_MS: 30000,    // one attempt per model; a model that takes longer counts as failed
+  VISION_MODEL_MAX_FAILS: 3,         // consecutive fails before a model is skipped for the rest of this run
+  VISION_MODEL_FAILS_RESET_MS: 60000, // soft-reset the per-model fail counter every 60s (a transient network blip cannot disable vision for the whole document)
   VISION_BREAKER_MS: 120000,         // every model failed once -> skip AI vision this long, go straight to the next step
   VISION_STOP_ON_EMPTY_ANSWER: true, // a model that answers 'no text' is final (the other models are not asked)
+  VISION_MAX_CALLS_PER_RUN: 20,      // per-document vision budget; prevents runaway API cost on very large PDFs
+  VISION_MAX_OUTPUT_TOKENS: 8192,    // truncation guard for long transcripts (Gemini's default cap is smaller)
+  VISION_PAGE_LONG_EDGE: 2400,       // render size for page-level vision (smaller = cheaper upload, slightly less detail)
+
   FIGURE_REPEAT_MIN_PAGES: 3,        // the same picture on this many pages = logo/watermark -> ignored
   FIGURE_DB_MAX_AGE_DAYS: 14,        // saved pictures older than this are removed from IndexedDB
   FIGURE_MAX_PER_PAGE: 8,
   FIGURE_MAX_PER_DOC: 80,
 
-  OCR_LANGS: 'ben+eng',
-  OCR_RENDER_SCALE: 2.0,
+  // ---- OCR (Tesseract.js) ----
+  OCR_LANGS: 'ben+eng',                             // (kept for backward compat; ocr.js currently hardcodes eng+ben fallback)
+  OCR_RENDER_SCALE: 2.0,                            // (kept for backward compat; ocr.js now uses OCR_TARGET_LONG_EDGE)
   OCR_MIN_TEXT_LEN_PER_PAGE: 25,
   OCR_MIN_TEXT_ITEMS_PER_PAGE: 5,
-  OCR_MAX_PARALLEL_WORKERS: Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 4) - 1)),
+  OCR_MAX_PARALLEL_WORKERS: Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 4) - 1)), // pool cap in ocr.js is 8; raise this number if you have RAM to spare
   OCR_HIGH_ACCURACY_PASSES: 4,
   OCR_MAX_IMAGE_PIXELS: 18000000,
   OCR_TARGET_LONG_EDGE: 4200,
   OCR_SMALL_TEXT_SCALE: 3.2,
   OCR_MIN_CONFIDENCE_FOR_SINGLE_PASS: 82,
-  OCR_MAX_ATTEMPTS_PER_PASS: 1,
+  OCR_MAX_ATTEMPTS_PER_PASS: 1,                     // (kept for backward compat; not used by ocr.js)
   OCR_PASS_TIMEOUT_MS: 5000,
-  OCR_PDF_PAGE_TIMEOUT_MS: 4500,
+  OCR_PDF_PAGE_TIMEOUT_MS: 4500,                    // (kept for backward compat; not used by ocr.js)
   OCR_FAST_TRIAGE_TIMEOUT_MS: 2200,
   OCR_FAST_TRIAGE_PASSES: 2,
   OCR_MAX_TOTAL_PASSES: 4,
+
+  // ---- OCR rotation recovery ----
+  // Sideways scans (rotated 90/270) return nothing upright. When the upright pass
+  // is weak, ocr.js retries the image rotated 90° and 270°.
+  OCR_ROTATION_RECOVERY: true,                      // false = skip rotation retries entirely (faster on clean PDFs)
+  OCR_ROTATION_PASSES: 2,                           // max rotations to try (1 = only 90°, 2 = both 90° and 270°)
+  OCR_ROTATION_MAX_LONG_EDGE: 2600,                 // downsized long edge for the rotation retries (keeps them quick)
+
+  // ---- OCR math post-processing ----
+  // A tall brace spanning several lines (cases/matrix/system) and similar structures
+  // are lost by Tesseract. When detected, ocr.js can send the image to AI vision instead.
+  //   'off'               = never ask vision; trust Tesseract even for tall brackets
+  //   'vision'            = try vision; if vision unavailable, keep Tesseract's output
+  //   'vision-then-image' = try vision; if vision unavailable, keep the picture instead (default)
+  OCR_COMPLEX_MATH_POLICY: 'vision-then-image',
+  // Legacy alias. If both are set, OCR_COMPLEX_MATH_POLICY wins. Kept so older
+  // integrations that only know the old name still work.
+  OCR_TALL_BRACKET_POLICY: 'vision-then-image',
+  // Tesseract cannot tell ℝ (double-struck R) from plain R. In "f: A -> R", "x in R",
+  // "R^n" the letter is the number set. When true, ocr.js rewrites those contexts to
+  // \mathbb{R} in OCR output.
+  OCR_NUMBER_SET_GUESS: true,
+
+  // ---- OCR concurrency override ----
+  // How many scanned PDF pages are rendered/OCR'd at once. Defaults to
+  // OCR_MAX_PARALLEL_WORKERS (the safe choice). Only set this if you want
+  // rendering concurrency to differ from OCR worker count.
+  // OCR_RENDER_CONCURRENCY: 2,
+
   // Max characters of an uploaded file that are KEPT. Was 100000 (~30-35 pages) — that is what cut
   // 500-page PDFs. Copy / Copy & Refine now process the whole text in parts, so keep a lot.
   ATTACHMENT_MAX_TEXT_CHARS: 6000000,
