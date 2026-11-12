@@ -11,18 +11,28 @@
 //  7. FIX "page grows like a modal instead of splitting": getOverflowNodes() now measures the REAL page
 //  8. PAGE-BOUNCE FIX (previous round): single consolidated layout pass, oversized hysteresis,
 //     scrollbar-gutter, font-loading debounce, MutationObserver watching only page add/remove
-//  9. THEME-CHANGE BOUNCE FIX (this round):
-//     (a) forceCursorRepaint - only touches pages currently on screen (was forcing one layout
-//         flush per page on every body/html class change, which is what menu opens + theme
-//         switches were visibly shaking the document)
-//     (b) _scheduleStyleReflow - now SYNCHRONOUS when nothing else is blocking. Previously it
-//         used setTimeout(120) which put the class mutations on paint frame N and the content
-//         reflow on paint frame N+8 — the user saw the new theme first, then the content
-//         jumping to new pages 120ms later.
-//     (c) applyPDFVisualFormat / applyPDFTextFormat - store the applied format in a data
-//         attribute so a format switch is 2 class operations per page (was 11).
-//     (d) applyMonochromeDocumentStyles - uses the same 2-op pattern, and now schedules a
-//         synchronous reflow itself (it changes borders/colors that alter page heights).
+//  9. THEME-CHANGE BOUNCE FIX (previous round):
+//     (a) forceCursorRepaint - only touches pages currently on screen
+//     (b) _scheduleStyleReflow - now SYNCHRONOUS when nothing else is blocking
+//     (c) applyPDFVisualFormat / applyPDFTextFormat - 2 class ops per page (was 11)
+//     (d) applyMonochromeDocumentStyles - same 2-op pattern, synchronous reflow
+// 10. PAGINATION-BOUNCE FIX (this round):
+//     (a) .editor-paginating CSS — container hidden + spinner during pagination so no
+//         intermediate unsettled frame can paint (fixes the visible "bounce").
+//     (b) _paginateDocumentHTMLCore / _paginateDocumentCanvasAsyncCoreImpl —
+//         settle BEFORE the first await(30ms), not after; the 30 ms gap was
+//         the biggest source of the bounce.
+//     (c) forceCursorRepaint — one batched layout flush instead of one per page.
+//     (d) _suppressFontSettleUntil — 3 s window after pagination where the
+//         document.fonts 'loadingdone' handler MUST NOT re-settle.
+//     (e) Font-settle 'bad' check no longer treats data-tight as bad; media
+//         pages with data-tight are a NORMAL end state and were forcing
+//         an 800 ms post-pagination reflow on nearly every media-heavy doc.
+//     (f) handlePageBlur — only reflow if the math pass actually removed the
+//         "needs math" condition; prevents $5-style text from looping.
+//     (g) scrollTop restored ONLY after layout is final; overflow-anchor:none
+//         on #document-view-container prevents the browser's own anchor logic
+//         from fighting the restore.
 // ========================================================================
 
 // ===== DOM REFS =====
@@ -46,6 +56,10 @@ const chatHistoryArea = document.getElementById('chat-history');
 // user can actually SEE get the flip — off-screen pages don't need the
 // cursor color corrected at all (the browser re-evaluates their cursor on
 // the next mousemove over them anyway).
+//
+// PAGINATION-BOUNCE FIX (10c): the flip now writes ALL visible pages'
+// cursors first, flushes layout ONCE, and restores — 1 flush total
+// instead of N.
 // ============================================================
 function forceCursorRepaint() {
   if (!docContainer) return;
@@ -54,14 +68,17 @@ function forceCursorRepaint() {
   const containerRect = docContainer.getBoundingClientRect();
   const visTop = containerRect.top;
   const visBottom = containerRect.bottom;
+  const touched = [];
   pages.forEach(page => {
     const r = page.getBoundingClientRect();
     if (r.bottom < visTop || r.top > visBottom) return;   // off-screen: skip
-    const _prevCursor = page.style.cursor;
+    touched.push({ el: page, prev: page.style.cursor });
     page.style.cursor = 'default';
-    void page.offsetHeight;
-    page.style.cursor = _prevCursor;
   });
+  if (!touched.length) return;
+  // One layout flush for the whole batch (was one per page -> layout thrash).
+  void docContainer.offsetHeight;
+  touched.forEach(t => { t.el.style.cursor = t.prev; });
 }
 
 const themeCursorRepaintObserver = new MutationObserver(forceCursorRepaint);
@@ -174,6 +191,32 @@ window.__setEditorVirtualRender = function(on) {
   st.textContent = `
     #document-view-container {
       scrollbar-gutter: stable;
+      overflow-anchor: none;
+    }
+    /* PAGINATION-BOUNCE FIX (10a): hide the container while pagination is
+       running so the user never sees an intermediate (unsettled) paint
+       that would look like pages "bouncing". A spinner is shown instead. */
+    #document-view-container.editor-paginating {
+      visibility: hidden;
+    }
+    #document-view-container.editor-paginating::before {
+      content: '';
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      width: 34px;
+      height: 34px;
+      margin: -17px 0 0 -17px;
+      border: 3px solid rgba(100, 116, 139, 0.25);
+      border-top-color: rgba(100, 116, 139, 0.85);
+      border-radius: 50%;
+      animation: editor-paginating-spin 0.8s linear infinite;
+      visibility: visible;
+      z-index: 99999;
+      pointer-events: none;
+    }
+    @keyframes editor-paginating-spin {
+      to { transform: rotate(360deg); }
     }
     #document-view-container .doc-page-canvas,
     #document-view-container .doc-page-canvas[class*="pdf-format-"] {
@@ -346,6 +389,11 @@ function _pageIsActive(page) {
 // PAGINATION STABILITY HELPERS
 // ============================================================
 let _slicingDepth = 0;
+// PAGINATION-BOUNCE FIX (10d): timestamp before which the font-loadingdone
+// handler must NOT trigger a full re-settle. Fonts routinely finish loading
+// the moment pagination ends, and a second reflow right then is the second
+// bounce. Set to Date.now()+3000 in the finally block of both paginators.
+let _suppressFontSettleUntil = 0;
 
 async function _warmFonts(tempSource) {
   if (!document.fonts || !document.fonts.ready) return;
@@ -461,6 +509,10 @@ function _syncVirtualRender() {
 }
 
 // Font loadingdone debounce (see PAGE-BOUNCE FIX (d) in the header comment).
+// PAGINATION-BOUNCE FIX (10d/10e):
+//   - Skip entirely for 3 s after pagination ends (`_suppressFontSettleUntil`).
+//   - `data-tight` is a NORMAL end state; treating it as bad was forcing a
+//     reflow on almost every media-heavy page 800 ms after pagination.
 if (document.fonts && document.fonts.addEventListener && !window.__fontSettleBound) {
   window.__fontSettleBound = true;
   let _fontSettleTimer = null;
@@ -468,16 +520,22 @@ if (document.fonts && document.fonts.addEventListener && !window.__fontSettleBou
     clearTimeout(_fontSettleTimer);
     _fontSettleTimer = setTimeout(() => {
       try {
+        if (Date.now() < _suppressFontSettleUntil) return;
         if (!docContainer || _slicingDepth > 0 || _renderInFlight > 0) return;
         const pages = Array.from(docContainer.querySelectorAll('.doc-page-canvas'));
-        const bad = pages.some(p => p.hasAttribute('data-tight') || p.dataset.oversized || !_wfFits(p));
+        const bad = pages.some(p => p.dataset.oversized !== 'true' && !_wfFits(p));
         if (!bad) return;
+        docContainer.classList.add('editor-paginating');
         const marker = saveCaretPosition();
-        _settleOverflowingPages();
-        normalizeAllEditorPagesToA4();
-        _removeTrailingEmptyPages();
-        _syncVirtualRender();
-        restoreCaretPosition(marker);
+        try {
+          _settleOverflowingPages();
+          normalizeAllEditorPagesToA4();
+          _removeTrailingEmptyPages();
+          _syncVirtualRender();
+        } finally {
+          restoreCaretPosition(marker);
+          docContainer.classList.remove('editor-paginating');
+        }
       } catch (err) { console.warn('[font settle]', err); }
     }, 800);
   });
@@ -1195,87 +1253,110 @@ function _renderDocumentHTMLPlainFallback(rawHtml, triggerSave) {
   if (triggerSave && typeof HISTORY !== 'undefined' && HISTORY.saveState) HISTORY.saveState();
 }
 
+// PAGINATION-BOUNCE FIX (10a/10b/10g):
+//   - Container gets `.editor-paginating` for the entire run so no intermediate
+//     paint can reveal unsettled pages.
+//   - The first `_settleOverflowingPages()` runs BEFORE `await setTimeout(30)`
+//     — the 30 ms gap was the biggest source of the visible bounce.
+//   - `scrollTop` / caret are restored only after the final layout is stable,
+//     and `overflow-anchor: none` keeps the browser from fighting the restore.
+//   - `_suppressFontSettleUntil` is set in the finally so the font-loadingdone
+//     handler can't trigger a second reflow immediately after this one ends.
 async function _paginateDocumentHTMLCore(rawHtml, triggerSave = true) {
   if (typeof invalidatePDFPreviewCache === 'function') invalidatePDFPreviewCache();
   if (!docContainer) return;
   const runId = ++_paginateRunId;
+  docContainer.classList.add('editor-paginating');
   document.documentElement.classList.remove('perf-cv-on');
   window.__mathLastOverflowSig = null;
   const savedScrollPos = docContainer.scrollTop;
   const markerId = _saveCaretOffset();
-  docContainer.innerHTML = '';
-  const tempSource = document.createElement('div');
-  tempSource.innerHTML = _prepareHTML(rawHtml);
-  if (typeof enforceDiagramVisualStyles === 'function') enforceDiagramVisualStyles(tempSource);
-  _applyFigureLayout(tempSource);
-  if (!(await _perfPreRenderMath(tempSource, runId))) return;
-  if (typeof ensureKatexDelimiterFonts === 'function') {
-    try { await ensureKatexDelimiterFonts(); } catch (_) { /* best effort */ }
-  }
-  await _warmFonts(tempSource);
+  try {
+    docContainer.innerHTML = '';
+    const tempSource = document.createElement('div');
+    tempSource.innerHTML = _prepareHTML(rawHtml);
+    if (typeof enforceDiagramVisualStyles === 'function') enforceDiagramVisualStyles(tempSource);
+    _applyFigureLayout(tempSource);
+    if (!(await _perfPreRenderMath(tempSource, runId))) return;
+    if (typeof ensureKatexDelimiterFonts === 'function') {
+      try { await ensureKatexDelimiterFonts(); } catch (_) { /* best effort */ }
+    }
+    await _warmFonts(tempSource);
 
-  function createNewPageElement() {
-    const page = document.createElement('div');
-    page.className = 'doc-page-canvas';
-    _stampActiveFormatsOnPage(page);
-    page.setAttribute('contenteditable', 'true');
-    page.setAttribute('spellcheck', 'false');
-    page.addEventListener('input', handleCanvasInput);
-    page.addEventListener('keydown', handlePageKeydown);
-    page.addEventListener('blur', handlePageBlur);
-    docContainer.appendChild(page);
-    return page;
-  }
+    function createNewPageElement() {
+      const page = document.createElement('div');
+      page.className = 'doc-page-canvas';
+      _stampActiveFormatsOnPage(page);
+      page.setAttribute('contenteditable', 'true');
+      page.setAttribute('spellcheck', 'false');
+      page.addEventListener('input', handleCanvasInput);
+      page.addEventListener('keydown', handlePageKeydown);
+      page.addEventListener('blur', handlePageBlur);
+      docContainer.appendChild(page);
+      return page;
+    }
 
-  let currentPage = createNewPageElement();
-  const createdPages = [currentPage];
-  const topLevelNodes = flattenContentTopLevelNodes(tempSource);
+    let currentPage = createNewPageElement();
+    const createdPages = [currentPage];
+    const topLevelNodes = flattenContentTopLevelNodes(tempSource);
 
-  const contentFits = _makeContentFits(pageSnapshot, syncSnapshotFromPage);
+    const contentFits = _makeContentFits(pageSnapshot, syncSnapshotFromPage);
 
-  const okRun = await _paginateNodesSliced(topLevelNodes, currentPage, createdPages, contentFits,
-    createNewPageElement, runId, topLevelNodes.length > PERF.BIG_DOC_NODES);
-  if (!okRun) return;
+    const okRun = await _paginateNodesSliced(topLevelNodes, currentPage, createdPages, contentFits,
+      createNewPageElement, runId, topLevelNodes.length > PERF.BIG_DOC_NODES);
+    if (!okRun) return;
 
-  if (typeof forceRenderAllEquations === 'function') forceRenderAllEquations();
-  await new Promise(r => setTimeout(r, 30));
-  if (runId !== _paginateRunId) return;
+    if (typeof forceRenderAllEquations === 'function') forceRenderAllEquations();
 
-  _wfPostPaginate();
-  _settleOverflowingPages();
-  normalizeAllEditorPagesToA4();
-  _syncVirtualRender();
-  _removeEmptyEditorPages();
-  docContainer.scrollTop = savedScrollPos;
-  _restoreCaretOffset(markerId);
+    // Settle IMMEDIATELY after the pagination loop, BEFORE any await that
+    // could give the browser a chance to paint an unsettled frame.
+    _wfPostPaginate();
+    _settleOverflowingPages();
+    normalizeAllEditorPagesToA4();
+    _syncVirtualRender();
+    _removeEmptyEditorPages();
 
-  _removeTrailingEmptyPages();
-  _fillBlankSolePageWithCoverPlaceholder();
+    // Small yield so late-loading images / fonts can layout, then re-settle.
+    await new Promise(r => setTimeout(r, 30));
+    if (runId !== _paginateRunId) return;
+    _settleOverflowingPages();
+    normalizeAllEditorPagesToA4();
+    _removeTrailingEmptyPages();
+    _fillBlankSolePageWithCoverPlaceholder();
 
-  if (typeof scheduleEquationRecovery === 'function') scheduleEquationRecovery(180);
-  if (!(await _perfPostProcessPages(runId))) return;
-  if (typeof applyPDFVisualFormat === 'function') applyPDFVisualFormat(typeof getActivePDFVisualFormat === 'function' ? getActivePDFVisualFormat() : 'default');
+    if (typeof scheduleEquationRecovery === 'function') scheduleEquationRecovery(180);
+    if (!(await _perfPostProcessPages(runId))) return;
+    if (typeof applyPDFVisualFormat === 'function') applyPDFVisualFormat(typeof getActivePDFVisualFormat === 'function' ? getActivePDFVisualFormat() : 'default');
 
-  _settleOverflowingPages();
-  normalizeAllEditorPagesToA4();
-  _removeTrailingEmptyPages();
-  _syncVirtualRender();
+    _settleOverflowingPages();
+    normalizeAllEditorPagesToA4();
+    _removeTrailingEmptyPages();
+    _syncVirtualRender();
 
-  if (typeof fitEditorPagesToScreen === 'function') fitEditorPagesToScreen();
-  if (triggerSave) HISTORY.saveState();
-  if (typeof TAB_MANAGER !== 'undefined' && TAB_MANAGER.activeId) {
-    const tab = TAB_MANAGER.getActive();
-    if (tab) {
-      const newName = TAB_MANAGER._getTabNameFromHtml(_getLeadingCanvasHTML());
-      if (newName && newName !== 'Untitled') {
-        tab.name = newName;
-        TAB_MANAGER._persist();
-        TAB_MANAGER.renderTabBar();
+    if (typeof fitEditorPagesToScreen === 'function') fitEditorPagesToScreen();
+
+    // Restore scroll/caret only after the layout is FINAL and stable.
+    docContainer.scrollTop = savedScrollPos;
+    _restoreCaretOffset(markerId);
+
+    if (triggerSave) HISTORY.saveState();
+    if (typeof TAB_MANAGER !== 'undefined' && TAB_MANAGER.activeId) {
+      const tab = TAB_MANAGER.getActive();
+      if (tab) {
+        const newName = TAB_MANAGER._getTabNameFromHtml(_getLeadingCanvasHTML());
+        if (newName && newName !== 'Untitled') {
+          tab.name = newName;
+          TAB_MANAGER._persist();
+          TAB_MANAGER.renderTabBar();
+        }
       }
     }
-  }
-  if (_isPdfViewVisible() && typeof generateLivePDFIframePreview === 'function') {
-    generateLivePDFIframePreview();
+    if (_isPdfViewVisible() && typeof generateLivePDFIframePreview === 'function') {
+      generateLivePDFIframePreview();
+    }
+  } finally {
+    _suppressFontSettleUntil = Date.now() + 3000;
+    docContainer.classList.remove('editor-paginating');
   }
 }
 
@@ -1842,123 +1923,142 @@ async function _paginateDocumentCanvasAsyncCore(rawHtml, triggerSave = true) {
   finally { scratch.els.forEach(el => { try { el.remove(); } catch (_) {} }); }
 }
 
+// PAGINATION-BOUNCE FIX (10a/10b/10g) applied to the chunked path too:
+//   - Container gets `.editor-paginating` for the entire run.
+//   - The first `_settleOverflowingPages()` runs BEFORE `await setTimeout(30)`.
+//   - `scrollTop` / caret are restored only after the final layout is stable.
+//   - `_suppressFontSettleUntil` is set in the finally block.
 async function _paginateDocumentCanvasAsyncCoreImpl(rawHtml, triggerSave, scratch) {
   if (typeof invalidatePDFPreviewCache === 'function') invalidatePDFPreviewCache();
   if (!docContainer) return;
   const runId = ++_paginateRunId;
+  docContainer.classList.add('editor-paginating');
   document.documentElement.classList.remove('perf-cv-on');
   window.__mathLastOverflowSig = null;
   const savedScrollPos = docContainer.scrollTop;
   const markerId = _saveCaretOffset();
-  docContainer.innerHTML = '';
-  const tempSource = document.createElement('div');
-  tempSource.innerHTML = _prepareHTML(rawHtml);
-  if (typeof enforceDiagramVisualStyles === 'function') enforceDiagramVisualStyles(tempSource);
-  _applyFigureLayout(tempSource);
-  if (!(await _perfPreRenderMath(tempSource, runId))) return;
-  if (typeof ensureKatexDelimiterFonts === 'function') {
-    try { await ensureKatexDelimiterFonts(); } catch (_) { /* best effort */ }
-  }
-  await _warmFonts(tempSource);
+  try {
+    docContainer.innerHTML = '';
+    const tempSource = document.createElement('div');
+    tempSource.innerHTML = _prepareHTML(rawHtml);
+    if (typeof enforceDiagramVisualStyles === 'function') enforceDiagramVisualStyles(tempSource);
+    _applyFigureLayout(tempSource);
+    if (!(await _perfPreRenderMath(tempSource, runId))) return;
+    if (typeof ensureKatexDelimiterFonts === 'function') {
+      try { await ensureKatexDelimiterFonts(); } catch (_) { /* best effort */ }
+    }
+    await _warmFonts(tempSource);
 
-  function createNewPageElement() {
-    const page = document.createElement('div');
-    page.className = 'doc-page-canvas';
-    _stampActiveFormatsOnPage(page);
-    page.setAttribute('contenteditable', 'true');
-    page.setAttribute('spellcheck', 'false');
-    page.addEventListener('input', handleCanvasInput);
-    page.addEventListener('keydown', handlePageKeydown);
-    page.addEventListener('blur', handlePageBlur);
-    docContainer.appendChild(page);
-    return page;
-  }
+    function createNewPageElement() {
+      const page = document.createElement('div');
+      page.className = 'doc-page-canvas';
+      _stampActiveFormatsOnPage(page);
+      page.setAttribute('contenteditable', 'true');
+      page.setAttribute('spellcheck', 'false');
+      page.addEventListener('input', handleCanvasInput);
+      page.addEventListener('keydown', handlePageKeydown);
+      page.addEventListener('blur', handlePageBlur);
+      docContainer.appendChild(page);
+      return page;
+    }
 
-  let currentPage = createNewPageElement();
-  const createdPages = [currentPage];
-  const topLevelNodes = flattenContentTopLevelNodes(tempSource);
+    let currentPage = createNewPageElement();
+    const createdPages = [currentPage];
+    const topLevelNodes = flattenContentTopLevelNodes(tempSource);
 
-  const pageSnapshot = document.createElement('div');
-  pageSnapshot.className = 'doc-page-canvas pdf-export-measure-page';
-  pageSnapshot.style.cssText = measurePage.style.cssText;
-  document.body.appendChild(pageSnapshot);
-  scratch.els.push(pageSnapshot);
+    const pageSnapshot = document.createElement('div');
+    pageSnapshot.className = 'doc-page-canvas pdf-export-measure-page';
+    pageSnapshot.style.cssText = measurePage.style.cssText;
+    document.body.appendChild(pageSnapshot);
+    scratch.els.push(pageSnapshot);
 
-  function syncSnapshotFromPage(pageEl) {
-    _mirrorPageFormatClasses(pageSnapshot, pageEl);
-    pageSnapshot.innerHTML = '';
-    const fragment = document.createDocumentFragment();
-    Array.from(pageEl.childNodes).forEach(child => {
-      if (!(child.classList && child.classList.contains('page-footer-number'))) {
-        fragment.appendChild(child.cloneNode(true));
-      }
-    });
-    pageSnapshot.appendChild(fragment);
-  }
+    function syncSnapshotFromPage(pageEl) {
+      _mirrorPageFormatClasses(pageSnapshot, pageEl);
+      pageSnapshot.innerHTML = '';
+      const fragment = document.createDocumentFragment();
+      Array.from(pageEl.childNodes).forEach(child => {
+        if (!(child.classList && child.classList.contains('page-footer-number'))) {
+          fragment.appendChild(child.cloneNode(true));
+        }
+      });
+      pageSnapshot.appendChild(fragment);
+    }
 
-  const contentFits = _makeContentFits(pageSnapshot, syncSnapshotFromPage);
+    const contentFits = _makeContentFits(pageSnapshot, syncSnapshotFromPage);
 
-  const useChunking = topLevelNodes.length > PERF.BIG_DOC_NODES;
+    const useChunking = topLevelNodes.length > PERF.BIG_DOC_NODES;
 
-  let userScrolledDuringPagination = false;
-  const _markUserScrollIntent = () => { userScrolledDuringPagination = true; };
-  docContainer.addEventListener('wheel', _markUserScrollIntent, { passive: true });
-  docContainer.addEventListener('touchmove', _markUserScrollIntent, { passive: true });
-  docContainer.addEventListener('keydown', _markUserScrollIntent, { passive: true });
+    let userScrolledDuringPagination = false;
+    const _markUserScrollIntent = () => { userScrolledDuringPagination = true; };
+    docContainer.addEventListener('wheel', _markUserScrollIntent, { passive: true });
+    docContainer.addEventListener('touchmove', _markUserScrollIntent, { passive: true });
+    docContainer.addEventListener('keydown', _markUserScrollIntent, { passive: true });
 
-  const okRun = await _paginateNodesSliced(topLevelNodes, currentPage, createdPages, contentFits,
-    createNewPageElement, runId, useChunking);
-  if (!okRun) {
+    const okRun = await _paginateNodesSliced(topLevelNodes, currentPage, createdPages, contentFits,
+      createNewPageElement, runId, useChunking);
+    if (!okRun) {
+      docContainer.removeEventListener('wheel', _markUserScrollIntent);
+      docContainer.removeEventListener('touchmove', _markUserScrollIntent);
+      docContainer.removeEventListener('keydown', _markUserScrollIntent);
+      return;
+    }
+
     docContainer.removeEventListener('wheel', _markUserScrollIntent);
     docContainer.removeEventListener('touchmove', _markUserScrollIntent);
     docContainer.removeEventListener('keydown', _markUserScrollIntent);
-    return;
-  }
 
-  docContainer.removeEventListener('wheel', _markUserScrollIntent);
-  docContainer.removeEventListener('touchmove', _markUserScrollIntent);
-  docContainer.removeEventListener('keydown', _markUserScrollIntent);
+    if (typeof forceRenderAllEquations === 'function') forceRenderAllEquations();
 
-  if (typeof forceRenderAllEquations === 'function') forceRenderAllEquations();
-  await new Promise(r => setTimeout(r, 30));
-  if (runId !== _paginateRunId) return;
+    // Settle BEFORE the async yield (was after setTimeout(30) — the biggest
+    // single source of the visible bounce on chunked documents).
+    _wfPostPaginate();
+    _settleOverflowingPages();
+    normalizeAllEditorPagesToA4();
+    _syncVirtualRender();
 
-  _wfPostPaginate();
-  _settleOverflowingPages();
-  normalizeAllEditorPagesToA4();
-  _syncVirtualRender();
-  if (!userScrolledDuringPagination) {
-    docContainer.scrollTop = savedScrollPos;
-  }
-  _restoreCaretOffset(markerId);
+    await new Promise(r => setTimeout(r, 30));
+    if (runId !== _paginateRunId) return;
+    _settleOverflowingPages();
+    normalizeAllEditorPagesToA4();
 
-  _removeTrailingEmptyPages();
-  _fillBlankSolePageWithCoverPlaceholder();
+    _removeTrailingEmptyPages();
+    _fillBlankSolePageWithCoverPlaceholder();
 
-  if (typeof scheduleEquationRecovery === 'function') scheduleEquationRecovery(180);
-  if (!(await _perfPostProcessPages(runId))) return;
-  if (typeof applyPDFVisualFormat === 'function') applyPDFVisualFormat(typeof getActivePDFVisualFormat === 'function' ? getActivePDFVisualFormat() : 'default');
+    if (typeof scheduleEquationRecovery === 'function') scheduleEquationRecovery(180);
+    if (!(await _perfPostProcessPages(runId))) return;
+    if (typeof applyPDFVisualFormat === 'function') applyPDFVisualFormat(typeof getActivePDFVisualFormat === 'function' ? getActivePDFVisualFormat() : 'default');
 
-  _settleOverflowingPages();
-  normalizeAllEditorPagesToA4();
-  _removeTrailingEmptyPages();
-  _syncVirtualRender();
+    _settleOverflowingPages();
+    normalizeAllEditorPagesToA4();
+    _removeTrailingEmptyPages();
+    _syncVirtualRender();
 
-  if (typeof fitEditorPagesToScreen === 'function') fitEditorPagesToScreen();
-  if (triggerSave) HISTORY.saveState();
-  if (typeof TAB_MANAGER !== 'undefined' && TAB_MANAGER.activeId) {
-    const tab = TAB_MANAGER.getActive();
-    if (tab) {
-      const newName = TAB_MANAGER._getTabNameFromHtml(_getLeadingCanvasHTML());
-      if (newName && newName !== 'Untitled') {
-        tab.name = newName;
-        TAB_MANAGER._persist();
-        TAB_MANAGER.renderTabBar();
+    if (typeof fitEditorPagesToScreen === 'function') fitEditorPagesToScreen();
+
+    // Restore scroll/caret only after layout is stable.
+    if (!userScrolledDuringPagination) {
+      docContainer.scrollTop = savedScrollPos;
+    }
+    _restoreCaretOffset(markerId);
+
+    if (triggerSave) HISTORY.saveState();
+    if (typeof TAB_MANAGER !== 'undefined' && TAB_MANAGER.activeId) {
+      const tab = TAB_MANAGER.getActive();
+      if (tab) {
+        const newName = TAB_MANAGER._getTabNameFromHtml(_getLeadingCanvasHTML());
+        if (newName && newName !== 'Untitled') {
+          tab.name = newName;
+          TAB_MANAGER._persist();
+          TAB_MANAGER.renderTabBar();
+        }
       }
     }
-  }
-  if (_isPdfViewVisible() && typeof generateLivePDFIframePreview === 'function') {
-    generateLivePDFIframePreview();
+    if (_isPdfViewVisible() && typeof generateLivePDFIframePreview === 'function') {
+      generateLivePDFIframePreview();
+    }
+  } finally {
+    _suppressFontSettleUntil = Date.now() + 3000;
+    docContainer.classList.remove('editor-paginating');
   }
 }
 
@@ -2143,11 +2243,19 @@ function _pageNeedsMathPass(page) {
   return false;
 }
 
+// PAGINATION-BOUNCE FIX (10f): only reflow when the math pass ACTUALLY fixed
+// something. Previously a page containing plain text like "$5" would satisfy
+// `_pageNeedsMathPass` (it contains a '$') without ever being changed by the
+// math processor; blur → scheduleReflow → focus change → blur again → ∞ loop.
 function handlePageBlur(event) {
   const page = event.currentTarget;
   if (!_pageNeedsMathPass(page)) return;
   if (typeof processMathEquationsInContainer === 'function') processMathEquationsInContainer(page);
   if (typeof renderAllKatexVisuals === 'function') renderAllKatexVisuals(page);
+  // If the page STILL needs a math pass after processing, the pass had no
+  // effect (typical: plain "$5" text with no real delimiters). Reflowing in
+  // that case is pointless and creates a blur → reflow → blur loop.
+  if (_pageNeedsMathPass(page)) return;
   debouncedAutoSaveAndPaginate();
 }
 
