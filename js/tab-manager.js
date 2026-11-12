@@ -118,6 +118,360 @@ function _resetTransientChatState() {
   }
 }
 
+// ========================================================================
+// STUDIO SETTINGS — global user preferences (persisted in localStorage)
+// ------------------------------------------------------------------------
+// দুটি সুইচ, দুটোই Settings panel-এর জন্য:
+//
+//  ১) OCR image policy:
+//       'keep-image'  (DEFAULT — সুইচ ON) → OCR চলাকালীন ফিগার/ছবি শুধু
+//                                            ক্রপ করে ছবি হিসেবে রাখা হবে;
+//                                            AI vision দিয়ে পড়া হবে না।
+//       'read-vision' (সুইচ OFF)          → AI vision দিয়ে ছবি পড়া হবে,
+//                                            টেক্সট/LaTeX-এ রূপান্তর হবে।
+//
+//  ২) Text-layer figure policy:
+//       'crop'     (DEFAULT — সুইচ OFF) → PDF-এর text layer-এ থাকা ফিগার
+//                                           ক্রপ করে ছবি হিসেবে রাখা হবে।
+//       'recreate' (সুইচ ON)            → AI নিজের মতো করে ফিগার নতুন করে
+//                                           তৈরি করবে।
+//
+// ocr.js এই getter গুলো দিয়ে current value পড়তে পারবে:
+//   window.getOcrImagePolicy()           → 'keep-image' | 'read-vision'
+//   window.getTextFigurePolicy()         → 'crop' | 'recreate'
+//   window.isOcrKeepImageSwitchOn()      → boolean (ON মানে keep-image)
+//   window.isTextFigureRecreateSwitchOn()→ boolean (ON মানে recreate)
+// ========================================================================
+const STUDIO_SETTINGS_KEY = 'paperly_studio_settings_v1';
+
+const STUDIO_SETTINGS_DEFAULTS = Object.freeze({
+  ocrImagePolicy: 'keep-image',
+  textFigurePolicy: 'crop',
+});
+
+function _loadStudioSettings() {
+  const out = Object.assign({}, STUDIO_SETTINGS_DEFAULTS);
+  try {
+    const raw = localStorage.getItem(STUDIO_SETTINGS_KEY);
+    if (!raw) return out;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return out;
+    if (parsed.ocrImagePolicy === 'keep-image' || parsed.ocrImagePolicy === 'read-vision') {
+      out.ocrImagePolicy = parsed.ocrImagePolicy;
+    }
+    if (parsed.textFigurePolicy === 'crop' || parsed.textFigurePolicy === 'recreate') {
+      out.textFigurePolicy = parsed.textFigurePolicy;
+    }
+  } catch (_) {}
+  return out;
+}
+
+function _saveStudioSettings() {
+  try {
+    const s = (window.APP_STATE && window.APP_STATE.studioSettings) || STUDIO_SETTINGS_DEFAULTS;
+    localStorage.setItem(STUDIO_SETTINGS_KEY, JSON.stringify({
+      ocrImagePolicy: s.ocrImagePolicy === 'read-vision' ? 'read-vision' : 'keep-image',
+      textFigurePolicy: s.textFigurePolicy === 'recreate' ? 'recreate' : 'crop',
+    }));
+  } catch (_) {}
+}
+
+// File parse-time-এ sync load করি, যাতে ocr.js যেকোনো সময় getter call করলে
+// মান পাওয়া যায় (init() এর জন্য অপেক্ষা করতে হয় না)।
+(function _initStudioSettings() {
+  if (!window.APP_STATE) window.APP_STATE = {};
+  window.APP_STATE.studioSettings = _loadStudioSettings();
+})();
+
+window.STUDIO_SETTINGS_DEFAULTS = STUDIO_SETTINGS_DEFAULTS;
+
+window.getStudioSettings = function () {
+  if (!window.APP_STATE) window.APP_STATE = {};
+  if (!window.APP_STATE.studioSettings) {
+    window.APP_STATE.studioSettings = _loadStudioSettings();
+  }
+  return Object.assign({}, window.APP_STATE.studioSettings);
+};
+
+window.getStudioSetting = function (key) {
+  const s = window.getStudioSettings();
+  return Object.prototype.hasOwnProperty.call(s, key) ? s[key] : STUDIO_SETTINGS_DEFAULTS[key];
+};
+
+window.setStudioSetting = function (key, value) {
+  if (!Object.prototype.hasOwnProperty.call(STUDIO_SETTINGS_DEFAULTS, key)) {
+    console.warn('[StudioSettings] unknown key:', key);
+    return;
+  }
+  if (key === 'ocrImagePolicy') {
+    value = value === 'read-vision' ? 'read-vision' : 'keep-image';
+  } else if (key === 'textFigurePolicy') {
+    value = value === 'recreate' ? 'recreate' : 'crop';
+  }
+  if (!window.APP_STATE) window.APP_STATE = {};
+  if (!window.APP_STATE.studioSettings) window.APP_STATE.studioSettings = _loadStudioSettings();
+  if (window.APP_STATE.studioSettings[key] === value) return;
+  window.APP_STATE.studioSettings[key] = value;
+  _saveStudioSettings();
+  try {
+    window.dispatchEvent(new CustomEvent('studio-settings-changed', {
+      detail: { key: key, value: value, settings: window.getStudioSettings() }
+    }));
+  } catch (_) {}
+};
+
+window.resetStudioSettings = function () {
+  if (!window.APP_STATE) window.APP_STATE = {};
+  window.APP_STATE.studioSettings = Object.assign({}, STUDIO_SETTINGS_DEFAULTS);
+  _saveStudioSettings();
+  try {
+    window.dispatchEvent(new CustomEvent('studio-settings-changed', {
+      detail: { key: '*', value: null, settings: window.getStudioSettings() }
+    }));
+  } catch (_) {}
+};
+
+window.onStudioSettingChange = function (callback) {
+  if (typeof callback !== 'function') return function () {};
+  const handler = function (e) { callback(e.detail || {}); };
+  window.addEventListener('studio-settings-changed', handler);
+  return function () { window.removeEventListener('studio-settings-changed', handler); };
+};
+
+// ---- Convenience getters/setters (ocr.js এগুলো ব্যবহার করবে) ----
+window.getOcrImagePolicy = function () {
+  return window.getStudioSetting('ocrImagePolicy') === 'read-vision' ? 'read-vision' : 'keep-image';
+};
+window.setOcrImagePolicy = function (v) {
+  window.setStudioSetting('ocrImagePolicy', v === 'read-vision' ? 'read-vision' : 'keep-image');
+};
+window.isOcrKeepImageSwitchOn = function () {
+  return window.getOcrImagePolicy() === 'keep-image';
+};
+window.getTextFigurePolicy = function () {
+  return window.getStudioSetting('textFigurePolicy') === 'recreate' ? 'recreate' : 'crop';
+};
+window.setTextFigurePolicy = function (v) {
+  window.setStudioSetting('textFigurePolicy', v === 'recreate' ? 'recreate' : 'crop');
+};
+window.isTextFigureRecreateSwitchOn = function () {
+  return window.getTextFigurePolicy() === 'recreate';
+};
+
+// ---- Settings panel helper: যেকোনো container-এ দুটি switch রেন্ডার ----
+window.renderStudioSwitches = function (containerEl, options) {
+  if (!containerEl) return function () {};
+  const opts = options || {};
+  const idPrefix = opts.idPrefix || 'studio-setting';
+  containerEl.textContent = '';
+  const rows = [];
+
+  function buildSwitch(key, labelText, descText) {
+    const row = document.createElement('div');
+    row.className = 'studio-setting-row';
+    row.setAttribute('data-setting-key', key);
+    row.style.cssText = 'display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid rgba(0,0,0,0.08);';
+
+    const text = document.createElement('div');
+    text.style.cssText = 'flex:1;min-width:0;';
+
+    const label = document.createElement('div');
+    label.className = 'studio-setting-label';
+    label.style.cssText = 'font-weight:600;';
+    label.textContent = labelText;
+
+    const desc = document.createElement('div');
+    desc.className = 'studio-setting-desc';
+    desc.style.cssText = 'font-size:12px;opacity:0.72;margin-top:2px;';
+    desc.textContent = descText;
+
+    text.appendChild(label);
+    text.appendChild(desc);
+    row.appendChild(text);
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.id = idPrefix + '-' + key;
+    btn.className = 'studio-switch';
+    btn.setAttribute('role', 'switch');
+    btn.style.cssText = 'position:relative;width:46px;height:24px;border-radius:12px;border:none;cursor:pointer;background:#cbd5e1;transition:background 0.2s;flex:0 0 auto;padding:0;';
+
+    const knob = document.createElement('span');
+    knob.className = 'studio-switch-knob';
+    knob.style.cssText = 'position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:#fff;transition:left 0.2s;box-shadow:0 1px 3px rgba(0,0,0,0.3);';
+    btn.appendChild(knob);
+    row.appendChild(btn);
+
+    function render() {
+      let on;
+      if (key === 'ocrImagePolicy') {
+        on = window.getOcrImagePolicy() === 'keep-image';
+        btn.title = on
+          ? 'চালু: ছবি ছবি হিসেবে রাখা হবে (AI vision ব্যবহার হবে না)'
+          : 'বন্ধ: AI vision দিয়ে ছবি পড়া হবে';
+      } else {
+        on = window.getTextFigurePolicy() === 'recreate';
+        btn.title = on
+          ? 'চালু: AI দিয়ে ফিগার নতুন করে তৈরি হবে'
+          : 'বন্ধ: ফিগার ছবি হিসেবে ক্রপ হবে';
+      }
+      btn.setAttribute('aria-checked', on ? 'true' : 'false');
+      btn.style.background = on ? '#22c55e' : '#cbd5e1';
+      knob.style.left = on ? '24px' : '2px';
+    }
+
+    btn.addEventListener('click', function () {
+      if (key === 'ocrImagePolicy') {
+        const nowOn = window.getOcrImagePolicy() === 'keep-image';
+        window.setOcrImagePolicy(nowOn ? 'read-vision' : 'keep-image');
+      } else {
+        const nowOn = window.getTextFigurePolicy() === 'recreate';
+        window.setTextFigurePolicy(nowOn ? 'crop' : 'recreate');
+      }
+      render();
+    });
+
+    render();
+    return { row: row, render: render };
+  }
+
+  const s1 = buildSwitch(
+    'ocrImagePolicy',
+    'OCR-এ ছবি/ফিগার: ছবি হিসেবে রাখুন',
+    'চালু থাকলে OCR চলাকালীন ফিগার/ছবি শুধু ক্রপ করে ছবি হিসেবে রাখা হয় (AI vision ব্যবহার হয় না)। বন্ধ করলে AI vision দিয়ে ছবি পড়া হয়।'
+  );
+  const s2 = buildSwitch(
+    'textFigurePolicy',
+    'টেক্সট-লেয়ার ফিগার AI দিয়ে নতুন করে তৈরি করুন',
+    'চালু থাকলে AI তার নিজের মতো করে ফিগার নতুন করে তৈরি করবে। বন্ধ থাকলে ফিগারগুলো ছবি হিসেবে ক্রপ করে রাখা হয়।'
+  );
+  containerEl.appendChild(s1.row);
+  containerEl.appendChild(s2.row);
+  rows.push(s1, s2);
+
+  const unsubscribe = window.onStudioSettingChange(function () {
+    rows.forEach(function (r) { r.render(); });
+  });
+  return unsubscribe;
+};
+
+// ---- Header rename: "AI Models" → "Settings" (best effort) ----
+window.renameAIModelsHeaderToSettings = function () {
+  try {
+    let found = false;
+    const selectors = [
+      '#ai-models-btn', '.ai-models-btn',
+      '[data-action="open-ai-models"]',
+      '[data-i18n-key="aiModels"]', '[data-i18n="aiModels"]'
+    ];
+    selectors.forEach(function (sel) {
+      document.querySelectorAll(sel).forEach(function (el) {
+        found = true;
+        const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
+        let n;
+        while ((n = walker.nextNode())) {
+          n.textContent = n.textContent.replace(/AI\s*Models?/gi, 'Settings');
+        }
+        if (el.hasAttribute('title')) el.setAttribute('title', el.getAttribute('title').replace(/AI\s*Models?/gi, 'Settings'));
+        if (el.hasAttribute('aria-label')) el.setAttribute('aria-label', el.getAttribute('aria-label').replace(/AI\s*Models?/gi, 'Settings'));
+      });
+    });
+    if (!found) {
+      document.querySelectorAll('button, a, [role="button"]').forEach(function (el) {
+        if (el.children.length > 2) return;
+        if (/^\s*AI\s*Models?\s*$/i.test(el.textContent || '')) {
+          el.textContent = 'Settings';
+          found = true;
+        }
+      });
+    }
+    return found;
+  } catch (e) {
+    console.warn('[StudioSettings] header rename failed:', e);
+    return false;
+  }
+};
+
+// ---- Settings panel restructure (best effort, optional) ----
+// এই ফাংশন Settings panel-এর ভেতরে তিনটি section তৈরি করে:
+//   (১) AI যুক্ত করুন  (২) AI মডেল লিস্ট  (৩) সুইচ ও পারমিশন
+// উপরের দুটি section-এর ভেতরের আসল form/list HTML ফাইলে পরে ওয়্যার করবেন;
+// এখানে শুধু switch section-এর দুই switch রেন্ডার হয়ে যায়। Panel না পেলে
+// কোনো ক্ষতি হয় না — false return করে চুপচাপ বেরিয়ে যায়।
+window.restructureSettingsPanel = function (panelElOrSelector) {
+  try {
+    let panel = panelElOrSelector;
+    if (typeof panel === 'string') panel = document.querySelector(panel);
+    if (!panel) {
+      panel = document.getElementById('settings-panel')
+        || document.getElementById('ai-models-panel')
+        || document.getElementById('settings-modal')
+        || document.getElementById('ai-models-modal');
+    }
+    if (!panel) return false;
+    if (panel.querySelector('[data-studio-section]')) return true;
+
+    const contentHost = panel.querySelector('.modal-body, .settings-content, .ai-models-content') || panel;
+    const originalChildren = Array.from(contentHost.children).filter(function (c) {
+      return c.nodeType === 1
+        && !c.classList.contains('modal-close')
+        && !c.classList.contains('close-btn');
+    });
+    if (!originalChildren.length) return false;
+
+    const sections = {};
+    ['add-ai', 'model-list', 'switches'].forEach(function (key, i) {
+      const sec = document.createElement('section');
+      sec.setAttribute('data-studio-section', key);
+      sec.style.cssText = 'margin:12px 0;padding:10px 0;border-top:1px solid rgba(0,0,0,0.08);';
+      if (i === 0) sec.style.borderTop = 'none';
+      const h = document.createElement('h3');
+      h.style.cssText = 'margin:0 0 8px;font-size:14px;font-weight:600;opacity:0.9;';
+      h.textContent = (
+        key === 'add-ai' ? 'AI যুক্ত করুন'
+        : key === 'model-list' ? 'AI মডেল লিস্ট'
+        : 'সুইচ ও পারমিশন'
+      );
+      sec.appendChild(h);
+      const body = document.createElement('div');
+      body.className = 'studio-section-body';
+      sec.appendChild(body);
+      sections[key] = { section: sec, body: body };
+      contentHost.appendChild(sec);
+    });
+
+    // পুরনো কনটেন্ট "AI মডেল লিস্ট" section-এ যায় (আগে এটাই দেখাত)।
+    originalChildren.forEach(function (c) {
+      sections['model-list'].body.appendChild(c);
+    });
+
+    // সুইচ section পূরণ করি।
+    window.renderStudioSwitches(sections['switches'].body);
+
+    // "AI যুক্ত করুন" section-এ একটা hint। আসল form HTML পরে বসবে।
+    const addHint = document.createElement('div');
+    addHint.style.cssText = 'font-size:12px;opacity:0.7;';
+    addHint.textContent = 'নতুন AI মডেল যোগ করার ফর্ম এখানে বসবে।';
+    sections['add-ai'].body.appendChild(addHint);
+
+    return true;
+  } catch (e) {
+    console.warn('[StudioSettings] restructureSettingsPanel failed:', e);
+    return false;
+  }
+};
+
+// DOM ready হলে হেডার রিনেম করি (best-effort)।
+if (typeof document !== 'undefined') {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function () {
+      try { window.renameAIModelsHeaderToSettings(); } catch (_) {}
+    });
+  } else {
+    try { window.renameAIModelsHeaderToSettings(); } catch (_) {}
+  }
+}
+
 const TAB_MANAGER = {
   tabs: [],
   activeId: null,
