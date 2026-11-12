@@ -133,6 +133,11 @@ const ProgressUI = {
   // live activity timeline that is built ONLY from real events: the status labels the app reports
   // (setLabel / setStage), measured elapsed time, real page counts, real step counts and the model
   // actually in use. Nothing is simulated; if a number is unknown it is simply not shown.
+  //
+  // IMPORTANT (scroll fix): the modal was growing taller without bound because (a) the activity
+  // timeline was stacking items and (b) the file-progress / live preview list kept appending rows
+  // with no cap. The live areas below now have a max-height and scroll internally, so the modal
+  // stays a fixed, compact size no matter how many files / updates come through.
   _ensureProgressStyle() {
     if (document.getElementById('progress-green-style')) return;
     const st = document.createElement('style');
@@ -155,8 +160,12 @@ const ProgressUI = {
       '.pa-title{font-size:12px;font-weight:700;letter-spacing:.02em;color:#15803d}' +
       '.pa-beat{margin-left:auto;font-size:11px;opacity:.7;font-variant-numeric:tabular-nums}' +
       '.pa-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}' +
-      '.pa-chip{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;border:1px solid var(--pg-line);background:rgba(255,255,255,.55);font-size:11px;font-weight:600;font-variant-numeric:tabular-nums}' +
-      '.pa-log{list-style:none;margin:0;padding:0;position:relative}' +
+      '.pa-chip{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;border:1px solid var(--pg-line);background:rgba(255,255,255,.55);font-size:11px;font-weight:600;font-variant-numeric:tabular-nums;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
+      // live timeline — capped height, scrolls internally (kept compact)
+      '.pa-log{list-style:none;margin:0;padding:0;padding-right:4px;position:relative;max-height:140px;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain}' +
+      '.pa-log::-webkit-scrollbar{width:6px}' +
+      '.pa-log::-webkit-scrollbar-track{background:transparent}' +
+      '.pa-log::-webkit-scrollbar-thumb{background:rgba(22,163,74,.35);border-radius:999px}' +
       '.pa-log li{position:relative;display:flex;gap:10px;align-items:flex-start;padding:0 0 9px 18px;font-size:12.5px;line-height:1.45;opacity:.62;animation:pa-in .28s ease both}' +
       '.pa-log li:last-child{padding-bottom:0}' +
       '.pa-log li::before{content:"";position:absolute;left:3px;top:6px;width:8px;height:8px;border-radius:50%;background:var(--pg-1)}' +
@@ -169,6 +178,13 @@ const ProgressUI = {
       '.pa-log .pa-x{flex:1 1 auto;min-width:0;word-break:break-word}' +
       'html.dark .pa-title{color:#4ade80}' +
       'html.dark .pa-chip{background:rgba(255,255,255,.06)}' +
+      // file-progress / live preview list — capped height, scrolls internally
+      '#progress-live-preview-scroll{max-height:150px;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;padding-right:4px}' +
+      '#progress-live-preview-scroll::-webkit-scrollbar{width:6px}' +
+      '#progress-live-preview-scroll::-webkit-scrollbar-track{background:transparent}' +
+      '#progress-live-preview-scroll::-webkit-scrollbar-thumb{background:rgba(22,163,74,.35);border-radius:999px}' +
+      // AI quote box — capped so a long quote can't stretch the modal
+      '#global-progress-overlay .progress-quote-container{max-height:150px;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain}' +
       '@keyframes pa-pulse{0%{box-shadow:0 0 0 0 rgba(34,197,94,.55)}70%{box-shadow:0 0 0 7px rgba(34,197,94,0)}100%{box-shadow:0 0 0 0 rgba(34,197,94,0)}}' +
       '@keyframes pa-in{from{opacity:0;transform:translateY(4px)}to{opacity:inherit;transform:none}}' +
       '@media (prefers-reduced-motion:reduce){.pa-live,.pa-log li,.pa-log li.active::before{animation:none!important}}';
@@ -281,6 +297,12 @@ const ProgressUI = {
     if (!this._activityDirty && log.dataset.sig === logSig) return;
     this._activityDirty = false;
     log.dataset.sig = logSig;
+
+    // remember scroll position — if the user was pinned to the bottom,
+    // keep the newest item in view after the rebuild; if they scrolled up
+    // to read history, leave it alone so we don't yank them around.
+    const wasAtBottom = (log.scrollHeight - log.scrollTop - log.clientHeight) < 24;
+
     log.innerHTML = '';
     this._activity.forEach((a, i) => {
       const li = document.createElement('li');
@@ -295,6 +317,8 @@ const ProgressUI = {
       li.append(t, x);
       log.appendChild(li);
     });
+
+    if (wasAtBottom) log.scrollTop = log.scrollHeight;
   },
 
   _startTicker() {
@@ -590,29 +614,37 @@ const ProgressUI = {
     this._stopQuoteRotation(); // শেষে বাড়তি AI কল নয়; যে উক্তিটা চলছিল সেটাই থাকে
   },
 
-  // Shows only the serial number of the active model (position in the
-  // saved model list, 1-based). Falls back to the name if the model
-  // cannot be found in AI_MODELS_STATE.
+  // Shows the model badge as:  Model #N · <model name>
+  // Falls back gracefully when the model can't be found in AI_MODELS_STATE.
   setActiveModel(modelOrName) {
     const e = this._els().badge;
-    let display = '';
+    let badge = '';
+    let name = '';
     try {
       let idx = -1;
       const models = (typeof AI_MODELS_STATE !== 'undefined' && Array.isArray(AI_MODELS_STATE.models)) ? AI_MODELS_STATE.models : [];
       if (modelOrName && typeof modelOrName === 'object') {
         if (modelOrName.id) idx = models.findIndex(m => m.id === modelOrName.id);
         if (idx < 0 && modelOrName.name) idx = models.findIndex(m => m.name === modelOrName.name);
+        name = modelOrName.name || (idx >= 0 ? (models[idx].name || '') : '');
       } else if (typeof modelOrName === 'string' && modelOrName) {
         const activeId = (typeof AI_MODELS_STATE !== 'undefined') ? AI_MODELS_STATE.activeModelId : null;
         if (activeId) idx = models.findIndex(m => m.id === activeId);
         if (idx < 0) idx = models.findIndex(m => m.name === modelOrName);
+        name = modelOrName || (idx >= 0 ? (models[idx].name || '') : '');
       }
-      display = idx >= 0 ? `Model #${idx + 1}` : (typeof modelOrName === 'string' ? modelOrName : (modelOrName && modelOrName.name) || '');
+      if (idx >= 0) {
+        badge = `Model #${idx + 1}` + (name ? ` · ${name}` : '');
+      } else {
+        badge = name || (typeof modelOrName === 'string' ? modelOrName : (modelOrName && modelOrName.name) || '');
+      }
     } catch (_) {
-      display = typeof modelOrName === 'string' ? modelOrName : (modelOrName && modelOrName.name) || '';
+      name = typeof modelOrName === 'string' ? modelOrName : (modelOrName && modelOrName.name) || '';
+      badge = name;
     }
-    if (e) e.textContent = display;
-    this._modelName = display;
+    if (e) e.textContent = badge;
+    // Chip inside the activity panel stays short — just the model name.
+    this._modelName = name || badge;
   },
 
   setPageCount(current, total) {
