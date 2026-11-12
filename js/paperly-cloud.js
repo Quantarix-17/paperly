@@ -6,6 +6,11 @@
 //        Access is limited to the owner by the Firestore rules (see firestore.rules).
 //  * Guest: 100% offline. Firebase is never loaded, nothing is uploaded, API keys stay in this browser only.
 //
+// Backed up: API keys / model config, preferences (theme, language, Instruction ...) AND the sessions you create.
+// A saved session carries CONTENT only — no per-session theme / format copies — so a session opened from History
+// always picks up the CURRENT settings and every app update, instead of the look it was saved with.
+// Uploaded files bigger than 5 MB are not saved to the cloud.
+//
 // Model: ONE working session at a time (no tabs). Starting a new session or opening one from History
 // archives the outgoing session to the cloud history first (see TAB_MANAGER.createTab).
 const CFG = window.PAPERLY_FIREBASE_CONFIG || {};
@@ -25,6 +30,8 @@ const SYNC_KEYS = SECRET_KEYS.concat(PREF_KEYS);
 const WIPE_KEYS = SYNC_KEYS.concat(['aiDocTabs_v1', 'aiDocProState_v22', 'aiModelDailyResetDate_v1', 'studio_theme', 'paperly_sync_state', 'paperly_local_owner']);
 const MODEL_FIELDS = ['id', 'name', 'apiUrl', 'apiKey', 'modelId', 'supportsJson', 'supportsVision', 'enableGoogleSearch', 'apiType'];
 const MAX_INDEX = 300, MAX_UPLOAD_CHARS = 8000000, PLAIN_CHUNK = 250000;
+// An uploaded file bigger than this is NOT saved to the cloud (set to 0 to never save uploaded files at all).
+const MAX_ATTACHED_FILE_BYTES = 5 * 1024 * 1024;
 
 // ---------- state / helpers ----------
 const G = { fb: null, auth: null, db: null, user: null, uid: null, started: false, verifying: false, session: null, meta: null,
@@ -451,11 +458,26 @@ function tabHasContent(t) {
   if (!h || h.includes('Start typing here')) return false;
   return h.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().length > 30 || /<(svg|img|table)/i.test(h);
 }
+// True when an uploaded file is over the cloud limit (5 MB) -> it is left out of the backup.
+function attachedFileTooBig(f) {
+  if (MAX_ATTACHED_FILE_BYTES <= 0) return true;
+  const n = [f.size, f.fileSize, f.bytes, f.byteLength, f.file && f.file.size].find(v => typeof v === 'number' && v >= 0);
+  if (n !== undefined) return n > MAX_ATTACHED_FILE_BYTES;
+  const c = f.content;
+  if (typeof c !== 'string') return false;
+  if (c.length * 3 <= MAX_ATTACHED_FILE_BYTES) return false;           // cannot exceed the limit, skip the exact count
+  return new TextEncoder().encode(c).length > MAX_ATTACHED_FILE_BYTES;
+}
+// A session is saved as CONTENT only. The per-session theme / PDF visual / text / language format are deliberately
+// NOT stored: they are copies of settings, and restoring them later would bring back an outdated look.
 function tabPayload(t) {
   const files = {};
-  Object.entries(t.attachedFiles || {}).forEach(([id, f]) => { if (f) files[id] = { name: f.name, content: String(f.content || '').slice(0, 60000), status: f.status, order: f.order, sent: !!f.sent }; });
+  Object.entries(t.attachedFiles || {}).forEach(([id, f]) => {
+    if (!f || attachedFileTooBig(f)) return;
+    files[id] = { name: f.name, content: String(f.content || '').slice(0, 60000), status: f.status, order: f.order, sent: !!f.sent };
+  });
   return { name: t.name || 'Untitled', htmlContent: t.htmlContent || '', chatHistory: t.chatHistory || [], attachedFiles: files, projectVersion: t.projectVersion || 0,
-    theme: t.theme, pdfVisualFormat: t.pdfVisualFormat, pdfTextFormat: t.pdfTextFormat, pdfLanguageFormat: t.pdfLanguageFormat, photocopyMode: !!t.photocopyMode, slideDeck: t.slideDeck || null };
+    photocopyMode: !!t.photocopyMode, slideDeck: t.slideDeck || null };
 }
 function sessionTitle(p) {
   const n = String(p.name || '').trim();
@@ -697,10 +719,16 @@ async function openEntry(id) {
   const known = (G.index || []).find(e => e.id === id), p = await readEntry(id, known && known.n), tm = window.TAB_MANAGER;
   // createTab() archives + REPLACES the current session (single-session model)
   const tab = tm.createTab(p.name, p.htmlContent, { chatHistory: p.chatHistory || [], attachedFiles: p.attachedFiles || {}, undoStack: [], redoStack: [],
-    projectVersion: p.projectVersion || 0, theme: p.theme, photocopyMode: !!p.photocopyMode, slideDeck: p.slideDeck || null }, true);
-  ['pdfVisualFormat', 'pdfTextFormat', 'pdfLanguageFormat'].forEach(k => { if (p[k]) tab[k] = p[k]; });
+    projectVersion: p.projectVersion || 0, photocopyMode: !!p.photocopyMode, slideDeck: p.slideDeck || null }, true);
+  // Old backups still carry theme / format copies: ignore them and use what the person has selected NOW,
+  // so an opened session looks and behaves like the current version of the app.
+  const now = fn => { try { return typeof fn === 'function' ? fn() : undefined; } catch (_) { return undefined; } };
+  const vis = now(window.getActivePDFVisualFormat), txt = now(window.getActivePDFTextFormat), lang = now(window.getActivePDFLanguageFormat);
+  if (vis) tab.pdfVisualFormat = vis; if (txt) tab.pdfTextFormat = txt; if (lang) tab.pdfLanguageFormat = lang;
   tab.__cid = id;                        // further edits update THIS history entry instead of creating a duplicate
   tm.switchTo(tab.id);
+  // Hook for the app: lets it re-render / upgrade the opened content with the current code.
+  try { window.dispatchEvent(new CustomEvent('paperly:session-opened', { detail: { id, tabId: tab.id, savedAt: known && known.updatedAt } })); } catch (_) {}
 }
 async function deleteEntry(id) {
   await serial(async () => {
