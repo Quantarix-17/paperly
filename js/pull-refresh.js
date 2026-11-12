@@ -23,16 +23,21 @@
     document.body.appendChild(ind);
   }
 
+  function dbg() { if (window.__ptrDebug) console.log.apply(console, ['[ptr]'].concat([].slice.call(arguments))); }
+
+  // true = এখান থেকে টানলে রিফ্রেশ হবে না
   function blocked(el) {
-    if (!el || !el.closest) return true;
-    // এডিটর পেজ (contenteditable), ইনপুট, মেনু, মডাল, প্রেজেন্ট মোড, PDF iframe — এগুলোতে টানলে রিফ্রেশ হবে না
-    if (el.closest('textarea, input, select, [contenteditable="true"], iframe, #at-command-menu, #at-command-menu-backdrop, #topbar-actions.open, .modal-card, #slide-present-overlay, #editor-toolbar, .slide-edit-toolbar, .slide-thumbnail-rail, #global-progress-overlay')) return true;
-    // এআই কাজ চলার সময় রিলোড করলে কাজ নষ্ট হবে
+    if (el && el.nodeType === 3) el = el.parentElement;
+    if (!el || !el.closest) return 'no-target';
+    if (el.closest('textarea, input, select, [contenteditable="true"], iframe, #at-command-menu, #at-command-menu-backdrop, #topbar-actions.open, .modal-card, #slide-present-overlay, #editor-toolbar, .slide-edit-toolbar, .slide-thumbnail-rail')) return 'excluded-area';
     var ov = document.getElementById('global-progress-overlay');
-    if (ov && getComputedStyle(ov).display !== 'none') return true;
-    // টাচের নিচের কোনো স্ক্রলযোগ্য অংশ যদি উপরে না থাকে, রিফ্রেশ নয়
+    if (ov && getComputedStyle(ov).display !== 'none') return 'ai-running';
+    // উপরের বার (লোগো/ট্যাব/AI Chat-Editor বার) থেকে টানলে সবসময় চলবে
+    if (el.closest('#topbar, #tab-bar, #mobile-nav-bar')) return false;
+    // বাকি অংশে: যে স্ক্রলযোগ্য জায়গার ভেতরে টাচ, সেটা একদম উপরে থাকতে হবে
+    // (চ্যাট লিস্ট সাধারণত নিচে স্ক্রল করা থাকে, তাই সেখানে আগে উপরে যেতে হবে বা উপরের বার থেকে টানতে হবে)
     for (var n = el; n && n !== document.documentElement; n = n.parentElement) {
-      if (n.scrollTop > 0) return true;
+      if (n.scrollTop > 0) return 'scrolled-down';
     }
     return false;
   }
@@ -54,8 +59,11 @@
   }
 
   function onStart(e) {
-    if (refreshing || !mq.matches || e.touches.length !== 1) return;
-    if (blocked(e.target)) return;
+    if (refreshing || e.touches.length !== 1) return;
+    if (!mq.matches) { dbg('screen wider than 850px'); return; }
+    var why = blocked(e.target);
+    if (why) { dbg('blocked:', why); return; }
+    dbg('tracking');
     startY = e.touches[0].clientY;
     startX = e.touches[0].clientX;
     tracking = true; locked = false;
