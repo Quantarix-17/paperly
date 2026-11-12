@@ -262,6 +262,23 @@
     }
     #pdf-print-stage { display: none; }
   </style>
+  <style id="export-menu-css">
+    /* ---- Export menu: pure glass, no colour ---- */
+    #topbar-export-btn .export-caret{margin-left:2px;opacity:.7;transition:transform .18s ease}
+    #topbar-export-btn[aria-expanded="true"] .export-caret{transform:rotate(180deg)}
+    #export-menu-panel{display:none;position:fixed;z-index:100000;min-width:190px;padding:6px;border-radius:14px;
+      background:rgba(255,255,255,.38);border:1px solid rgba(255,255,255,.6);
+      -webkit-backdrop-filter:blur(18px) saturate(170%);backdrop-filter:blur(18px) saturate(170%);
+      box-shadow:0 10px 30px rgba(15,23,42,.14),inset 0 1px 0 rgba(255,255,255,.65)}
+    #export-menu-panel.open{display:block;animation:exportMenuIn .14s ease-out}
+    @keyframes exportMenuIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+    #export-menu-panel button{display:block;width:100%;text-align:left;padding:9px 12px;border:0;border-radius:9px;
+      background:transparent;color:inherit;font:inherit;font-size:13.5px;font-weight:600;cursor:pointer;white-space:nowrap}
+    #export-menu-panel button:hover,#export-menu-panel button:focus-visible{background:rgba(148,163,184,.22);outline:none}
+    html.dark #export-menu-panel{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.18);
+      box-shadow:0 10px 30px rgba(0,0,0,.4),inset 0 1px 0 rgba(255,255,255,.14)}
+    html.dark #export-menu-panel button:hover,html.dark #export-menu-panel button:focus-visible{background:rgba(255,255,255,.12)}
+  </style>
 
     <!-- OMR bubbles are drawn by the font "Nazrul OMR" (fonts/NazrulOMR-Regular.ttf): load it early so it is ready
        when exam-library.js writes the bubbles (exam-library.js also waits for it before building). -->
@@ -322,20 +339,20 @@
       <button class="topbar-btn" onclick="startNewProject()">
         <span class="ui-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h9l3 3V20H6z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M14.5 3.5V7H18" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></span>New
       </button>
+      <!-- EXPORT (one entry: DOCX / PDF / JSON). The three original buttons stay in the DOM, hidden, so their
+           ids, handlers and busy-state logic keep working; the glass menu below just clicks them. -->
+      <button class="topbar-btn" id="topbar-export-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="export-menu-panel" onclick="toggleExportMenu(event)">
+        <span class="ui-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M12 15l-4-4M12 15l4-4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 17.5v2.5h14v-2.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></span>Export<svg class="export-caret" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <div id="export-legacy-buttons" hidden aria-hidden="true" style="display:none">
       <button class="topbar-btn" onclick="saveProjectFile()">
         <span class="ui-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v16H5z" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8 4v5h8V4M8 16h8" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></span>Save
-      </button>
-      <button class="topbar-btn" onclick="document.getElementById('project-load-input').click()">
-        <span class="ui-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6.5h6l2 2h8v9a2 2 0 0 1-2 2H4z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg></span>Load
       </button>
       <button class="topbar-btn btn-primary" id="topbar-word-btn" onclick="exportToWordDocument(this)">
         <span class="ui-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h9l3 3V20H6z" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M14.5 3.5V7H18" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></span>Word
       </button>
       <button class="topbar-btn btn-accent" id="topbar-truepdf-btn" onclick="exportToHighQualityPDF(this)">
         <span class="ui-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h9l3 3V20H6z" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M14.5 3.5V7H18M8 16h8" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></span>True PDF
-      </button>
-      <button class="topbar-btn" id="view-slides-btn" onclick="viewSlideDeck()" title="View the generated slide deck">
-        <span class="ui-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="12" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8 20.5h8M12 17v3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></span>Slides
       </button>
       <button class="topbar-btn" id="export-pptx-btn" onclick="exportSlideDeckToPptx()" title="Download the slide deck as a PowerPoint file">
         <span class="ui-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M12 15l-4-4M12 15l4-4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 17.5v2.5h14v-2.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></span>PowerPoint
@@ -345,6 +362,13 @@
       </button>
       <button class="topbar-btn" id="topbar-imagepdf-btn" onclick="exportToImagePDF(this)">
         <span class="ui-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="9" cy="10" r="1.4" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="m6.5 17 4-4 2.5 2.5 2-2 2.5 3.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg></span>Image PDF
+      </button>
+      </div>
+      <button class="topbar-btn" onclick="document.getElementById('project-load-input').click()">
+        <span class="ui-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6.5h6l2 2h8v9a2 2 0 0 1-2 2H4z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg></span>Load
+      </button>
+      <button class="topbar-btn" id="view-slides-btn" onclick="viewSlideDeck()" title="View the generated slide deck">
+        <span class="ui-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="12" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8 20.5h8M12 17v3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></span>Slides
       </button>
       <button class="topbar-btn" id="theme-toggle-btn" onclick="toggleDarkMode()">
         <span id="theme-toggle-icon" class="ui-icon" aria-hidden="true"></span>Theme
@@ -391,7 +415,7 @@
         </label>
         <button type="button" class="icon-btn" id="at-command-btn" title="Select intent" aria-label="Select intent" onclick="toggleAtCommandMenu()">@</button>
         <textarea id="chat-input-textarea" rows="1" placeholder="Ask AI to create..." oninput="handleChatInputChanged(this, event)" onkeydown="handleChatKeyPress(event)"></textarea>
-        <button type="submit" class="icon-btn primary" id="send-message-btn" title="Send message">↑</button>
+        <button type="submit" class="icon-btn primary" id="send-message-btn" title="Send message" aria-label="Send message"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
       </form>
     </div>
 
@@ -754,6 +778,85 @@
             previewScroll.innerHTML = '';
         }
     });
+  </script>
+
+  <!-- EXPORT MENU (glass popover; lives on <body> so no parent clips or re-positions it) -->
+  <div id="export-menu-panel" role="menu" aria-hidden="true"></div>
+  <script>
+    (function () {
+      const panel = () => document.getElementById('export-menu-panel');
+      const trigger = () => document.getElementById('topbar-export-btn');
+      function closeExportMenu() {
+        const p = panel(), t = trigger();
+        if (p) { p.classList.remove('open'); p.setAttribute('aria-hidden', 'true'); }
+        if (t) { t.setAttribute('aria-expanded', 'false'); t.classList.remove('active'); }
+      }
+      function openExportMenu() {
+        const p = panel(), t = trigger();
+        if (!p || !t) return;
+        renderItems(p);
+        p.classList.add('open'); p.setAttribute('aria-hidden', 'false');
+        t.setAttribute('aria-expanded', 'true'); t.classList.add('active');
+        const r = t.getBoundingClientRect(), w = p.offsetWidth, h = p.offsetHeight;
+        const left = Math.min(Math.max(8, r.right - w), window.innerWidth - w - 8);
+        let top = r.bottom + 6;
+        if (top + h > window.innerHeight - 8) top = Math.max(8, r.top - h - 6);
+        p.style.left = left + 'px'; p.style.top = top + 'px';
+      }
+      window.toggleExportMenu = function (e) {
+        if (e) e.stopPropagation();   // the topbar menu closes on any document click; keep it open
+        const p = panel();
+        if (p && p.classList.contains('open')) closeExportMenu(); else openExportMenu();
+      };
+      // The menu is built each time it opens, from whichever original (hidden) buttons are currently
+      // available — document mode: DOCX / PDF, slide deck: PPTX / slides PDF — plus JSON (always).
+      // Every item clicks the original button, so existing handlers, busy state and guards all still apply.
+      const isShown = (id) => { const b = document.getElementById(id); return !!b && window.getComputedStyle(b).display !== 'none'; };
+      function renderItems(p) {
+        const docPdf = isShown('topbar-truepdf-btn');
+        const defs = [
+          { id: 'topbar-word-btn', label: 'Export to DOCX' },
+          { id: 'topbar-truepdf-btn', label: 'Export to PDF' },
+          { id: 'export-pptx-btn', label: 'Export to PPTX' },
+          { id: 'export-slides-pdf-btn', label: docPdf ? 'Export to PDF (Slides)' : 'Export to PDF' },
+          { id: null, label: 'Export to JSON' }
+        ].filter(d => d.id === null || isShown(d.id));
+        p.innerHTML = '';
+        defs.forEach(d => {
+          const btn = document.createElement('button');
+          btn.type = 'button'; btn.setAttribute('role', 'menuitem'); btn.textContent = d.label;
+          btn.addEventListener('click', () => {
+            closeExportMenu();
+            if (d.id) { const src = document.getElementById(d.id); if (src) src.click(); }
+            else if (typeof window.saveProjectFile === 'function') window.saveProjectFile();
+          });
+          p.appendChild(btn);
+        });
+      }
+      document.addEventListener('click', (e) => { if (!e.target.closest || !e.target.closest('#export-menu-panel')) closeExportMenu(); });
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeExportMenu(); });
+      window.addEventListener('resize', closeExportMenu);
+      // The export helpers show their spinner / progress on the button that was clicked (a hidden one here),
+      // so copy that state onto the visible Export button while an export is running.
+      const legacy = document.getElementById('export-legacy-buttons');
+      let savedHtml = null;
+      function syncBusy() {
+        const t = trigger();
+        if (!t) return;
+        const src = legacy && legacy.querySelector('.btn-exporting');
+        if (src) {
+          if (savedHtml === null) savedHtml = t.innerHTML;
+          t.classList.add('btn-exporting');
+          if (t.innerHTML !== src.innerHTML) t.innerHTML = src.innerHTML;
+        } else if (savedHtml !== null) {
+          t.classList.remove('btn-exporting'); t.innerHTML = savedHtml; savedHtml = null;
+        }
+      }
+      if (legacy && window.MutationObserver) {
+        new MutationObserver(syncBusy).observe(legacy, { subtree: true, childList: true, attributes: true, characterData: true });
+      }
+      window.closeExportMenu = closeExportMenu;
+    })();
   </script>
 
   <!-- ===== JAVASCRIPT MODULES ===== -->
