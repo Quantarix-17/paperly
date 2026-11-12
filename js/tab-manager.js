@@ -18,11 +18,18 @@ function _compactPendingOutlineForStorage(po) {
 // TAB MANAGER - Multi-tab workspace with isolated state per tab
 // ========================================================================
 
+// Per-tab live File object maps (cannot be JSON-serialized to localStorage)
 const TAB_FILE_OBJECTS = new Map();
 
+// ========================================================================
+// BOOT VIEW GUARD (no flash of the blank PDF page on refresh)
+// ========================================================================
 const BOOT_VIEW_KEY = 'paperly_boot_view';
 function _releaseBootViewGuard() {
-  try { const st = document.getElementById('boot-view-guard'); if (st) st.remove(); } catch (_) {}
+  try {
+    const st = document.getElementById('boot-view-guard');
+    if (st) st.remove();
+  } catch (_) {}
 }
 (function _bootViewGuard() {
   try {
@@ -50,9 +57,14 @@ function syncCurrentTabFileObjects() {
     const id = (typeof TAB_MANAGER !== 'undefined' && TAB_MANAGER.activeId) ? TAB_MANAGER.activeId : null;
     if (!id) return;
     TAB_FILE_OBJECTS.set(id, { ...(window.APP_STATE?.fileObjects || {}) });
-  } catch (e) { console.warn('syncCurrentTabFileObjects failed:', e); }
+  } catch (e) {
+    console.warn('syncCurrentTabFileObjects failed:', e);
+  }
 }
 
+// ========================================================================
+// RESET OF TRANSIENT CHAT STATE (behaves like a page refresh)
+// ========================================================================
 function _resetTransientChatState() {
   try {
     const S = window.APP_STATE;
@@ -63,7 +75,9 @@ function _resetTransientChatState() {
       S.clarifyInputLock = null;
       S.isAIGenerating = false;
     }
-    if (typeof window._unlockChatInput === 'function') { try { window._unlockChatInput(); } catch (_) {} }
+    if (typeof window._unlockChatInput === 'function') {
+      try { window._unlockChatInput(); } catch (_) {}
+    }
     const ta = document.getElementById('chat-input-textarea');
     if (ta) {
       ta.readOnly = false;
@@ -79,27 +93,28 @@ function _resetTransientChatState() {
     }
     const sendBtn = document.getElementById('send-message-btn');
     if (sendBtn) sendBtn.disabled = false;
-  } catch (e) { console.warn('[TabManager] _resetTransientChatState failed:', e); }
+  } catch (e) {
+    console.warn('[TabManager] _resetTransientChatState failed:', e);
+  }
 }
 
 // ========================================================================
 // STUDIO SETTINGS — global user preferences (persisted in localStorage)
 // ------------------------------------------------------------------------
-// Two user-facing switches (all labels in English):
+// Two user-facing switches, both rendered with English labels only:
 //
 //   1) useAIVision          (default true)
-//        ON  → AI vision is used as a fallback to read images/scanned
-//              pages that local OCR cannot handle.
-//        OFF → vision disabled entirely; content that cannot be read
-//              locally is kept as-is (image).
+//        ON  → local OCR runs first; AI vision used as a fallback for
+//              images/scanned pages it cannot read.
+//        OFF → vision disabled entirely; unreadable content kept as-is.
 //
 //   2) keepFiguresAsImage   (default true)
 //        ON  → figures in text-layer pages are cropped as images.
 //        OFF → AI recreates figures from the text layer (requires
-//              useAIVision to be ON to have any effect).
+//              useAIVision = ON to have any effect).
 //
-// ocr.js reads these through the compatibility API:
-//   window.isOcrKeepImageSwitchOn()        → true  when images should NOT be read (vision off)
+// ocr.js reads the values through these compatibility shims:
+//   window.isOcrKeepImageSwitchOn()        → true  when images should NOT be read
 //   window.isTextFigureRecreateSwitchOn()  → true  only when vision is on AND keepFiguresAsImage is off
 // ========================================================================
 const STUDIO_SETTINGS_KEY = 'paperly_studio_settings_v1';
@@ -118,7 +133,7 @@ function _loadStudioSettings() {
     if (!parsed || typeof parsed !== 'object') return out;
     if (typeof parsed.useAIVision === 'boolean') out.useAIVision = parsed.useAIVision;
     if (typeof parsed.keepFiguresAsImage === 'boolean') out.keepFiguresAsImage = parsed.keepFiguresAsImage;
-    // Backward compat with the previous key scheme
+    // Backward compat with the older key scheme
     if (parsed.ocrImagePolicy === 'keep-image' && typeof parsed.useAIVision !== 'boolean') out.useAIVision = false;
     if (parsed.ocrImagePolicy === 'read-vision' && typeof parsed.useAIVision !== 'boolean') out.useAIVision = true;
     if (parsed.textFigurePolicy === 'crop' && typeof parsed.keepFiguresAsImage !== 'boolean') out.keepFiguresAsImage = true;
@@ -137,6 +152,8 @@ function _saveStudioSettings() {
   } catch (_) {}
 }
 
+// Load settings the moment this file is parsed so ocr.js can read them
+// synchronously even before DOMContentLoaded runs.
 (function _initStudioSettings() {
   if (!window.APP_STATE) window.APP_STATE = {};
   window.APP_STATE.studioSettings = _loadStudioSettings();
@@ -146,7 +163,9 @@ window.STUDIO_SETTINGS_DEFAULTS = STUDIO_SETTINGS_DEFAULTS;
 
 window.getStudioSettings = function () {
   if (!window.APP_STATE) window.APP_STATE = {};
-  if (!window.APP_STATE.studioSettings) window.APP_STATE.studioSettings = _loadStudioSettings();
+  if (!window.APP_STATE.studioSettings) {
+    window.APP_STATE.studioSettings = _loadStudioSettings();
+  }
   return Object.assign({}, window.APP_STATE.studioSettings);
 };
 
@@ -191,14 +210,13 @@ window.onStudioSettingChange = function (callback) {
   return function () { window.removeEventListener('studio-settings-changed', handler); };
 };
 
-// ---- OCR compatibility API (ocr.js reads these) ----
+// ---- OCR compatibility API (ocr.js reads only these) ----
 window.isOcrKeepImageSwitchOn = function () {
   return !window.getStudioSetting('useAIVision');
 };
 window.isTextFigureRecreateSwitchOn = function () {
   return !!window.getStudioSetting('useAIVision') && !window.getStudioSetting('keepFiguresAsImage');
 };
-// Legacy policy getters kept for older call sites.
 window.getOcrImagePolicy = function () {
   return window.getStudioSetting('useAIVision') ? 'read-vision' : 'keep-image';
 };
@@ -207,10 +225,20 @@ window.getTextFigurePolicy = function () {
 };
 
 // ---- Settings panel switch renderer (English labels only) ----
+// Renders the two switches into the given container. Safe to call any
+// number of times: the previous event subscription is always cleaned up
+// before a new one is installed (avoids double-firing).
 window.renderStudioSwitches = function (containerEl, options) {
   if (!containerEl) return function () {};
   const opts = options || {};
   const idPrefix = opts.idPrefix || 'studio-setting';
+
+  // Tear down the previous listener if this container was already rendered.
+  if (containerEl._studioSwitchUnsubscribe) {
+    try { containerEl._studioSwitchUnsubscribe(); } catch (_) {}
+    containerEl._studioSwitchUnsubscribe = null;
+  }
+
   containerEl.textContent = '';
   const rows = [];
 
@@ -255,11 +283,11 @@ window.renderStudioSwitches = function (containerEl, options) {
       btn.setAttribute('aria-checked', on ? 'true' : 'false');
       btn.style.background = on ? '#22c55e' : '#cbd5e1';
       knob.style.left = on ? '24px' : '2px';
-      // Visual hint: "Keep figures as image" has no visible effect unless
-      // vision is ON, so dim it in that case.
+
       if (key === 'keepFiguresAsImage') {
-        btn.style.opacity = window.getStudioSetting('useAIVision') ? '1' : '0.45';
-        btn.title = window.getStudioSetting('useAIVision')
+        const visionOn = !!window.getStudioSetting('useAIVision');
+        btn.style.opacity = visionOn ? '1' : '0.45';
+        btn.title = visionOn
           ? (on ? 'Figures will be cropped as images' : 'AI will recreate figures (vision active)')
           : 'Turn on "Use AI Vision" first to recreate figures';
       } else {
@@ -271,8 +299,8 @@ window.renderStudioSwitches = function (containerEl, options) {
 
     btn.addEventListener('click', function () {
       if (key === 'keepFiguresAsImage' && !window.getStudioSetting('useAIVision')) {
-        // When vision is off, recreating figures is impossible — force ON so
-        // the user's intent (crop as image) stays consistent.
+        // Vision is off — recreating figures is impossible, so force ON
+        // (crop as image) to keep the user's intent consistent.
         window.setStudioSetting('keepFiguresAsImage', true);
       } else {
         window.setStudioSetting(key, !window.getStudioSetting(key));
@@ -301,42 +329,62 @@ window.renderStudioSwitches = function (containerEl, options) {
   const unsubscribe = window.onStudioSettingChange(function () {
     rows.forEach(function (r) { r.render(); });
   });
+  containerEl._studioSwitchUnsubscribe = unsubscribe;
   return unsubscribe;
 };
 
 // ---- Horizontal settings tabs (Preference / AI Models / Permissions) ----
+// Matches the markup in index.html: a `.settings-tab-bar` containing
+// buttons with data-tab="<panel-name>", and sibling `.settings-tab-panel`
+// elements each with data-panel="<panel-name>". Idempotent: calling it
+// again is a no-op, so both the DOMContentLoaded hook and the modal-open
+// handler can safely call it.
 window.initSettingsTabs = function () {
-  const tabBar = document.querySelector('.settings-tab-bar');
-  if (!tabBar) return;
-  const panels = document.querySelectorAll('.settings-tab-panel');
-  if (!panels.length) return;
+  try {
+    const tabBar = document.querySelector('.settings-tab-bar');
+    if (!tabBar) return;
+    if (tabBar.dataset.tabsInit === '1') return;
+    const panels = document.querySelectorAll('.settings-tab-panel');
+    if (!panels.length) return;
 
-  function showTab(tabName) {
-    tabBar.querySelectorAll('[data-tab]').forEach(function (b) {
-      const isActive = b.dataset.tab === tabName;
-      b.classList.toggle('active', isActive);
-      b.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    tabBar.dataset.tabsInit = '1';
+
+    function showTab(tabName) {
+      tabBar.querySelectorAll('[data-tab]').forEach(function (b) {
+        const isActive = b.dataset.tab === tabName;
+        b.classList.toggle('active', isActive);
+        b.setAttribute('aria-selected', isActive ? 'true' : 'false');
+      });
+      panels.forEach(function (p) {
+        p.hidden = p.dataset.panel !== tabName;
+      });
+    }
+
+    tabBar.addEventListener('click', function (e) {
+      const btn = e.target.closest('[data-tab]');
+      if (!btn) return;
+      showTab(btn.dataset.tab);
     });
-    panels.forEach(function (p) {
-      p.hidden = p.dataset.panel !== tabName;
-    });
+
+    const initial = tabBar.querySelector('[data-tab].active') || tabBar.querySelector('[data-tab]');
+    if (initial) showTab(initial.dataset.tab);
+  } catch (e) {
+    console.warn('[StudioSettings] initSettingsTabs failed:', e);
   }
-
-  tabBar.addEventListener('click', function (e) {
-    const btn = e.target.closest('[data-tab]');
-    if (!btn) return;
-    showTab(btn.dataset.tab);
-  });
-
-  const initial = tabBar.querySelector('[data-tab].active') || tabBar.querySelector('[data-tab]');
-  if (initial) showTab(initial.dataset.tab);
 };
 
 // ---- Header rename: "AI Models" → "Settings" (best effort) ----
+// In the current index.html the header already says "Settings", so this
+// is a harmless no-op there; it only matters for any residual "AI Models"
+// labels left over from an older HTML.
 window.renameAIModelsHeaderToSettings = function () {
   try {
     let found = false;
-    const selectors = ['#ai-models-btn', '.ai-models-btn', '[data-action="open-ai-models"]', '[data-i18n-key="aiModels"]', '[data-i18n="aiModels"]'];
+    const selectors = [
+      '#ai-models-btn', '.ai-models-btn',
+      '[data-action="open-ai-models"]',
+      '[data-i18n-key="aiModels"]', '[data-i18n="aiModels"]'
+    ];
     selectors.forEach(function (sel) {
       document.querySelectorAll(sel).forEach(function (el) {
         found = true;
@@ -365,9 +413,11 @@ window.renameAIModelsHeaderToSettings = function () {
   }
 };
 
-// Deprecated: the settings panel now uses real HTML tabs, so this is a no-op kept for safety.
+// Kept for backwards compatibility with older callers. The current
+// index.html supplies real tabs, so no restructuring is needed.
 window.restructureSettingsPanel = function () { return true; };
 
+// Wire up header rename + tabs once the DOM is ready. Both are idempotent.
 if (typeof document !== 'undefined') {
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', function () {
@@ -380,6 +430,9 @@ if (typeof document !== 'undefined') {
   }
 }
 
+// ========================================================================
+// TAB MANAGER
+// ========================================================================
 const TAB_MANAGER = {
   tabs: [],
   activeId: null,
@@ -403,7 +456,9 @@ const TAB_MANAGER = {
     return deck;
   },
 
-  _generateId() { return 'tab_' + (this.nextId++); },
+  _generateId() {
+    return 'tab_' + (this.nextId++);
+  },
 
   _getTabNameFromHtml(html) {
     if (!html) return 'Untitled';
@@ -465,12 +520,15 @@ const TAB_MANAGER = {
       tab.slideDeck = this._normalizeSlideDeck(tab.slideDeck);
       if (window.APP_STATE) window.APP_STATE.slideDeck = tab.slideDeck || null;
       this._loadStateIntoUIInner(tab);
-    } finally { this._loading = false; }
+    } finally {
+      this._loading = false;
+    }
     try { this._persist(); } catch (_) {}
   },
 
   _loadStateIntoUIInner(tab) {
     if (!tab) return;
+
     const chatHistoryArea = document.getElementById('chat-history');
     if (chatHistoryArea) {
       chatHistoryArea.innerHTML = '';
@@ -497,7 +555,11 @@ const TAB_MANAGER = {
 
     const html = tab.htmlContent || this._createBlankState().htmlContent;
     if (typeof setDocumentHTMLAndPaginate === 'function') {
-      try { setDocumentHTMLAndPaginate(html, false); } catch (e) { console.error('Tab switch: failed to paginate', e); }
+      try {
+        setDocumentHTMLAndPaginate(html, false);
+      } catch (e) {
+        console.error('Tab switch: failed to paginate document content', e);
+      }
     }
     const docContainer = document.getElementById('document-view-container');
     if (docContainer) docContainer.scrollTop = tab.scrollPosition || 0;
@@ -507,11 +569,14 @@ const TAB_MANAGER = {
       window.APP_STATE.fileObjects = TAB_FILE_OBJECTS.has(tab.id) ? TAB_FILE_OBJECTS.get(tab.id) : {};
     }
     if (typeof renderAttachmentBar === 'function') renderAttachmentBar();
+
     if (window.HISTORY) {
       window.HISTORY.undoStack = Array.isArray(tab.undoStack) ? [...tab.undoStack] : [];
       window.HISTORY.redoStack = Array.isArray(tab.redoStack) ? [...tab.redoStack] : [];
     }
+
     if (window.APP_STATE) window.APP_STATE.projectVersion = tab.projectVersion || 0;
+
     if (tab.theme && window.APP_STATE) {
       window.APP_STATE.theme = tab.theme;
       if (typeof applyCurrentTheme === 'function') applyCurrentTheme();
@@ -562,6 +627,7 @@ const TAB_MANAGER = {
     if (typeof renderSelectedCommandChips === 'function') renderSelectedCommandChips();
     if (typeof closeAtCommandMenu === 'function') closeAtCommandMenu();
     if (typeof forceRenderAllEquations === 'function') forceRenderAllEquations();
+
     if (typeof saveStateToLocalStorage === 'function') saveStateToLocalStorage();
   },
 
@@ -598,8 +664,11 @@ const TAB_MANAGER = {
 
   _writeTabsToStorage() {
     if (!this.tabs.length) return;
-    { let totalChars = 0; for (const tb of this.tabs) totalChars += (tb.htmlContent ? tb.htmlContent.length : 0);
-      if (totalChars > 3400000) { this._persistEmergencyMetadata(); return; } }
+    {
+      let totalChars = 0;
+      for (const tb of this.tabs) totalChars += (tb.htmlContent ? tb.htmlContent.length : 0);
+      if (totalChars > 3400000) { this._persistEmergencyMetadata(); return; }
+    }
     try {
       const compactTabs = this.tabs.map(t => {
         const attachedFiles = {};
@@ -619,56 +688,96 @@ const TAB_MANAGER = {
             visionDataUrls: Array.isArray(f.visionDataUrls) ? f.visionDataUrls : []
           };
         });
+
         let slideDeck = null;
         if (t.slideDeck) {
-          try { const serialized = JSON.stringify(t.slideDeck); slideDeck = serialized.length <= 900000 ? t.slideDeck : null; }
-          catch (_) { slideDeck = null; }
+          try {
+            const serialized = JSON.stringify(t.slideDeck);
+            slideDeck = serialized.length <= 900000 ? t.slideDeck : null;
+          } catch (_) { slideDeck = null; }
         }
+
         const pendingOutline = _compactPendingOutlineForStorage(t.pendingOutline);
+
         return {
-          id: t.id, name: t.name || 'Untitled', htmlContent: t.htmlContent || '',
-          attachedFiles, selectedPage: t.selectedPage ?? null, projectVersion: t.projectVersion || 0,
-          scrollPosition: t.scrollPosition || 0, theme: t.theme || 'light',
+          id: t.id,
+          name: t.name || 'Untitled',
+          htmlContent: t.htmlContent || '',
+          attachedFiles,
+          selectedPage: t.selectedPage ?? null,
+          projectVersion: t.projectVersion || 0,
+          scrollPosition: t.scrollPosition || 0,
+          theme: t.theme || 'light',
           pdfVisualFormat: t.pdfVisualFormat || window.APP_STATE?.pdfVisualFormat || 'default',
           pdfTextFormat: t.pdfTextFormat || window.APP_STATE?.pdfTextFormat || 'default',
           pdfLanguageFormat: t.pdfLanguageFormat || window.APP_STATE?.pdfLanguageFormat || 'default',
-          photocopyMode: !!t.photocopyMode, slideDeck, pendingOutline
+          photocopyMode: !!t.photocopyMode,
+          slideDeck,
+          pendingOutline
         };
       });
-      const data = { version: 2, compact: true, tabs: compactTabs, activeId: this.activeId, nextId: this.nextId };
+
+      const data = {
+        version: 2,
+        compact: true,
+        tabs: compactTabs,
+        activeId: this.activeId,
+        nextId: this.nextId
+      };
+
       const payload = JSON.stringify(data);
-      if (payload.length / (1024 * 1024) > 3.6) { this._persistEmergencyMetadata(); return; }
+      const approxMB = payload.length / (1024 * 1024);
+      if (approxMB > 3.6) {
+        this._persistEmergencyMetadata();
+        return;
+      }
+
       localStorage.setItem(TAB_STORAGE_KEY, payload);
       try { localStorage.removeItem(STORAGE_KEY); } catch (_) {}
-    } catch (e) { console.warn('Failed to persist compact tabs:', e); this._persistEmergencyMetadata(); }
+    } catch (e) {
+      console.warn('Failed to persist compact tabs:', e);
+      this._persistEmergencyMetadata();
+    }
   },
 
   _persistEmergencyMetadata() {
     try {
       const data = {
-        version: 3, compact: true,
+        version: 3,
+        compact: true,
         tabs: this.tabs.map(t => {
           let slideDeck = null;
           if (t.id === this.activeId && t.slideDeck) {
-            try { const serialized = JSON.stringify(t.slideDeck); slideDeck = serialized.length <= 300000 ? t.slideDeck : null; }
-            catch (_) { slideDeck = null; }
+            try {
+              const serialized = JSON.stringify(t.slideDeck);
+              slideDeck = serialized.length <= 300000 ? t.slideDeck : null;
+            } catch (_) { slideDeck = null; }
           }
           return {
-            id: t.id, name: t.name || 'Untitled',
+            id: t.id,
+            name: t.name || 'Untitled',
             htmlContent: t.id === this.activeId ? String(t.htmlContent || '').slice(0, 180000) : '',
-            selectedPage: t.selectedPage ?? null, projectVersion: t.projectVersion || 0,
-            scrollPosition: t.scrollPosition || 0, theme: t.theme || 'light',
-            pdfVisualFormat: t.pdfVisualFormat || 'default', pdfTextFormat: t.pdfTextFormat || 'default',
-            pdfLanguageFormat: t.pdfLanguageFormat || 'default', photocopyMode: !!t.photocopyMode,
+            selectedPage: t.selectedPage ?? null,
+            projectVersion: t.projectVersion || 0,
+            scrollPosition: t.scrollPosition || 0,
+            theme: t.theme || 'light',
+            pdfVisualFormat: t.pdfVisualFormat || 'default',
+            pdfTextFormat: t.pdfTextFormat || 'default',
+            pdfLanguageFormat: t.pdfLanguageFormat || 'default',
+            photocopyMode: !!t.photocopyMode,
             slideDeck,
             pendingOutline: t.id === this.activeId ? _compactPendingOutlineForStorage(t.pendingOutline) : null
           };
         }),
-        activeId: this.activeId, nextId: this.nextId
+        activeId: this.activeId,
+        nextId: this.nextId
       };
-      localStorage.setItem(TAB_STORAGE_KEY, JSON.stringify(data));
+      const payload = JSON.stringify(data);
+      localStorage.setItem(TAB_STORAGE_KEY, payload);
       try { localStorage.removeItem(STORAGE_KEY); } catch (_) {}
-    } catch (e2) { console.warn('Emergency persistence skipped:', e2); }
+    } catch (e2) {
+      console.warn('Emergency tab persistence skipped because browser storage is unavailable:', e2);
+    }
   },
 
   _restore() {
@@ -677,20 +786,27 @@ const TAB_MANAGER = {
       if (!raw) return false;
       const data = JSON.parse(raw);
       if (!data.tabs || !Array.isArray(data.tabs) || data.tabs.length === 0) return false;
+
       this.tabs = data.tabs.map(t => ({
-        id: t.id || this._generateId(), name: t.name || 'Untitled',
+        id: t.id || this._generateId(),
+        name: t.name || 'Untitled',
         htmlContent: t.htmlContent || this._createBlankState().htmlContent,
         chatHistory: Array.isArray(t.chatHistory) ? t.chatHistory : [],
         attachedFiles: Object.fromEntries(Object.entries(t.attachedFiles || {}).map(([id, f]) => [id, { ...(f || {}), sourceMode: 'ocr' }])),
-        undoStack: t.undoStack || [], redoStack: t.redoStack || [],
-        selectedPage: t.selectedPage || null, projectVersion: t.projectVersion || 0,
-        scrollPosition: t.scrollPosition || 0, theme: t.theme || 'light',
-        pdfVisualFormat: t.pdfVisualFormat || 'default', pdfTextFormat: t.pdfTextFormat || 'default',
+        undoStack: t.undoStack || [],
+        redoStack: t.redoStack || [],
+        selectedPage: t.selectedPage || null,
+        projectVersion: t.projectVersion || 0,
+        scrollPosition: t.scrollPosition || 0,
+        theme: t.theme || 'light',
+        pdfVisualFormat: t.pdfVisualFormat || 'default',
+        pdfTextFormat: t.pdfTextFormat || 'default',
         pdfLanguageFormat: t.pdfLanguageFormat || 'default',
         photocopyMode: t.photocopyMode !== undefined ? t.photocopyMode : false,
         slideDeck: this._normalizeSlideDeck(t.slideDeck),
         pendingOutline: (t.pendingOutline && t.pendingOutline.outline) ? Object.assign({}, t.pendingOutline, { tabId: t.id, approveNow: false }) : null
       }));
+
       this.activeId = data.activeId || (this.tabs[0] ? this.tabs[0].id : null);
       this.nextId = data.nextId || this.tabs.length + 1;
       return true;
@@ -724,17 +840,34 @@ const TAB_MANAGER = {
   },
 
   duplicateActiveTab() {
-    if (this.tabs.length === 0) { const tab = this.createTab('Untitled'); this.switchTo(tab.id); return; }
+    if (this.tabs.length === 0) {
+      const tab = this.createTab('Untitled');
+      this.switchTo(tab.id);
+      return;
+    }
     const active = this.getActive();
-    if (!active) { const tab = this.createTab('Untitled'); this.switchTo(tab.id); return; }
+    if (!active) {
+      const tab = this.createTab('Untitled');
+      this.switchTo(tab.id);
+      return;
+    }
     this._captureCurrentState(this.activeId);
-    const newTab = this.createTab(active.name + ' (copy)', active.htmlContent, {
-      htmlContent: active.htmlContent, chatHistory: [], attachedFiles: {},
-      undoStack: [], redoStack: [], selectedPage: null, projectVersion: 0,
-      scrollPosition: 0, theme: active.theme || window.APP_STATE?.theme || 'light',
-      photocopyMode: active.photocopyMode !== undefined ? active.photocopyMode : document.body.classList.contains('photocopy-mode'),
-      slideDeck: active.slideDeck || null
-    });
+    const newTab = this.createTab(
+      active.name + ' (copy)',
+      active.htmlContent, {
+        htmlContent: active.htmlContent,
+        chatHistory: [],
+        attachedFiles: {},
+        undoStack: [],
+        redoStack: [],
+        selectedPage: null,
+        projectVersion: 0,
+        scrollPosition: 0,
+        theme: active.theme || window.APP_STATE?.theme || 'light',
+        photocopyMode: active.photocopyMode !== undefined ? active.photocopyMode : document.body.classList.contains('photocopy-mode'),
+        slideDeck: active.slideDeck || null
+      }
+    );
     this.switchTo(newTab.id);
     if (typeof displayToastNotification === 'function') displayToastNotification(`✅ New tab: "${newTab.name}"`);
   },
@@ -824,6 +957,9 @@ const TAB_MANAGER = {
       const newActive = this.tabs[Math.min(index, this.tabs.length - 1)];
       this.activeId = newActive.id;
       this._loadStateIntoUI(newActive);
+    } else if (this.activeId === tabId) {
+      this.activeId = this.tabs[0] ? this.tabs[0].id : null;
+      if (this.activeId) this._loadStateIntoUI(this.tabs[0]);
     }
     this._persist();
     this.renderTabBar();
@@ -867,13 +1003,17 @@ const TAB_MANAGER = {
       if (!isBlank) return;
       tab.slideDeck = this._defaultSlideDeck();
       this._loadStateIntoUI(tab);
-    } catch (e) { console.warn('[TabManager] ensure blank slide deck failed:', e); }
+    } catch (e) {
+      console.warn('[TabManager] ensure blank slide deck failed:', e);
+    }
   },
 
   init() {
     if (this._initialized) return;
     this._initialized = true;
+
     const restored = this._restore();
+
     if (!restored || this.tabs.length === 0) {
       const currentHtml = typeof getAllCanvasHTML === 'function' ? getAllCanvasHTML() : '';
       const state = this._createBlankState();
@@ -885,29 +1025,46 @@ const TAB_MANAGER = {
       state.projectVersion = window.APP_STATE?.projectVersion || 0;
       state.theme = window.APP_STATE?.theme || 'light';
       state.photocopyMode = document.body.classList.contains('photocopy-mode');
-      const tab = this.createTab(this._getTabNameFromHtml(state.htmlContent) || 'Untitled', state.htmlContent, state, false);
+
+      const tab = this.createTab(
+        this._getTabNameFromHtml(state.htmlContent) || 'Untitled',
+        state.htmlContent,
+        state,
+        false
+      );
       this.activeId = tab.id;
       this._persist();
       this._loadStateIntoUI(tab);
     } else {
       const active = this.getActive();
-      if (active) this._loadStateIntoUI(active);
-      else { const tab = this.tabs[0]; this.activeId = tab.id; this._loadStateIntoUI(tab); }
+      if (active) {
+        this._loadStateIntoUI(active);
+      } else {
+        const tab = this.tabs[0];
+        this.activeId = tab.id;
+        this._loadStateIntoUI(tab);
+      }
     }
+
     this._ensureBlankSlideTabHasDeck();
     if (typeof requestAnimationFrame === 'function') {
       requestAnimationFrame(() => requestAnimationFrame(_releaseBootViewGuard));
-    } else { _releaseBootViewGuard(); }
+    } else {
+      _releaseBootViewGuard();
+    }
     this.renderTabBar();
     const fab = document.getElementById('topbar-newtab-fab-btn');
-    if (fab) fab.style.display = (typeof isMobileDeviceLayout === 'function' && isMobileDeviceLayout()) ? 'flex' : 'none';
+    if (fab) {
+      fab.style.display = (typeof isMobileDeviceLayout === 'function' && isMobileDeviceLayout()) ? 'flex' : 'none';
+    }
   }
 };
 
-// ===== TAB-AWARE SAVE/LOAD =====
-window.saveProjectFile = function () {
+// ===== TAB-AWARE SAVE/LOAD FUNCTIONS =====
+window.saveProjectFile = function() {
   if (TAB_MANAGER.activeId) TAB_MANAGER._captureCurrentState(TAB_MANAGER.activeId);
   TAB_MANAGER._persist();
+
   const projectData = {
     htmlContent: typeof getAllCanvasHTML === 'function' ? getAllCanvasHTML() : '',
     chatHistory: window.APP_STATE?.chatHistory || [],
@@ -925,13 +1082,15 @@ window.saveProjectFile = function () {
   link.download = (projectData.tabName || 'Document') + '.aipdf';
   link.click();
   URL.revokeObjectURL(link.href);
-  if (typeof displayToastNotification === 'function') displayToastNotification(`💾 Saved Project (tab: ${projectData.tabName})`);
+  if (typeof displayToastNotification === 'function') {
+    displayToastNotification(`💾 Saved Project (tab: ${projectData.tabName})`);
+  }
 };
 
-window.loadProjectFromFile = function (fileList) {
+window.loadProjectFromFile = function(fileList) {
   if (!fileList || fileList.length === 0) return;
   const reader = new FileReader();
-  reader.onload = function (event) {
+  reader.onload = function(event) {
     try {
       const parsedData = JSON.parse(event.target.result);
       const state = TAB_MANAGER._createBlankState();
@@ -944,11 +1103,20 @@ window.loadProjectFromFile = function (fileList) {
       state.photocopyMode = !!parsedData.photocopyMode;
       state.undoStack = [];
       state.redoStack = [];
-      const tab = TAB_MANAGER.createTab(parsedData.tabName || 'Loaded', state.htmlContent, state);
+
+      const tab = TAB_MANAGER.createTab(
+        parsedData.tabName || 'Loaded',
+        state.htmlContent,
+        state
+      );
       TAB_MANAGER.switchTo(tab.id);
-      if (typeof displayToastNotification === 'function') displayToastNotification(`📂 Loaded project: "${tab.name}"`);
+      if (typeof displayToastNotification === 'function') {
+        displayToastNotification(`📂 Loaded project: "${tab.name}"`);
+      }
     } catch (e) {
-      if (typeof displayToastNotification === 'function') displayToastNotification('Error Invalid project format.');
+      if (typeof displayToastNotification === 'function') {
+        displayToastNotification('Error Invalid project format.');
+      }
     }
   };
   if (fileList[0]) reader.readAsText(fileList[0]);
@@ -956,23 +1124,34 @@ window.loadProjectFromFile = function (fileList) {
   if (input) input.value = '';
 };
 
+// ===== START NEW PROJECT =====
 function startNewProject() {
   const mode = (window.APP_STATE && window.APP_STATE.creationMode === 'slides') ? 'slides' : 'pdf';
-  if (mode === 'slides') TAB_MANAGER.createBlankSlideTab();
-  else TAB_MANAGER.createBlankTab();
+  if (mode === 'slides') {
+    TAB_MANAGER.createBlankSlideTab();
+  } else {
+    TAB_MANAGER.createBlankTab();
+  }
   if (typeof requestAnimationFrame === 'function') {
     requestAnimationFrame(() => { if (typeof fitEditorPagesToScreen === 'function') fitEditorPagesToScreen(); });
   }
 }
 
-window.saveStateToLocalStorage = function () { return true; };
+// ===== LEGACY COMPATIBILITY =====
+window.saveStateToLocalStorage = function() {
+  return true;
+};
 
+// ============================================================
+// WINDOW EXPOSURE – Tab Manager
+// ============================================================
 window.TAB_MANAGER = TAB_MANAGER;
 window.startNewProject = startNewProject;
 window.saveProjectFile = saveProjectFile;
 window.loadProjectFromFile = loadProjectFromFile;
 
+// Make sure a postponed save is never lost when the tab is hidden or closed.
 try {
   window.addEventListener('pagehide', () => { try { TAB_MANAGER.flushPersist(); } catch (_) {} });
   document.addEventListener('visibilitychange', () => { if (document.hidden) { try { TAB_MANAGER.flushPersist(); } catch (_) {} } });
-} catch (_) {}
+} catch (_) { /* non-browser environment */ }
