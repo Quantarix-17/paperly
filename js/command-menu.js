@@ -1356,6 +1356,8 @@ function renderAtCommandMenuList() {
   menu.appendChild(commandSection);
 
   // Theme section (PDF design and typography formats)
+  _ensureThemeFullWidthStyle();
+  _ensureCommandOptionOutlineStyle();
   const formatWrap = document.createElement('div');
   formatWrap.className = 'at-format-section at-theme-section';
   formatWrap.hidden = AT_MENU_STATE.section !== 'theme';
@@ -1512,6 +1514,38 @@ const BN_DENSITY_LEVELS = [
   { id: 'high',   label: 'High',   hint: 'More topics get a Bengali explanation' },
   { id: 'extra',  label: 'Extra',  hint: 'Nearly every concept gets a Bengali explanation' }
 ];
+
+// ===== THEME TAB: rows span the full horizontal width of the menu =====
+function _ensureThemeFullWidthStyle() {
+  if (document.getElementById('at-theme-fullwidth-style')) return;
+  const st = document.createElement('style');
+  st.id = 'at-theme-fullwidth-style';
+  st.textContent =
+    '.at-format-section.at-theme-section{display:flex;flex-direction:column;align-items:stretch;width:100%;max-width:none;box-sizing:border-box}' +
+    '.at-format-section.at-theme-section[hidden]{display:none}' +
+    '.at-theme-section .at-format-title,.at-theme-section .at-format-reset{width:100%;max-width:none;box-sizing:border-box}' +
+    '.at-theme-section .at-format-item{display:flex;align-items:center;gap:10px;width:100%;max-width:none;min-width:0;box-sizing:border-box;margin-left:0;margin-right:0}' +
+    '.at-theme-section .at-format-item .at-cmd-text{flex:1 1 auto;min-width:0}';
+  document.head.appendChild(st);
+}
+
+// ===== COMMANDS TAB: light border + soft shading around every option so each one reads clearly =====
+function _ensureCommandOptionOutlineStyle() {
+  if (document.getElementById('at-cmd-outline-style')) return;
+  const st = document.createElement('style');
+  st.id = 'at-cmd-outline-style';
+  const base = '.at-intent-card,.at-recent-chip,.at-subscope-chip,.at-modifier-chip';
+  st.textContent =
+    base + '{box-sizing:border-box;border:1px solid rgba(148,163,184,.45);box-shadow:0 1px 2px rgba(15,23,42,.06);transition:border-color .15s,box-shadow .15s,background-color .15s}' +
+    '.at-intent-card:not(.selected):not(.disabled),.at-recent-chip,.at-subscope-chip:not(.selected):not(.disabled),.at-modifier-chip:not(.selected):not(.disabled){background-color:rgba(148,163,184,.10)}' +
+    '.at-intent-card:not(.disabled):hover,.at-recent-chip:hover,.at-subscope-chip:not(.disabled):hover,.at-modifier-chip:not(.disabled):hover{border-color:rgba(79,125,243,.6);box-shadow:0 2px 6px rgba(15,23,42,.10)}' +
+    '.at-intent-card.selected,.at-subscope-chip.selected,.at-modifier-chip.selected{border-color:rgba(79,125,243,.75);box-shadow:0 0 0 1px rgba(79,125,243,.25)}' +
+    '.at-intent-card.disabled,.at-subscope-chip.disabled,.at-modifier-chip.disabled{border-color:rgba(148,163,184,.28);box-shadow:none}' +
+    'html.dark ' + base.split(',').join(',html.dark ') + '{border-color:rgba(148,163,184,.30);box-shadow:0 1px 2px rgba(0,0,0,.35)}' +
+    'html.dark .at-intent-card:not(.selected):not(.disabled),html.dark .at-recent-chip,html.dark .at-subscope-chip:not(.selected):not(.disabled),html.dark .at-modifier-chip:not(.selected):not(.disabled){background-color:rgba(148,163,184,.08)}' +
+    'html.dark .at-intent-card.selected,html.dark .at-subscope-chip.selected,html.dark .at-modifier-chip.selected{border-color:rgba(147,180,255,.7)}';
+  document.head.appendChild(st);
+}
 
 function _ensureBnDensityStyle() {
   if (document.getElementById('at-bn-density-style')) return;
