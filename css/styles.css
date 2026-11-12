@@ -767,7 +767,7 @@ html.dark #creation-mode-select,
 }
 
 #sidebar {
-  width: clamp(440px, 36vw, 620px);
+  width: clamp(360px, 30vw, 620px);
   min-width: 300px;
   max-width: 720px;
   height: 100%;
@@ -4507,7 +4507,7 @@ html.dark .ai-model-card.active,
    below that width, matching how the rest of the stylesheet is scoped. */
 @media (min-width: 851px) {
   /* Only forcing display back on here — width/min/max/flex are left to the
-     base #sidebar rule (clamp(440px, 36vw, 620px), 300–720px range) so the panel stays fluid
+     base #sidebar rule (clamp(360px, 30vw, 620px), 300–720px range) so the panel stays fluid
      and the drag-to-resize handle keeps working, instead of being pinned
      to a fixed 420px that fought both the resize handle and any window
      narrower than sidebar(420) + a usable preview panel. */
@@ -5679,7 +5679,7 @@ html.dark .ai-model-card.active,
   #tab-bar { height:44px !important; min-height:44px !important; padding:0 12px !important; gap:4px !important; }
   #mobile-nav-bar { display:none !important; }
   #main-container { height:calc(100vh - var(--topbar-height) - var(--tabbar-height)) !important; min-height:0 !important; min-width:0 !important; flex:1 1 auto !important; }
-  /* #sidebar sizing (clamp(440px, 36vw, 620px), 300–720px range, resizable) now comes only
+  /* #sidebar sizing (clamp(360px, 30vw, 620px), 300–720px range, resizable) now comes only
      from the base #sidebar rule — see the note above the .desktop-view-chat
      block for why a duplicate fixed-width copy here was removed. */
   #editor-toolbar { padding:9px 16px !important; gap:6px !important; }
