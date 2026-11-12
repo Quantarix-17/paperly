@@ -650,11 +650,28 @@ async function handleTestExistingModel(id) {
 const _AI_DLG_INPUT = 'width:100%;padding:9px 11px;border:1.5px solid var(--border-color);border-radius:var(--radius-sm);background:var(--bg-color);color:var(--text-primary);box-sizing:border-box;font-size:.92rem;';
 const _AI_DLG_LABEL = 'display:block;font-size:.78rem;font-weight:600;color:var(--text-secondary);margin:12px 0 5px;';
 
+// Fully opaque backdrop: no page content is visible behind the modal.
 function _createAIDialog(innerHTML) {
   const overlay = document.createElement('div');
   overlay.className = 'ai-models-dialog-overlay';
-  overlay.style.cssText = 'position:fixed;inset:0;z-index:10050;display:flex;align-items:center;justify-content:center;padding:14px;box-sizing:border-box;background:rgba(0,0,0,.45);';
-  overlay.innerHTML = `<div style="background:var(--surface-color);color:var(--text-primary);border:1px solid var(--border-color);border-radius:var(--radius-lg);box-shadow:var(--shadow-lg);padding:22px 24px;max-width:430px;width:100%;max-height:90vh;overflow:auto;box-sizing:border-box;">${innerHTML}</div>`;
+  overlay.style.cssText =
+    'position:fixed;inset:0;z-index:10050;' +
+    'display:flex;align-items:center;justify-content:center;' +
+    'padding:14px;box-sizing:border-box;' +
+    'background:var(--bg-color,#0a0a0a);' +
+    'backdrop-filter:none;' +
+    '-webkit-backdrop-filter:none;';
+  overlay.innerHTML =
+    `<div style="` +
+      `background:var(--surface-color);` +
+      `color:var(--text-primary);` +
+      `border:1px solid var(--border-color);` +
+      `border-radius:var(--radius-lg);` +
+      `box-shadow:0 24px 60px rgba(0,0,0,.55);` +
+      `padding:22px 24px;` +
+      `max-width:430px;width:100%;` +
+      `max-height:90vh;overflow:auto;box-sizing:border-box;` +
+    `">${innerHTML}</div>`;
   document.body.appendChild(overlay);
   return overlay;
 }
@@ -878,7 +895,7 @@ function _syncTestAllButton() {
 
 // ========================================================================
 // MODEL-ADD FORM HELPERS
-// The model-add UI now lives in a centered floating dialog. The old inline
+// The model-add UI lives in a centered floating dialog. The old inline
 // form still exists in the HTML for compatibility, but the dialog is what
 // the user sees. These helpers resolve IDs to the dialog's copies first.
 // ========================================================================
@@ -1241,14 +1258,19 @@ function importAIModels(fileList) {
 
 // ========================================================================
 // AUTO-SWITCH TOGGLE
-// The preference is a real user choice. Default = OFF. The switch is a
-// toggle button (not a checkbox) and is placed immediately to the left of
-// the "+ Add model" button when the models modal opens.
+// DEFAULT = ON. A user switch (toggle button, not a checkbox) turns it
+// on/off. If the user has explicitly saved 'false', that choice is kept.
+// The switch is placed immediately to the left of the "+ Add model" button
+// whenever the models modal opens.
 // ========================================================================
 function getAutoSwitchEnabled() {
   try {
-    return localStorage.getItem(AI_MODEL_AUTOSWITCH_KEY) === 'true';
-  } catch (e) { return false; }
+    const stored = localStorage.getItem(AI_MODEL_AUTOSWITCH_KEY);
+    if (stored === null) return true;   // Default = ON for new users
+    return stored === 'true';           // Respect the user's explicit choice
+  } catch (e) {
+    return true;                        // Default = ON if storage is unavailable
+  }
 }
 
 function setAutoSwitchEnabled(enabled) {
@@ -1296,7 +1318,6 @@ function _findAddModelButton() {
   const modal = document.getElementById('ai-models-modal');
   const candidates = [];
   if (modal) candidates.push(...modal.querySelectorAll('button, a, [role="button"]'));
-  // Also search whole document as a fallback (button might live in a toolbar)
   candidates.push(...document.querySelectorAll('button[onclick*="toggleAIModelAddForm"], button[onclick*="openAIModelAddDialog"]'));
 
   const isExcluded = el => {
@@ -1304,7 +1325,6 @@ function _findAddModelButton() {
     return el.id === 'ai-model-add-btn' || el.id === 'ai-model-autoswitch-toggle';
   };
 
-  // 1) by onclick
   let btn = candidates.find(el => {
     if (isExcluded(el)) return false;
     const onclick = el.getAttribute('onclick') || '';
@@ -1312,14 +1332,12 @@ function _findAddModelButton() {
   });
   if (btn) return btn;
 
-  // 2) by well-known ids
   const knownIds = ['ai-models-add-btn', 'ai-model-add-toggle', 'add-ai-model-btn', 'ai-models-add-new-btn', 'open-add-model-btn'];
   for (const id of knownIds) {
     const el = document.getElementById(id);
     if (el && !isExcluded(el)) return el;
   }
 
-  // 3) by text
   btn = candidates.find(el => {
     if (isExcluded(el)) return false;
     const text = (el.textContent || '').trim().toLowerCase().replace(/\s+/g, ' ');
@@ -1593,8 +1611,7 @@ function renderAIModelSelectBar() {
 
 // ========================================================================
 // MODEL INFO DIALOG
-// The info button used to expand an inline panel inside the models modal.
-// It now opens a centered floating modal with the same content.
+// The info button opens a centered floating modal with the same content.
 // The legacy auto-switch checkbox row is stripped because the auto-switch
 // lives next to the "+ Add model" button now.
 // ========================================================================
@@ -1612,13 +1629,11 @@ function openAIModelsInfoDialog() {
 
   if (panel) {
     const clone = panel.cloneNode(true);
-    // Remove the legacy auto-switch row (moved next to the Add model button)
     const cb = clone.querySelector('#ai-model-autoswitch-checkbox');
     if (cb) {
       const row = cb.closest('label') || cb.parentElement;
       if (row) row.remove();
     }
-    // Strip any remaining ids to avoid duplicate-id collisions with the page
     clone.querySelectorAll('[id]').forEach(el => el.removeAttribute('id'));
     contentHTML = clone.innerHTML;
   }
@@ -1653,7 +1668,6 @@ function openAIModelsModal() {
   if (!modal) return;
   modal.style.display = 'flex';
 
-  // Close any stray inline panels; the info and add-form are now dialogs.
   const info = document.getElementById('ai-model-info-panel');
   if (info) info.classList.remove('open');
   const legacyForm = document.getElementById('ai-model-add-form');
@@ -1662,7 +1676,6 @@ function openAIModelsModal() {
     legacyForm.style.display = 'none';
   }
 
-  // Keep the legacy auto-switch checkbox in sync but hidden.
   const autoSwitchCheckbox = document.getElementById('ai-model-autoswitch-checkbox');
   if (autoSwitchCheckbox) {
     autoSwitchCheckbox.checked = getAutoSwitchEnabled();
