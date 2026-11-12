@@ -23,7 +23,6 @@ function loadAIModelsState() {
       const parsed = JSON.parse(raw);
       if (parsed && Array.isArray(parsed.models)) {
         const models = parsed.models.map(m => m.status === 'testing' ? { ...m, status: 'idle', statusMessage: '' } : m);
-        // Auto-complete a missing /chat/completions on saved models — but never touch one that is already working.
         models.forEach(m => { if (m && m.status !== 'ok' && m.apiUrl) { const f = normalizeAIModelApiUrl(m.apiUrl, m.apiType, m.modelId); if (f.changed) m.apiUrl = f.url; } });
         AI_MODELS_STATE = { version: 1, models, activeModelId: parsed.activeModelId || (models[0] && models[0].id) || null };
       }
@@ -650,8 +649,12 @@ async function handleTestExistingModel(id) {
 const _AI_DLG_INPUT = 'width:100%;padding:9px 11px;border:1.5px solid var(--border-color);border-radius:var(--radius-sm);background:var(--bg-color);color:var(--text-primary);box-sizing:border-box;font-size:.92rem;';
 const _AI_DLG_LABEL = 'display:block;font-size:.78rem;font-weight:600;color:var(--text-secondary);margin:12px 0 5px;';
 
-// Fully opaque backdrop: no page content is visible behind the modal.
-function _createAIDialog(innerHTML) {
+// Centralized dialog factory.
+//  - Fully opaque backdrop (no page content visible).
+//  - Clicking the backdrop (outside the card) auto-closes the dialog.
+//  - An optional `onClose` callback fires exactly once, whether closed
+//    by the user, by an internal button, or by outside-click.
+function _createAIDialog(innerHTML, onClose) {
   const overlay = document.createElement('div');
   overlay.className = 'ai-models-dialog-overlay';
   overlay.style.cssText =
@@ -672,6 +675,21 @@ function _createAIDialog(innerHTML) {
       `max-width:430px;width:100%;` +
       `max-height:90vh;overflow:auto;box-sizing:border-box;` +
     `">${innerHTML}</div>`;
+
+  let closing = false;
+  overlay._closeFn = function () {
+    if (closing) return;
+    closing = true;
+    try { if (typeof onClose === 'function') onClose(); } catch (_) { /* swallow */ }
+    if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+  };
+
+  // Outside-click auto-close: only when the click lands on the backdrop,
+  // never when it lands inside the card.
+  overlay.addEventListener('click', function (e) {
+    if (e.target === overlay) overlay._closeFn();
+  });
+
   document.body.appendChild(overlay);
   return overlay;
 }
@@ -687,6 +705,10 @@ function askImportApiType(models) {
         <input type="radio" name="ai-import-type" value="${val}" ${checked ? 'checked' : ''} style="margin-top:3px;">
         <span><b>${label}</b>${hint ? `<span style="display:block;font-size:.8rem;color:var(--text-secondary);margin-top:2px;">${hint}</span>` : ''}</span>
       </label>`;
+
+    let resolved = false;
+    const finish = (v) => { if (resolved) return; resolved = true; resolve(v); };
+
     const overlay = _createAIDialog(`
       <h3 style="margin:0 0 4px;font-size:1.05rem;">Import ${valid.length} model(s)</h3>
       <div style="font-size:.85rem;color:var(--text-secondary);">What API type are these models?</div>
@@ -699,13 +721,13 @@ function askImportApiType(models) {
       <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:18px;">
         <button type="button" class="topbar-btn" data-act="cancel">Cancel</button>
         <button type="button" class="topbar-btn btn-primary" data-act="ok">Import</button>
-      </div>`);
-    const done = v => { overlay.remove(); resolve(v); };
-    overlay.addEventListener('click', e => { if (e.target === overlay) done(null); });
-    overlay.querySelector('[data-act="cancel"]').onclick = () => done(null);
+      </div>`, () => finish(null));
+
+    overlay.querySelector('[data-act="cancel"]').onclick = () => { finish(null); overlay._closeFn(); };
     overlay.querySelector('[data-act="ok"]').onclick = () => {
       const sel = overlay.querySelector('input[name="ai-import-type"]:checked');
-      done(sel ? sel.value : 'auto');
+      finish(sel ? sel.value : 'auto');
+      overlay._closeFn();
     };
   });
 }
@@ -762,10 +784,10 @@ function openAIModelEditDialog(id) {
       <button type="button" class="topbar-btn" data-act="cancel">Cancel</button>
       <button type="button" class="topbar-btn btn-primary" data-act="save">Save</button>
     </div>`);
+
   const $ = sel => overlay.querySelector(sel);
   $('#edit-ai-type').onchange = () => { $('#edit-ai-search-row').style.display = $('#edit-ai-type').value === 'gemini' ? 'flex' : 'none'; };
-  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
-  $('[data-act="cancel"]').onclick = () => overlay.remove();
+  $('[data-act="cancel"]').onclick = () => overlay._closeFn();
   $('[data-act="save"]').onclick = () => {
     const modelId = $('#edit-ai-modelid').value.trim();
     const name = $('#edit-ai-name').value.trim() || autoModelName({ apiUrl: m.apiUrl, modelId });
@@ -786,7 +808,7 @@ function openAIModelEditDialog(id) {
     m.enableGoogleSearch = $('#edit-ai-search').checked;
     if (coreChanged) { m.status = 'idle'; m.statusMessage = 'Settings changed - test again'; }
     saveAIModelsState();
-    overlay.remove();
+    overlay._closeFn();
     if (typeof renderAIModelSelectBar === 'function') renderAIModelSelectBar();
     if (typeof renderAIModelsListInModal === 'function') renderAIModelsListInModal();
     if (typeof displayToastNotification === 'function') displayToastNotification(`"${m.name}" updated${coreChanged ? ' - please test it again' : ''}`);
@@ -895,9 +917,6 @@ function _syncTestAllButton() {
 
 // ========================================================================
 // MODEL-ADD FORM HELPERS
-// The model-add UI lives in a centered floating dialog. The old inline
-// form still exists in the HTML for compatibility, but the dialog is what
-// the user sees. These helpers resolve IDs to the dialog's copies first.
 // ========================================================================
 function _addFormEl(id) {
   if (_modelAddDialogOverlay && _modelAddDialogOverlay.parentNode) {
@@ -1016,10 +1035,12 @@ function openAIModelAddDialog() {
       <button type="button" class="topbar-btn" data-act="detect">Detect models</button>
       <button type="button" class="topbar-btn btn-primary" data-act="add" id="ai-model-add-btn">Verify &amp; Add</button>
     </div>
-  `);
+  `, () => {
+    _modelAddDialogOverlay = null;
+    _pendingFailedModelSave = null;
+  });
 
-  const close = () => closeAIModelAddDialog();
-  _modelAddDialogOverlay.addEventListener('click', e => { if (e.target === _modelAddDialogOverlay) close(); });
+  const close = () => { if (_modelAddDialogOverlay) _modelAddDialogOverlay._closeFn(); };
   _modelAddDialogOverlay.querySelector('[data-act="close"]').onclick = close;
   _modelAddDialogOverlay.querySelector('[data-act="cancel"]').onclick = close;
   _modelAddDialogOverlay.querySelector('[data-act="detect"]').onclick = () => handleDetectAIModels();
@@ -1033,11 +1054,12 @@ function openAIModelAddDialog() {
 }
 
 function closeAIModelAddDialog() {
-  if (_modelAddDialogOverlay) {
-    _modelAddDialogOverlay.remove();
+  if (_modelAddDialogOverlay && _modelAddDialogOverlay._closeFn) {
+    _modelAddDialogOverlay._closeFn();
+  } else {
     _modelAddDialogOverlay = null;
+    _pendingFailedModelSave = null;
   }
-  _pendingFailedModelSave = null;
 }
 
 async function handleAddNewAIModel() {
@@ -1059,7 +1081,12 @@ async function handleAddNewAIModel() {
   const addBtn = _addFormEl('ai-model-add-btn');
   if (addBtn) addBtn.disabled = true;
 
+  const dialogAtStart = _modelAddDialogOverlay;
   const result = await testAIModelConnection(form);
+
+  // User closed the dialog while we were verifying — don't save behind their back.
+  if (_modelAddDialogOverlay !== dialogAtStart) return;
+
   if (addBtn) addBtn.disabled = false;
 
   if (result.ok) {
@@ -1143,8 +1170,12 @@ async function handleDetectAIModels() {
   form.apiUrl = completeAIBareUrl(form.apiUrl);
   statusEl.className = 'ai-model-add-status testing';
   statusEl.innerHTML = '<span class="ai-model-mini-spinner"></span>Asking the server which models it has...';
+
+  const dialogAtStart = _modelAddDialogOverlay;
   try {
     const ids = await fetchAIModelList(form);
+    if (_modelAddDialogOverlay !== dialogAtStart) return;
+
     const dl = _addFormEl('ai-model-id-list');
     if (dl) dl.innerHTML = ids.map(id => `<option value="${escapeHTML(id)}"></option>`).join('');
     const idEl = _addFormEl('ai-model-id-input');
@@ -1153,6 +1184,7 @@ async function handleDetectAIModels() {
     statusEl.className = 'ai-model-add-status success';
     statusEl.innerHTML = `Found ${ids.length} model(s). Click the Model ID box to choose another one.`;
   } catch (e) {
+    if (_modelAddDialogOverlay !== dialogAtStart) return;
     statusEl.className = 'ai-model-add-status error';
     statusEl.innerHTML = `${escapeHTML(e.message || 'Could not list models')} - this is fine; leave Model ID blank or type it by hand.`;
   }
@@ -1258,18 +1290,16 @@ function importAIModels(fileList) {
 
 // ========================================================================
 // AUTO-SWITCH TOGGLE
-// DEFAULT = ON. A user switch (toggle button, not a checkbox) turns it
-// on/off. If the user has explicitly saved 'false', that choice is kept.
-// The switch is placed immediately to the left of the "+ Add model" button
-// whenever the models modal opens.
+// DEFAULT = ON. If the user explicitly saved 'false', that choice is kept.
+// The switch is placed immediately to the left of the "+ Add model" button.
 // ========================================================================
 function getAutoSwitchEnabled() {
   try {
     const stored = localStorage.getItem(AI_MODEL_AUTOSWITCH_KEY);
-    if (stored === null) return true;   // Default = ON for new users
-    return stored === 'true';           // Respect the user's explicit choice
+    if (stored === null) return true;
+    return stored === 'true';
   } catch (e) {
-    return true;                        // Default = ON if storage is unavailable
+    return true;
   }
 }
 
@@ -1385,7 +1415,6 @@ function _placeAutoSwitchNearAddButton() {
     return;
   }
 
-  // Fallback: no "+ Add model" button found. Put it at the top of the modal.
   const modal = document.getElementById('ai-models-modal');
   if (modal && !wrapper.parentNode) {
     const container = modal.querySelector('.ai-models-modal-header, .modal-header, .ai-models-modal-body') || modal;
@@ -1611,9 +1640,6 @@ function renderAIModelSelectBar() {
 
 // ========================================================================
 // MODEL INFO DIALOG
-// The info button opens a centered floating modal with the same content.
-// The legacy auto-switch checkbox row is stripped because the auto-switch
-// lives next to the "+ Add model" button now.
 // ========================================================================
 function toggleAIModelsInfo() {
   if (_infoDialogOverlay && _infoDialogOverlay.parentNode) {
@@ -1648,25 +1674,38 @@ function openAIModelsInfoDialog() {
       <button type="button" data-act="close" aria-label="Close" style="background:none;border:none;font-size:1.5rem;cursor:pointer;color:var(--text-secondary);line-height:1;padding:0 4px;">&times;</button>
     </div>
     <div>${contentHTML}</div>
-  `);
+  `, () => { _infoDialogOverlay = null; });
 
-  const close = () => closeAIModelsInfoDialog();
-  _infoDialogOverlay.addEventListener('click', e => { if (e.target === _infoDialogOverlay) close(); });
+  const close = () => { if (_infoDialogOverlay) _infoDialogOverlay._closeFn(); };
   _infoDialogOverlay.querySelector('[data-act="close"]').onclick = close;
 }
 
 function closeAIModelsInfoDialog() {
-  if (_infoDialogOverlay) {
-    _infoDialogOverlay.remove();
+  if (_infoDialogOverlay && _infoDialogOverlay._closeFn) {
+    _infoDialogOverlay._closeFn();
+  } else {
     _infoDialogOverlay = null;
   }
 }
 
-// ===== MODAL OPEN/CLOSE =====
+// ========================================================================
+// MODAL OPEN/CLOSE
+// The main models modal also auto-closes when the user clicks its backdrop.
+// ========================================================================
 function openAIModelsModal() {
   const modal = document.getElementById('ai-models-modal');
   if (!modal) return;
   modal.style.display = 'flex';
+
+  // Bind outside-click → close. Idempotent, so re-opening never double-binds.
+  if (!modal.dataset.outsideClickBound) {
+    modal.dataset.outsideClickBound = '1';
+    modal.addEventListener('click', function (e) {
+      // Only close when the click lands on the modal backdrop itself,
+      // never when it bubbles up from the card or its children.
+      if (e.target === modal) closeAIModelsModal();
+    });
+  }
 
   const info = document.getElementById('ai-model-info-panel');
   if (info) info.classList.remove('open');
@@ -1686,8 +1725,6 @@ function openAIModelsModal() {
 
   _removeMode.active = false; _removeMode.selected.clear();
   renderAIModelsListInModal();
-
-  // Insert (or refresh) the auto-switch toggle next to "+ Add model".
   _placeAutoSwitchNearAddButton();
 }
 
