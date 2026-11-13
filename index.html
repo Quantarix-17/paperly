@@ -241,7 +241,7 @@
     #paperly-gate .pg-card{width:100%;max-width:400px;text-align:center;background:var(--glass-bg-strong,rgba(255,255,255,.8));border:1px solid var(--glass-border,rgba(0,0,0,.09));border-radius:28px;padding:30px 26px 24px;
       -webkit-backdrop-filter:blur(32px) saturate(180%);backdrop-filter:blur(32px) saturate(180%);box-shadow:var(--glass-shadow,0 24px 70px rgba(0,0,0,.25))}
     html.dark #paperly-gate .pg-card{background:var(--glass-bg-strong,rgba(16,16,18,.8))}
-    #paperly-gate .pg-logo{width:72px;height:72px;border-radius:18px;object-fit:cover;box-shadow:0 10px 24px -10px rgba(0,0,0,.5)}
+    #paperly-gate .pg-logo{width:auto;height:84px;max-width:100%;border-radius:0;object-fit:contain;background:none;box-shadow:none;border:0;filter:none}
     #paperly-gate h1{margin:10px 0 2px;font-size:24px;font-weight:800;letter-spacing:-.01em}
     #paperly-gate h2{margin:14px 0 8px;font-size:19px;font-weight:800}
     #paperly-gate .pg-muted{margin:0 0 16px;font-size:14px;line-height:1.6;color:var(--text-secondary,#5d5d64)}
@@ -367,7 +367,7 @@
 <body>
   <div id="paperly-gate" role="dialog" aria-modal="true" aria-label="Sign in">
     <div class="pg-card">
-      <img class="pg-logo" src="icons/tamim.png" alt="" width="72" height="72">
+      <img class="pg-logo" src="icons/tamim.png" alt="">
       <h1>Paper<span class="brand-l">L</span>y</h1>
       <div id="pg-body"><div class="pg-spin"></div><p class="pg-muted">Loading…</p></div>
     </div>
