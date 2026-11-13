@@ -1902,6 +1902,42 @@ try {
 // ai-models.js both define openAIModelsModal), so instead of wrapping them
 // we watch the element's own display style. Safe to call more than once.
 // ========================================================================
+// Desktop: settings modal centred on screen. Mobile: unchanged bottom sheet,
+// plus scroll-performance tuning. Injected once; uses !important because the
+// base sheet layout lives in index.html.
+(function _injectSettingsModalLayoutStyle() {
+  if (typeof document === 'undefined') return;
+  function inject() {
+    if (document.getElementById('studio-settings-layout-style')) return;
+    const st = document.createElement('style');
+    st.id = 'studio-settings-layout-style';
+    st.textContent = [
+      /* ---------- all screens: smooth, GPU-friendly scrolling ---------- */
+      '#ai-models-modal .ai-models-modal-card{overscroll-behavior:contain;-webkit-overflow-scrolling:touch;scroll-behavior:auto;}',
+      '#ai-models-modal .settings-tab-panel{overscroll-behavior:contain;}',
+      '.studio-setting-row{contain:layout paint;}',
+      /* ---------- mobile (bottom sheet stays as it is) ---------- */
+      '@media (max-width:768px){',
+      '  #ai-models-modal .ai-models-modal-card{touch-action:pan-y;will-change:scroll-position;transform:translateZ(0);}',
+      /* expensive effects inside the scrolling area are dropped on phones */
+      '  #ai-models-modal .ai-models-modal-card .studio-switch,#ai-models-modal .ai-models-modal-card .studio-setting-row{backdrop-filter:none !important;-webkit-backdrop-filter:none !important;}',
+      '  #ai-models-modal .studio-setting-row,#ai-models-modal .studio-switch,#ai-models-modal .studio-switch-knob{transition:none !important;}',
+      '  body.settings-sheet-dragging #ai-models-modal .ai-models-modal-card{will-change:transform;}',
+      '}',
+      /* ---------- desktop: centred dialog ---------- */
+      '@media (min-width:769px){',
+      '  #ai-models-modal .settings-sheet-handle{display:none !important;}',
+      '  #ai-models-modal .ai-models-modal-card{position:fixed !important;top:50% !important;left:50% !important;right:auto !important;bottom:auto !important;margin:0 !important;transform:translate(-50%,-50%) !important;width:min(760px,92vw) !important;max-width:92vw !important;height:auto !important;max-height:min(86vh,820px) !important;border-radius:18px !important;overflow-y:auto;}',
+      '  #ai-models-modal.settings-sheet-opening .ai-models-modal-card{animation:studioSettingsFadeIn .18s ease-out !important;}',
+      '}',
+      '@keyframes studioSettingsFadeIn{from{opacity:0}to{opacity:1}}'
+    ].join('\n');
+    (document.head || document.documentElement).appendChild(st);
+  }
+  if (document.head) inject();
+  else document.addEventListener('DOMContentLoaded', inject);
+})();
+
 window.initSettingsSheet = function () {
   if (typeof document === 'undefined') return false;
   const modal = document.getElementById('ai-models-modal');
@@ -1910,6 +1946,11 @@ window.initSettingsSheet = function () {
   const card = modal.querySelector('.ai-models-modal-card');
   if (!card) return false;
   modal.dataset.sheetInit = '1';
+
+  // Bottom-sheet behaviour only on narrow (mobile) screens; wider screens get
+  // a centred dialog (see _injectSettingsModalLayoutStyle).
+  const SHEET_MQ = (typeof window.matchMedia === 'function') ? window.matchMedia('(max-width: 768px)') : null;
+  function isSheetMode() { return !SHEET_MQ || SHEET_MQ.matches; }
 
   const CLOSE_DISTANCE = 110;   // px dragged down before release closes the sheet
   const CLOSE_VELOCITY = 0.6;   // px/ms flick speed that also closes it
@@ -1997,6 +2038,7 @@ window.initSettingsSheet = function () {
   function bindPointerDrag(el) {
     if (!el) return;
     el.addEventListener('pointerdown', function (e) {
+      if (!isSheetMode()) return;                 // desktop dialog: no drag-to-close
       if (e.pointerType === 'mouse' && e.button !== 0) return;
       if (e.target && e.target.closest && e.target.closest('button,a,input,select,textarea')) return;
       start(e.clientY);
@@ -2011,31 +2053,52 @@ window.initSettingsSheet = function () {
   bindPointerDrag(header);
 
   // ---- 2) body: touch drag, only when scrolled to the very top ----------
+  // PERF: a permanent non-passive touchmove listener on the scroll container
+  // forces the browser to wait for JS on EVERY scroll frame (that was the
+  // mobile scroll lag). The blocking listener is now attached only for a
+  // touch that starts while the content is already at the very top (the only
+  // case where a drag-to-close can begin) and is removed right after.
   let cand = null;                                // { y, active }
-  card.addEventListener('touchstart', function (e) {
-    cand = null;
-    if (!e.touches || e.touches.length !== 1) return;
-    const t = e.target;
-    if (t && t.closest && t.closest('.settings-sheet-handle,.ai-models-modal-header,input,textarea,select,[contenteditable]')) return;
-    cand = { y: e.touches[0].clientY, active: false };
-  }, { passive: true });
-  card.addEventListener('touchmove', function (e) {
+  let blockingAttached = false;
+  function onBodyTouchMove(e) {
     if (!cand || !e.touches || !e.touches.length) return;
     const y = e.touches[0].clientY;
     if (!cand.active) {
       const dy = y - cand.y;
-      if (dy < -SLOP) { cand = null; return; }                 // scrolling up: ordinary scroll
-      if (card.scrollTop > 0 || dy < SLOP) return;             // not at top yet / not pulled enough
+      if (dy < -SLOP) { detachBlocking(); cand = null; return; }  // scrolling up: ordinary scroll
+      if (card.scrollTop > 0 || dy < SLOP) return;                // not pulled enough yet
       cand.active = true;
       start(y);
     }
-    if (e.cancelable) e.preventDefault();                      // stop the page/card from scrolling while dragging
+    if (e.cancelable) e.preventDefault();                         // stop card scrolling while dragging
     move(y);
-  }, { passive: false });
+  }
+  function attachBlocking() {
+    if (blockingAttached) return;
+    blockingAttached = true;
+    card.addEventListener('touchmove', onBodyTouchMove, { passive: false });
+  }
+  function detachBlocking() {
+    if (!blockingAttached) return;
+    blockingAttached = false;
+    card.removeEventListener('touchmove', onBodyTouchMove, { passive: false });
+  }
+  card.addEventListener('touchstart', function (e) {
+    cand = null;
+    detachBlocking();
+    if (!isSheetMode()) return;                               // desktop: no drag-to-close
+    if (!e.touches || e.touches.length !== 1) return;
+    const t = e.target;
+    if (t && t.closest && t.closest('.settings-sheet-handle,.ai-models-modal-header,input,textarea,select,[contenteditable]')) return;
+    if (card.scrollTop > 0) return;                           // mid-scroll: stay fully passive
+    cand = { y: e.touches[0].clientY, active: false };
+    attachBlocking();
+  }, { passive: true });
   ['touchend', 'touchcancel'].forEach(function (t) {
     card.addEventListener(t, function () {
       if (cand && cand.active) end();
       cand = null;
+      detachBlocking();
     }, { passive: true });
   });
 
