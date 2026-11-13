@@ -8048,3 +8048,246 @@ html.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)):not([class*="pd
   :root { --glass-bg: rgba(255,255,255,.92); --glass-bg-soft: rgba(255,255,255,.86); --glass-bg-strong: #ffffff; }
   .dark { --glass-bg: rgba(18,18,20,.94); --glass-bg-soft: rgba(30,30,33,.92); --glass-bg-strong: #121214; }
 }
+
+
+/* ==========================================================================
+   SOFT-GLASS OVERRIDE LAYER  (keep at the very END of the file)
+   --------------------------------------------------------------------------
+   • No solid / pure black fills anywhere in the UI chrome.
+     Selected / active / primary controls and the user chat bubble are now
+     frosted "glass" tints instead of black (light mode) or white (dark mode).
+   • Dark mode uses a smoky blue-grey instead of #000 so glass actually reads.
+   • Mobile: the area under the system status bar / navigation bar follows the
+     theme (light ↔ dark). See the <meta name="theme-color"> note at the bottom.
+   • Document pages, photocopy/monochrome print modes, code blocks, OMR and
+     slide canvases are intentionally NOT touched.
+   ========================================================================== */
+
+/* ---------- A. Tokens ---------- */
+:root {
+  color-scheme: light;
+  --on-primary: #0c0c0e;                 /* text on a selected glass control */
+  --primary-hover: #2a2a30;              /* was #000 */
+  --accent-gradient: linear-gradient(135deg, rgba(var(--ink-rgb), 0.17), rgba(var(--ink-rgb), 0.07));
+  --accent-gradient-soft: linear-gradient(135deg, rgba(var(--ink-rgb), 0.09), rgba(var(--ink-rgb), 0.03));
+  --glass-active-bg: linear-gradient(135deg, rgba(255,255,255,0.78), rgba(255,255,255,0.40));
+  --glass-active-tint: rgba(var(--ink-rgb), 0.10);
+  --glass-active-border: rgba(var(--ink-rgb), 0.26);
+  --glass-active-shadow: 0 8px 20px -10px rgba(40, 42, 54, 0.32), inset 0 1px 0 rgba(255,255,255,0.9);
+  --user-bubble-bg: linear-gradient(135deg, rgba(var(--ink-rgb), 0.11), rgba(var(--ink-rgb), 0.05));
+  --soft-scrim: rgba(40, 44, 58, 0.30);
+  --system-bar-bg: rgba(244, 244, 246, 0.78);
+}
+
+.dark {
+  color-scheme: dark;
+  --on-primary: #f4f4f5;
+  --primary-hover: #ffffff;
+
+  --bg-color: #15161b;
+  --sheet-color: #1a1b21;
+  --surface-color: rgba(52, 54, 64, 0.46);
+  --surface-strong: #202128;
+  --shadow-sm: 0 2px 8px rgba(8, 9, 14, 0.38);
+  --shadow-md: 0 18px 40px -18px rgba(8, 9, 14, 0.55), 0 4px 10px -6px rgba(8, 9, 14, 0.40);
+  --shadow-lg: 0 32px 60px -22px rgba(8, 9, 14, 0.60), 0 8px 18px -10px rgba(8, 9, 14, 0.45);
+
+  --glass-bg: rgba(70, 73, 86, 0.30);
+  --glass-bg-soft: rgba(255, 255, 255, 0.07);
+  --glass-bg-strong: rgba(58, 61, 74, 0.58);
+  --glass-border: rgba(255, 255, 255, 0.14);
+  --glass-hi: rgba(255, 255, 255, 0.14);
+  --glass-shadow: 0 22px 48px -20px rgba(8, 9, 14, 0.55), 0 2px 8px rgba(8, 9, 14, 0.30), inset 0 1px 0 var(--glass-hi);
+  --glass-shadow-sm: 0 8px 18px -10px rgba(8, 9, 14, 0.50), inset 0 1px 0 var(--glass-hi);
+
+  --float-card-bg: rgba(60, 63, 76, 0.40);
+  --float-input-bg: rgba(255, 255, 255, 0.08);
+  --float-input-border: rgba(255, 255, 255, 0.14);
+  --float-card-shadow: 0 20px 44px -16px rgba(8, 9, 14, 0.50), 0 0 0 1px rgba(255,255,255,0.06), inset 0 1px 0 rgba(255,255,255,0.10);
+  --float-focus-shadow: 0 12px 30px -10px rgba(8, 9, 14, 0.55);
+  --select-control-bg: rgba(60, 63, 76, 0.55);
+
+  --glass-active-bg: linear-gradient(135deg, rgba(255,255,255,0.24), rgba(255,255,255,0.10));
+  --glass-active-tint: rgba(255, 255, 255, 0.14);
+  --glass-active-border: rgba(255, 255, 255, 0.34);
+  --glass-active-shadow: 0 8px 22px -10px rgba(8, 9, 14, 0.55), inset 0 1px 0 rgba(255,255,255,0.22);
+  --user-bubble-bg: linear-gradient(135deg, rgba(255,255,255,0.17), rgba(255,255,255,0.08));
+  --soft-scrim: rgba(18, 20, 30, 0.38);
+  --system-bar-bg: rgba(26, 27, 34, 0.78);
+}
+
+/* ---------- B. Backdrop: soft smoky blue-grey instead of #000 ---------- */
+html, html.dark { background-color: var(--bg-color); }
+html.dark body,
+body.dark {
+  background:
+    radial-gradient(56vmax 44vmax at 88% -8%, rgba(190, 200, 255, 0.20), transparent 62%),
+    radial-gradient(46vmax 38vmax at -8% 108%, rgba(255, 255, 255, 0.12), transparent 62%),
+    radial-gradient(30vmax 26vmax at 55% 45%, rgba(160, 170, 220, 0.07), transparent 70%),
+    linear-gradient(160deg, #262830 0%, #14151a 100%);
+  background-attachment: fixed;
+}
+:is(html, html.dark) body { background-attachment: fixed; }
+.dark #document-view-container { background: transparent; }
+#slide-present-overlay,
+.dark #slide-present-overlay { background: #1a1b21; }
+html.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)):not([class*="pdf-format-"]) {
+  background: #1d1e24;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12), 0 10px 30px -8px rgba(8, 9, 14, 0.5);
+}
+
+/* ---------- C. AI panel chat bubbles: glass, not solid ink ---------- */
+:is(html, html.dark) .chat-message.user {
+  background: var(--user-bubble-bg);
+  border: 1px solid var(--glass-active-border);
+  color: var(--text-primary);
+  box-shadow: var(--glass-active-shadow);
+  backdrop-filter: var(--glass-blur-sm);
+  -webkit-backdrop-filter: var(--glass-blur-sm);
+}
+:is(html, html.dark) .chat-message.user a,
+:is(html, html.dark) .chat-message.user code { color: inherit; }
+:is(html, html.dark) .chat-message.user code { background: rgba(var(--ink-rgb), 0.10); }
+:is(html, html.dark) .chat-message.ai {
+  box-shadow: var(--glass-shadow-sm);
+}
+.dark .chat-message.ai,
+.dark .chat-message.user { box-shadow: var(--glass-shadow-sm); }
+
+/* ---------- D. Selected / active / primary controls → glass (was black / white) ---------- */
+:is(html, html.dark) .topbar-btn.btn-primary,
+:is(html, html.dark) .topbar-btn.btn-accent,
+:is(html, html.dark) .btn-primary,
+:is(html, html.dark) .btn-accent,
+:is(html, html.dark) .icon-btn.primary,
+:is(html, html.dark) #send-message-btn.icon-btn.primary,
+:is(html, html.dark) #sidebar #chat-form #send-message-btn.icon-btn.primary,
+:is(html, html.dark) #at-command-btn.active,
+:is(html, html.dark) .tool-btn.active,
+:is(html, html.dark) .tool-btn.paginate-active,
+:is(html, html.dark) .slide-edit-btn.active,
+:is(html, html.dark) .slide-edit-btn.active:hover,
+:is(html, html.dark) .slide-bg-scope-btn.active,
+:is(html, html.dark) .slide-download-btn,
+:is(html, html.dark) .clarify-option-btn.clarify-option-selected,
+:is(html, html.dark) .clarify-option-btn.clarify-option-selected:hover:not(:disabled),
+:is(html, html.dark) .at-subscope-chip.selected,
+:is(html, html.dark) .slide-thumb-pencil:hover {
+  background: var(--glass-active-bg), var(--glass-active-tint) !important;
+  color: var(--text-primary) !important;
+  border: 1px solid var(--glass-active-border) !important;
+  box-shadow: var(--glass-active-shadow) !important;
+  backdrop-filter: var(--glass-blur-sm) !important;
+  -webkit-backdrop-filter: var(--glass-blur-sm) !important;
+  filter: none;
+}
+:is(html, html.dark) .topbar-btn.btn-primary:hover,
+:is(html, html.dark) .topbar-btn.btn-accent:hover,
+:is(html, html.dark) .btn-primary:hover,
+:is(html, html.dark) .btn-accent:hover,
+:is(html, html.dark) .icon-btn.primary:not(:disabled):hover,
+:is(html, html.dark) #send-message-btn.icon-btn.primary:not(:disabled):hover,
+:is(html, html.dark) #sidebar #chat-form #send-message-btn.icon-btn.primary:hover,
+:is(html, html.dark) .tool-btn.active:hover {
+  background: var(--glass-active-bg), rgba(var(--ink-rgb), 0.16) !important;
+  border-color: rgba(var(--ink-rgb), 0.40) !important;
+  filter: none;
+}
+/* a pressed (but not yet "active") state must never flash black either */
+:is(html, html.dark) .topbar-btn:active,
+:is(html, html.dark) .icon-btn:active,
+:is(html, html.dark) .tool-btn:active,
+:is(html, html.dark) .mobile-nav-btn:active,
+:is(html, html.dark) .tab-btn:active {
+  background: rgba(var(--ink-rgb), 0.14) !important;
+  color: var(--text-primary) !important;
+}
+:is(html, html.dark) .btn-spinner,
+:is(html, html.dark) .topbar-btn.btn-primary .btn-spinner { border-top-color: var(--text-primary); }
+:is(html, html.dark) .slide-thumb-pencil:hover { color: var(--text-primary) !important; }
+
+/* small solid dots / fills → translucent glass tint */
+:is(html, html.dark) .progress-bar-fill,
+:is(html, html.dark) .progress-file-fill { background: linear-gradient(90deg, rgba(var(--ink-rgb), 0.55), rgba(var(--ink-rgb), 0.30)); }
+:is(html, html.dark) .progress-bar-fill.indeterminate::before { background: rgba(var(--ink-rgb), 0.55); }
+:is(html, html.dark) .progress-steps i.done,
+.dark .progress-steps i.done,
+:is(html, html.dark) .ai-model-active-dot,
+.loading-dots span { background: rgba(var(--ink-rgb), 0.60); }
+#resize-handle:active { background: rgba(var(--ink-rgb), 0.18) !important; }
+:is(html, html.dark) .logo-mark {
+  background: var(--glass-active-bg), var(--glass-active-tint);
+  color: var(--text-primary);
+  border: 1px solid var(--glass-active-border);
+  box-shadow: var(--glass-active-shadow);
+}
+
+/* ---------- E. Scrims / overlays / pure-black leftovers ---------- */
+#ai-models-modal,
+#edit-page-modal,
+#page-range-modal,
+#global-progress-overlay { background: var(--soft-scrim) !important; backdrop-filter: blur(14px) saturate(130%); -webkit-backdrop-filter: blur(14px) saturate(130%); }
+#pdf-preview-loading { background: var(--soft-scrim); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+:is(html, html.dark) .ai-models-modal-card,
+:is(html, html.dark) #edit-page-modal .modal-card,
+:is(html, html.dark) #page-range-modal .modal-card,
+:is(html, html.dark) .progress-card,
+:is(html, html.dark) .pdf-preview-loading-card { box-shadow: var(--glass-shadow), 0 40px 90px -30px rgba(30, 34, 50, 0.45); }
+:is(html, html.dark) #at-command-menu,
+:is(html, html.dark) #toast-notification,
+:is(html, html.dark) #topbar::before { box-shadow: var(--glass-shadow); }
+.dark #at-command-menu,
+.dark #toast-notification { background: var(--glass-bg-strong); }
+.dark .tool-select option,
+.dark #active-model-select option,
+.dark #creation-mode-select option { background: #202128 !important; color: var(--text-primary) !important; }
+:focus-visible { outline-color: rgba(var(--ink-rgb), 0.45); }
+:is(html, html.dark) .tab-item.active,
+:is(html, html.dark) .tab-btn.active,
+:is(html, html.dark) .mobile-nav-btn.active { background: var(--glass-bg-strong) !important; }
+
+/* ---------- F. Mobile: system status / navigation bar follows the theme ---------- */
+html { background-color: var(--bg-color); }
+@media (max-width: 850px) {
+  html, body { background-color: var(--bg-color); min-height: 100%; }
+
+  /* frosted strips that sit exactly under the system status bar and the
+     system navigation bar (gesture pill / 3-button bar) – light in light
+     theme, smoky-dark in dark theme. They are zero-height on devices with no inset. */
+  body::before,
+  body::after {
+    content: '';
+    position: fixed;
+    left: 0; right: 0;
+    pointer-events: none;
+    z-index: 2147483000;
+    background: var(--system-bar-bg);
+    backdrop-filter: blur(18px) saturate(160%);
+    -webkit-backdrop-filter: blur(18px) saturate(160%);
+  }
+  body::before { top: 0;    height: env(safe-area-inset-top, 0px); }
+  body::after  { bottom: 0; height: env(safe-area-inset-bottom, 0px); }
+}
+@media (display-mode: standalone), (display-mode: fullscreen), (display-mode: minimal-ui) {
+  html { background-color: var(--bg-color); }
+}
+
+/* ---------- G. Fallbacks (must come last so they still win) ---------- */
+@media (prefers-reduced-transparency: reduce) {
+  :root { --glass-active-bg: linear-gradient(#ffffff, #f1f1f3); --user-bubble-bg: #ececef; --system-bar-bg: #f4f4f6; }
+  .dark { --glass-active-bg: linear-gradient(#3a3d49, #30323c); --user-bubble-bg: #34363f; --system-bar-bg: #1a1b21; }
+}
+
+/* --------------------------------------------------------------------------
+   NOTE (not CSS): the Android/iOS system navigation-bar colour itself comes from
+   <meta name="theme-color">. Add this once in your JS so it follows the theme:
+
+   const syncThemeColor = () => {
+     const dark = document.documentElement.classList.contains('dark');
+     let m = document.querySelector('meta[name="theme-color"]');
+     if (!m) { m = document.createElement('meta'); m.name = 'theme-color'; document.head.appendChild(m); }
+     m.content = dark ? '#1a1b21' : '#f4f4f6';
+   };
+   new MutationObserver(syncThemeColor).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+   syncThemeColor();
+   -------------------------------------------------------------------------- */
