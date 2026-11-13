@@ -9220,3 +9220,83 @@ input[type="checkbox"], input[type="radio"], input[type="range"], progress { acc
 .dark #document-view-container .doc-page-canvas:not(.pdf-export-measure-page):not([class*="pdf-format-"]) .page-footer-number {
   color: rgba(223, 226, 234, 0.55) !important;
 }
+
+/* ==========================================================================
+   DARK MODE — WHITE EDITOR PAGE (Settings → Preference →
+   "Black editor page in dark mode" = OFF).
+   JS puts class "editor-page-light" on <html> when the switch is off.
+   Default (switch ON) = deep-black page from the DARK MODE FIX block above.
+   Keep at the very END of the file.
+   ========================================================================== */
+:is(html.editor-page-light.dark, html.editor-page-light .dark)
+  #document-view-container .doc-page-canvas:not(.pdf-export-measure-page):not([class*="pdf-format-"]) {
+  background: #ffffff;
+  color: #111827;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.20);
+  caret-color: #000000 !important;
+  color-scheme: light !important;
+}
+:is(html.editor-page-light.dark, html.editor-page-light .dark)
+  #document-view-container .doc-page-canvas:not(.pdf-export-measure-page):not([class*="pdf-format-"])
+  :is(p, li, span, div, td, th, blockquote, figcaption, caption, dt, dd, a, strong, b, em, i) {
+  color: #111827 !important;
+}
+:is(html.editor-page-light.dark, html.editor-page-light .dark)
+  #document-view-container .doc-page-canvas:not(.pdf-export-measure-page):not([class*="pdf-format-"])
+  :is(h1, h2, h3, h4, h5, h6) {
+  color: #111827 !important;
+  border-bottom-color: rgba(0, 0, 0, 0.18) !important;
+}
+:is(html.editor-page-light.dark, html.editor-page-light .dark)
+  #document-view-container .doc-page-canvas:not(.pdf-export-measure-page):not([class*="pdf-format-"]) table th {
+  background: #f2f2f2 !important;
+  color: #111827 !important;
+  border-color: #8c8c8c !important;
+}
+:is(html.editor-page-light.dark, html.editor-page-light .dark)
+  #document-view-container .doc-page-canvas:not(.pdf-export-measure-page):not([class*="pdf-format-"]) table td {
+  background: transparent !important;
+  border-color: #8c8c8c !important;
+}
+:is(html.editor-page-light.dark, html.editor-page-light .dark)
+  #document-view-container .doc-page-canvas:not(.pdf-export-measure-page):not([class*="pdf-format-"]) table tr:nth-child(even) td {
+  background: transparent !important;
+}
+:is(html.editor-page-light.dark, html.editor-page-light .dark)
+  #document-view-container .doc-page-canvas:not(.pdf-export-measure-page):not([class*="pdf-format-"]) .page-footer-number {
+  color: rgba(17, 24, 39, 0.6) !important;
+}
+
+/* callout boxes: back to their light pastel look on the white page */
+:is(html.editor-page-light.dark, html.editor-page-light .dark)
+  #document-view-container .doc-page-canvas:not(.pdf-export-measure-page) .block-example { background: #f0fdf4 !important; }
+:is(html.editor-page-light.dark, html.editor-page-light .dark)
+  #document-view-container .doc-page-canvas:not(.pdf-export-measure-page) .block-definition { background: #eff6ff !important; }
+:is(html.editor-page-light.dark, html.editor-page-light .dark)
+  #document-view-container .doc-page-canvas:not(.pdf-export-measure-page) .block-warning { background: #fef2f2 !important; }
+:is(html.editor-page-light.dark, html.editor-page-light .dark)
+  #document-view-container .doc-page-canvas:not(.pdf-export-measure-page) .block-important { background: #fff7ed !important; }
+:is(html.editor-page-light.dark, html.editor-page-light .dark)
+  #document-view-container .doc-page-canvas:not(.pdf-export-measure-page) .block-note { background: #fdf2f8 !important; }
+:is(html.editor-page-light.dark, html.editor-page-light .dark)
+  #document-view-container .doc-page-canvas:not(.pdf-export-measure-page) .block-solution {
+  background: #f5f3ff !important;
+  border-color: #ddd6fe !important;
+}
+:is(html.editor-page-light.dark, html.editor-page-light .dark)
+  #document-view-container .doc-page-canvas:not(.pdf-export-measure-page) .sol-label {
+  background: #ede9fe !important;
+  color: #6d28d9 !important;
+}
+:is(html.editor-page-light.dark, html.editor-page-light .dark)
+  #document-view-container .doc-page-canvas:not(.pdf-export-measure-page) .math-step-label { color: #6d28d9 !important; }
+:is(html.editor-page-light.dark, html.editor-page-light .dark)
+  #document-view-container .doc-page-canvas:not(.pdf-export-measure-page) .sol-given { color: #334155 !important; }
+:is(html.editor-page-light.dark, html.editor-page-light .dark)
+  #document-view-container .doc-page-canvas:not(.pdf-export-measure-page) .math-final-answer {
+  background: #ecfdf5 !important;
+  border-color: #10b981 !important;
+  color: #047857 !important;
+}
+:is(html.editor-page-light.dark, html.editor-page-light .dark)
+  #document-view-container .doc-page-canvas:not(.pdf-export-measure-page) .math-step { border-left-color: #c4b5fd !important; }
