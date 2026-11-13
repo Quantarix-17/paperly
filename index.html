@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover">
   <!-- ===== PWA: installable app ===== -->
   <link rel="manifest" href="manifest.webmanifest">
-  <meta name="theme-color" content="#4f7df3">
+  <meta name="theme-color" id="paperly-theme-color" content="#e9e9eb">
   <!-- Apply last-selected theme instantly (no light/dark flash on launch) -->
   <script src="js/paperly-keyguard.js"></script>   <!-- must stay the FIRST script: keeps API keys out of localStorage -->
   <script>try{['theme','mode','local_owner','sync_state'].forEach(function(k){var o=localStorage.getItem('pata_'+k);if(o!==null){if(localStorage.getItem('paperly_'+k)===null)localStorage.setItem('paperly_'+k,o);localStorage.removeItem('pata_'+k);}});}catch(e){}</script>
@@ -14,6 +14,8 @@
     ['app','auth','firestore'].forEach(function(m){var l=document.createElement('link');l.rel='modulepreload';l.href='https://www.gstatic.com/firebasejs/10.14.1/firebase-'+m+'.js';document.head.appendChild(l);});
   }}catch(e){}</script>
   <script>try{if(localStorage.getItem('paperly_theme')==='dark')document.documentElement.classList.add('dark');}catch(e){}</script>
+  <!-- Keep the browser / status-bar colour in sync with the black-white glass theme (light: grey, dark: black) -->
+  <script>(function(){function s(){try{var m=document.getElementById('paperly-theme-color');if(m)m.setAttribute('content',document.documentElement.classList.contains('dark')?'#000000':'#e9e9eb');}catch(e){}}s();try{new MutationObserver(s).observe(document.documentElement,{attributes:true,attributeFilter:['class']});}catch(e){}})();</script>
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="PaperLy">
@@ -182,53 +184,53 @@
     #tab-bar,#desktop-close-all-tabs-btn,#topbar-newtab-fab-btn,#tab-new-btn{display:none!important}
     :root,html,body{--tabbar-height:0px!important;--mobile-tabbar:0px!important}
     #topbar #paperly-avatar-btn{position:relative;display:flex!important;align-items:center;justify-content:center;flex:0 0 auto;width:38px!important;height:38px!important;
-      padding:0;border:0;border-radius:50%!important;background:#4f7df3;color:#fff;cursor:pointer;font:700 16px Inter,Arial,sans-serif;box-shadow:0 2px 8px rgba(79,125,243,.35)}
+      padding:0;border:1px solid var(--glass-border,rgba(0,0,0,.09));border-radius:50%!important;background:var(--accent-gradient,#111);color:var(--on-primary,#fff);cursor:pointer;font:700 16px Inter,Arial,sans-serif;box-shadow:0 6px 16px -6px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.22)}
     #paperly-avatar-btn .pa-face{width:100%;height:100%;border-radius:50%;overflow:hidden;display:flex;align-items:center;justify-content:center}
     #paperly-avatar-btn .pa-face img{width:100%;height:100%;object-fit:cover;display:block}
     #paperly-avatar-btn .pa-face svg{width:22px;height:22px}
-    #paperly-avatar-btn .pa-dot{position:absolute;right:-1px;bottom:-1px;width:11px;height:11px;border-radius:50%;background:#9ca3af;border:2px solid #fff;box-sizing:border-box}
-    html.dark #paperly-avatar-btn .pa-dot{border-color:#111827}
-    #paperly-avatar-btn.ok .pa-dot{background:#22c55e}#paperly-avatar-btn.busy .pa-dot{background:#f59e0b}#paperly-avatar-btn.err .pa-dot{background:#ef4444}
+    #paperly-avatar-btn .pa-dot{position:absolute;right:-1px;bottom:-1px;width:11px;height:11px;border-radius:50%;background:#9a9aa2;border:2px solid #fff;box-sizing:border-box}
+    html.dark #paperly-avatar-btn .pa-dot{border-color:#121214}
+    #paperly-avatar-btn.ok .pa-dot{background:var(--text-primary,#0c0c0e)}#paperly-avatar-btn.busy .pa-dot{background:#9a9aa2;animation:paDotPulse 1.1s ease-in-out infinite}#paperly-avatar-btn.err .pa-dot{background:#e5484d}
+    @keyframes paDotPulse{0%,100%{opacity:.35}50%{opacity:1}}
     #topbar .logo-text{margin-left:2px;color:var(--text-primary)!important;font-weight:800!important}
-    .brand-l,.logo .logo-text .brand-l,#paperly-gate h1 .brand-l{color:#2563eb!important;-webkit-text-fill-color:#2563eb;font-weight:inherit!important}
-    html.dark .brand-l,html.dark .logo .logo-text .brand-l,html.dark #paperly-gate h1 .brand-l{color:#4f8cff!important;-webkit-text-fill-color:#4f8cff}
+    .brand-l,.logo .logo-text .brand-l,#paperly-gate h1 .brand-l{color:var(--text-secondary,#5d5d64)!important;-webkit-text-fill-color:var(--text-secondary,#5d5d64);font-weight:inherit!important}
   </style>
   <!-- PaperLy: sign-in gate -->
   <style id="paperly-gate-css">
+    /* sign-in screen — black & white glass */
     #paperly-gate{position:fixed;inset:0;z-index:2147482000;display:flex;align-items:center;justify-content:center;padding:20px;
-      background:linear-gradient(135deg,#eef2ff,#f8fafc 55%,#e0e7ff);color:#0f172a;font-family:Inter,"Hind Siliguri",Arial,sans-serif;overflow:auto}
-    html.dark #paperly-gate{background:linear-gradient(135deg,#0b1020,#111827 55%,#1e1b4b);color:#f1f5f9}
+      background:radial-gradient(60vmax 46vmax at 88% -8%,rgba(255,255,255,.95),transparent 62%),radial-gradient(48vmax 40vmax at -8% 108%,rgba(0,0,0,.16),transparent 62%),radial-gradient(34vmax 28vmax at 55% 45%,rgba(0,0,0,.06),transparent 70%),linear-gradient(160deg,#f4f4f5,#dcdcdf);
+      color:var(--text-primary,#0c0c0e);font-family:Inter,"Hind Siliguri",Arial,sans-serif;overflow:auto}
+    html.dark #paperly-gate{background:radial-gradient(56vmax 44vmax at 88% -8%,rgba(255,255,255,.16),transparent 62%),radial-gradient(46vmax 38vmax at -8% 108%,rgba(255,255,255,.09),transparent 62%),radial-gradient(30vmax 26vmax at 55% 45%,rgba(255,255,255,.04),transparent 70%),linear-gradient(160deg,#0b0b0c,#000);color:var(--text-primary,#f4f4f5)}
     #paperly-gate[hidden]{display:none!important}
     html.paperly-guest #paperly-gate{display:none!important}
-    #paperly-gate .pg-card{width:100%;max-width:400px;text-align:center;background:#fff;border-radius:26px;padding:30px 26px 24px;box-shadow:0 24px 70px rgba(30,41,99,.22)}
-    html.dark #paperly-gate .pg-card{background:#111827;box-shadow:0 24px 70px rgba(0,0,0,.55)}
-    #paperly-gate .pg-logo{width:72px;height:72px;border-radius:18px;object-fit:cover}
+    #paperly-gate .pg-card{width:100%;max-width:400px;text-align:center;background:var(--glass-bg-strong,rgba(255,255,255,.8));border:1px solid var(--glass-border,rgba(0,0,0,.09));border-radius:28px;padding:30px 26px 24px;
+      -webkit-backdrop-filter:blur(32px) saturate(180%);backdrop-filter:blur(32px) saturate(180%);box-shadow:var(--glass-shadow,0 24px 70px rgba(0,0,0,.25))}
+    html.dark #paperly-gate .pg-card{background:var(--glass-bg-strong,rgba(16,16,18,.8))}
+    #paperly-gate .pg-logo{width:72px;height:72px;border-radius:18px;object-fit:cover;box-shadow:0 10px 24px -10px rgba(0,0,0,.5)}
     #paperly-gate h1{margin:10px 0 2px;font-size:24px;font-weight:800;letter-spacing:-.01em}
     #paperly-gate h2{margin:14px 0 8px;font-size:19px;font-weight:800}
-    #paperly-gate .pg-muted{margin:0 0 16px;font-size:14px;line-height:1.6;color:#64748b}
-    html.dark #paperly-gate .pg-muted{color:#94a3b8}
-    #paperly-gate .pg-warn{margin:0 0 14px;font-size:13px;color:#b45309;background:#fef3c7;border-radius:10px;padding:8px 10px}
-    #paperly-gate .pg-err{min-height:18px;margin:2px 0 10px;font-size:13px;color:#ef4444}
-    #paperly-gate .pg-btn{width:100%;border:0;border-radius:14px;padding:13px 16px;font:700 15px Inter,Arial,sans-serif;background:#4f7df3;color:#fff;cursor:pointer;
+    #paperly-gate .pg-muted{margin:0 0 16px;font-size:14px;line-height:1.6;color:var(--text-secondary,#5d5d64)}
+    #paperly-gate .pg-warn{margin:0 0 14px;font-size:13px;color:var(--text-secondary,#5d5d64);background:rgba(var(--ink-rgb,12,12,14),.06);border:1px solid var(--glass-border,rgba(0,0,0,.09));border-radius:12px;padding:8px 10px}
+    #paperly-gate .pg-err{min-height:18px;margin:2px 0 10px;font-size:13px;color:#e5484d}
+    #paperly-gate .pg-btn{width:100%;border:0;border-radius:14px;padding:13px 16px;font:700 15px Inter,Arial,sans-serif;background:var(--accent-gradient,#111);color:var(--on-primary,#fff);cursor:pointer;box-shadow:0 10px 22px -10px rgba(0,0,0,.55),inset 0 1px 0 rgba(255,255,255,.22);
       display:flex;align-items:center;justify-content:center;gap:10px;transition:transform .12s,opacity .12s}
     #paperly-gate .pg-btn:active{transform:scale(.97)}#paperly-gate .pg-btn[disabled]{opacity:.55;cursor:not-allowed}
-    #paperly-gate .pg-google{background:#fff;color:#1f2937;border:1px solid #dadce0}
-    html.dark #paperly-gate .pg-google{background:#1f2937;color:#f1f5f9;border-color:#374151}
-    #paperly-gate .pg-sec{background:rgba(148,163,184,.2);color:inherit;flex:1}
+    #paperly-gate .pg-google{background:var(--glass-bg-soft,rgba(255,255,255,.4));color:var(--text-primary,#0c0c0e);border:1px solid var(--glass-border,rgba(0,0,0,.12));box-shadow:inset 0 1px 0 var(--glass-hi,rgba(255,255,255,.8));-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
+    #paperly-gate .pg-sec{background:rgba(var(--ink-rgb,12,12,14),.08);color:inherit;flex:1;box-shadow:none}
     #paperly-gate .pg-row{display:flex;gap:8px;margin-bottom:12px}
     #paperly-gate .pg-in{width:100%;box-sizing:border-box;margin-bottom:10px;padding:12px 14px;font:500 15px Inter,Arial,sans-serif;border-radius:12px;
-      border:1px solid #cbd5e1;background:transparent;color:inherit}
-    #paperly-gate .pg-in:focus{outline:2px solid #4f7df3;border-color:transparent}
-    #paperly-gate .pg-link{display:block;width:100%;margin-top:8px;border:0;background:transparent;color:#64748b;font:600 13.5px Inter,Arial,sans-serif;padding:8px;cursor:pointer}
-    #paperly-gate .pg-key{font:700 16px ui-monospace,Menlo,Consolas,monospace;letter-spacing:.04em;word-break:break-all;padding:14px;border-radius:12px;background:rgba(79,125,243,.1);margin-bottom:12px;user-select:all}
-    #paperly-gate .pg-check{display:flex;gap:8px;align-items:center;justify-content:center;font-size:13.5px;margin:4px 0 14px;cursor:pointer}
-    #paperly-gate .pg-spin{width:38px;height:38px;margin:22px auto 14px;border-radius:50%;border:4px solid rgba(79,125,243,.2);border-top-color:#4f7df3;animation:pgspin .8s linear infinite}
-    #paperly-gate .pg-tabs{display:flex;gap:4px;padding:4px;margin:14px 0 4px;border-radius:14px;background:rgba(148,163,184,.18)}
+      border:1px solid var(--glass-border,rgba(0,0,0,.14));background:rgba(var(--ink-rgb,12,12,14),.04);color:inherit}
+    #paperly-gate .pg-in:focus{outline:2px solid rgba(var(--ink-rgb,12,12,14),.5);border-color:transparent}
+    #paperly-gate .pg-link{display:block;width:100%;margin-top:8px;border:0;background:transparent;color:var(--text-secondary,#5d5d64);font:600 13.5px Inter,Arial,sans-serif;padding:8px;cursor:pointer}
+    #paperly-gate .pg-key{font:700 16px ui-monospace,Menlo,Consolas,monospace;letter-spacing:.04em;word-break:break-all;padding:14px;border-radius:12px;background:rgba(var(--ink-rgb,12,12,14),.07);border:1px solid var(--glass-border,rgba(0,0,0,.09));margin-bottom:12px;user-select:all}
+    #paperly-gate .pg-check{display:flex;gap:8px;align-items:center;justify-content:center;font-size:13.5px;margin:4px 0 14px;cursor:pointer;accent-color:var(--primary-color,#111)}
+    #paperly-gate .pg-spin{width:38px;height:38px;margin:22px auto 14px;border-radius:50%;border:4px solid rgba(var(--ink-rgb,12,12,14),.15);border-top-color:var(--primary-color,#111);animation:pgspin .8s linear infinite}
+    #paperly-gate .pg-tabs{display:flex;gap:4px;padding:4px;margin:14px 0 4px;border-radius:14px;background:rgba(var(--ink-rgb,12,12,14),.07);border:1px solid var(--glass-border,rgba(0,0,0,.09))}
     #paperly-gate .pg-tabs button{flex:1;border:0;border-radius:10px;padding:9px 10px;font:700 14px Inter,Arial,sans-serif;background:transparent;color:inherit;cursor:pointer;opacity:.7}
-    #paperly-gate .pg-tabs button.on{background:#4f7df3;color:#fff;opacity:1}
-    #paperly-gate .pg-list{list-style:none;margin:0 0 16px;padding:0;text-align:left;font-size:13.5px;line-height:1.9;color:#475569}
-    html.dark #paperly-gate .pg-list{color:#cbd5e1}
-    #paperly-gate .pg-list li::before{content:"✓ ";color:#22c55e;font-weight:800}
+    #paperly-gate .pg-tabs button.on{background:var(--accent-gradient,#111);color:var(--on-primary,#fff);opacity:1}
+    #paperly-gate .pg-list{list-style:none;margin:0 0 16px;padding:0;text-align:left;font-size:13.5px;line-height:1.9;color:var(--text-secondary,#5d5d64)}
+    #paperly-gate .pg-list li::before{content:"✓ ";color:var(--text-primary,#0c0c0e);font-weight:800}
     @keyframes pgspin{to{transform:rotate(360deg)}}
   </style>
 
@@ -251,17 +253,14 @@
     #topbar-export-btn .export-caret{margin-left:2px;opacity:.7;transition:transform .18s ease}
     #topbar-export-btn[aria-expanded="true"] .export-caret{transform:rotate(180deg)}
     #export-menu-panel{display:none;position:fixed;z-index:100000;min-width:190px;padding:6px;border-radius:14px;
-      background:rgba(255,255,255,.38);border:1px solid rgba(255,255,255,.6);
-      -webkit-backdrop-filter:blur(18px) saturate(170%);backdrop-filter:blur(18px) saturate(170%);
-      box-shadow:0 10px 30px rgba(15,23,42,.14),inset 0 1px 0 rgba(255,255,255,.65)}
+      background:var(--glass-bg-strong,rgba(255,255,255,.8));border:1px solid var(--glass-border,rgba(0,0,0,.09));color:var(--text-primary,#0c0c0e);
+      -webkit-backdrop-filter:blur(28px) saturate(180%);backdrop-filter:blur(28px) saturate(180%);
+      box-shadow:var(--glass-shadow,0 10px 30px rgba(0,0,0,.2))}
     #export-menu-panel.open{display:block;animation:exportMenuIn .14s ease-out}
     @keyframes exportMenuIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
     #export-menu-panel button{display:block;width:100%;text-align:left;padding:9px 12px;border:0;border-radius:9px;
       background:transparent;color:inherit;font:inherit;font-size:13.5px;font-weight:600;cursor:pointer;white-space:nowrap}
-    #export-menu-panel button:hover,#export-menu-panel button:focus-visible{background:rgba(148,163,184,.22);outline:none}
-    html.dark #export-menu-panel{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.18);
-      box-shadow:0 10px 30px rgba(0,0,0,.4),inset 0 1px 0 rgba(255,255,255,.14)}
-    html.dark #export-menu-panel button:hover,html.dark #export-menu-panel button:focus-visible{background:rgba(255,255,255,.12)}
+    #export-menu-panel button:hover,#export-menu-panel button:focus-visible{background:rgba(var(--ink-rgb,12,12,14),.10);outline:none}
   </style>
 
   <!-- ===== Settings panel: horizontal tabs + subsections ===== -->
@@ -277,7 +276,8 @@
       margin:10px 0 14px;
       padding:4px;
       border-radius:12px;
-      background:rgba(148,163,184,.14);
+      background:rgba(var(--ink-rgb,12,12,14),.06);
+      border:1px solid var(--glass-border,rgba(0,0,0,.09));
       overflow-x:auto;
       scrollbar-width:none;
     }
@@ -296,15 +296,13 @@
       transition:background .15s ease, color .15s ease;
       opacity:.72;
     }
-    .settings-tab:hover{ background:rgba(148,163,184,.18); opacity:1; }
+    .settings-tab:hover{ background:rgba(var(--ink-rgb,12,12,14),.10); opacity:1; }
     .settings-tab.active{
-      background:#4f7df3;
-      color:#fff;
+      background:var(--accent-gradient,#111);
+      color:var(--on-primary,#fff);
       opacity:1;
-      box-shadow:0 2px 8px rgba(79,125,243,.3);
+      box-shadow:0 6px 14px -6px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.2);
     }
-    html.dark .settings-tab-bar{ background:rgba(148,163,184,.1); }
-    html.dark .settings-tab.active{ background:#4f8cff; }
 
     .settings-tab-panel{ padding:4px 0 8px; }
     .settings-tab-panel[hidden]{ display:none !important; }
@@ -312,7 +310,7 @@
     .settings-subsection{
       margin:14px 0 6px;
       padding:12px 0 4px;
-      border-top:1px solid rgba(148,163,184,.22);
+      border-top:1px solid rgba(var(--ink-rgb,12,12,14),.12);
     }
     .settings-subsection:first-child{ border-top:0; margin-top:0; padding-top:0; }
     .settings-subsection-title{
@@ -320,10 +318,9 @@
       font-size:13px;
       font-weight:700;
       letter-spacing:.01em;
-      color:var(--text-primary,#0f172a);
+      color:var(--text-primary,#0c0c0e);
       opacity:.9;
     }
-    html.dark .settings-subsection-title{ color:#f1f5f9; }
 
     #settings-switches-container{ min-height:8px; }
   </style>
@@ -613,22 +610,22 @@
 
   <!-- ===== PAGE RANGE MODAL ===== -->
   <div id="page-range-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); backdrop-filter:blur(8px); z-index:10000; align-items:center; justify-content:center; padding:16px; box-sizing:border-box;">
-    <div class="modal-card" style="background:var(--surface-color); padding:28px 30px 24px; border-radius:var(--radius-lg); max-width:400px; width:100%; box-shadow:var(--shadow-lg); box-sizing:border-box; border:1px solid var(--border-color);">
+    <div class="modal-card" style="background:var(--glass-bg-strong); -webkit-backdrop-filter:blur(32px) saturate(180%); backdrop-filter:blur(32px) saturate(180%); padding:28px 30px 24px; border-radius:26px; max-width:400px; width:100%; box-shadow:var(--glass-shadow); box-sizing:border-box; border:1px solid var(--glass-border);">
       <h3 style="margin-bottom:4px; font-family:var(--font-display); font-size:1.1rem;">Select Page Range</h3>
       <p class="modal-desc" style="color:var(--text-secondary); font-size:0.82rem; margin-bottom:8px; line-height:1.5;">Enter start and end page numbers (1‑based).</p>
       <span id="page-range-total-badge" class="total-pages-badge" style="font-size:0.7rem; font-weight:700; color:var(--primary-color); background:var(--primary-light); padding:2px 12px; border-radius:var(--radius-pill); display:inline-block; margin-bottom:10px;">Total: 0 pages</span>
       
       <div class="range-inputs" style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
-        <input type="number" id="range-start" min="1" value="1" style="flex:1; padding:8px 10px; border:1.5px solid var(--border-color); border-radius:var(--radius-sm); background:var(--bg-color); color:var(--text-primary); font-size:0.95rem; box-sizing:border-box; min-width:0;">
+        <input type="number" id="range-start" min="1" value="1" style="flex:1; padding:8px 10px; border:1.5px solid var(--glass-border); border-radius:var(--radius-sm); background:rgba(var(--ink-rgb),.05); color:var(--text-primary); font-size:0.95rem; box-sizing:border-box; min-width:0;">
         <span style="flex:0 0 auto; color:var(--text-secondary);">to</span>
-        <input type="number" id="range-end" min="1" value="50" style="flex:1; padding:8px 10px; border:1.5px solid var(--border-color); border-radius:var(--radius-sm); background:var(--bg-color); color:var(--text-primary); font-size:0.95rem; box-sizing:border-box; min-width:0;">
+        <input type="number" id="range-end" min="1" value="50" style="flex:1; padding:8px 10px; border:1.5px solid var(--glass-border); border-radius:var(--radius-sm); background:rgba(var(--ink-rgb),.05); color:var(--text-primary); font-size:0.95rem; box-sizing:border-box; min-width:0;">
       </div>
 
       <div class="range-presets" style="display:flex; flex-wrap:wrap; gap:4px; margin-bottom:14px;">
-        <button onclick="document.getElementById('range-start').value=1; document.getElementById('range-end').value=document.getElementById('page-range-modal').dataset.totalPages || 1;" style="padding:4px 12px; border:1px solid var(--border-color); background:var(--bg-color); color:var(--text-secondary); border-radius:var(--radius-pill); font-size:0.7rem; font-weight:600; cursor:pointer; transition:all 0.15s ease;">All</button>
-        <button onclick="document.getElementById('range-start').value=1; document.getElementById('range-end').value=Math.min(10, document.getElementById('page-range-modal').dataset.totalPages || 1);" style="padding:4px 12px; border:1px solid var(--border-color); background:var(--bg-color); color:var(--text-secondary); border-radius:var(--radius-pill); font-size:0.7rem; font-weight:600; cursor:pointer; transition:all 0.15s ease;">First 10</button>
-        <button onclick="var total=parseInt(document.getElementById('page-range-modal').dataset.totalPages)||1; var start=Math.max(1, total-9); document.getElementById('range-start').value=start; document.getElementById('range-end').value=total;" style="padding:4px 12px; border:1px solid var(--border-color); background:var(--bg-color); color:var(--text-secondary); border-radius:var(--radius-pill); font-size:0.7rem; font-weight:600; cursor:pointer; transition:all 0.15s ease;">Last 10</button>
-        <button onclick="document.getElementById('range-start').value=1; document.getElementById('range-end').value=document.getElementById('page-range-modal').dataset.totalPages || 1;" style="padding:4px 12px; border:1px solid var(--border-color); background:var(--bg-color); color:var(--text-secondary); border-radius:var(--radius-pill); font-size:0.7rem; font-weight:600; cursor:pointer; transition:all 0.15s ease;">Reset</button>
+        <button onclick="document.getElementById('range-start').value=1; document.getElementById('range-end').value=document.getElementById('page-range-modal').dataset.totalPages || 1;" style="padding:4px 12px; border:1px solid var(--border-color); background:var(--glass-bg-soft); color:var(--text-secondary); border-radius:var(--radius-pill); font-size:0.7rem; font-weight:600; cursor:pointer; transition:all 0.15s ease;">All</button>
+        <button onclick="document.getElementById('range-start').value=1; document.getElementById('range-end').value=Math.min(10, document.getElementById('page-range-modal').dataset.totalPages || 1);" style="padding:4px 12px; border:1px solid var(--border-color); background:var(--glass-bg-soft); color:var(--text-secondary); border-radius:var(--radius-pill); font-size:0.7rem; font-weight:600; cursor:pointer; transition:all 0.15s ease;">First 10</button>
+        <button onclick="var total=parseInt(document.getElementById('page-range-modal').dataset.totalPages)||1; var start=Math.max(1, total-9); document.getElementById('range-start').value=start; document.getElementById('range-end').value=total;" style="padding:4px 12px; border:1px solid var(--border-color); background:var(--glass-bg-soft); color:var(--text-secondary); border-radius:var(--radius-pill); font-size:0.7rem; font-weight:600; cursor:pointer; transition:all 0.15s ease;">Last 10</button>
+        <button onclick="document.getElementById('range-start').value=1; document.getElementById('range-end').value=document.getElementById('page-range-modal').dataset.totalPages || 1;" style="padding:4px 12px; border:1px solid var(--border-color); background:var(--glass-bg-soft); color:var(--text-secondary); border-radius:var(--radius-pill); font-size:0.7rem; font-weight:600; cursor:pointer; transition:all 0.15s ease;">Reset</button>
       </div>
 
       <div class="modal-actions" style="display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap;">
@@ -640,14 +637,14 @@
 
   <!-- ===== EDIT PAGE MODAL ===== -->
   <div id="edit-page-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); backdrop-filter:blur(8px); z-index:10000; align-items:center; justify-content:center; padding:16px; box-sizing:border-box;">
-    <div class="modal-card" style="background:var(--surface-color); padding:28px 30px 24px; border-radius:var(--radius-lg); max-width:440px; width:100%; box-shadow:var(--shadow-lg); box-sizing:border-box; border:1px solid var(--border-color);">
+    <div class="modal-card" style="background:var(--glass-bg-strong); -webkit-backdrop-filter:blur(32px) saturate(180%); backdrop-filter:blur(32px) saturate(180%); padding:28px 30px 24px; border-radius:26px; max-width:440px; width:100%; box-shadow:var(--glass-shadow); box-sizing:border-box; border:1px solid var(--glass-border);">
       <h3 style="margin-bottom:4px; font-family:var(--font-display); font-size:1.1rem;">Edit Page(s)</h3>
       <p class="modal-desc" style="color:var(--text-secondary); font-size:0.82rem; margin-bottom:8px; line-height:1.5;">
         Enter page numbers separated by spaces (e.g., <b>9 10 11</b>).
       </p>
-      <span id="edit-page-hint" class="page-hint" style="font-size:0.7rem; color:var(--text-secondary); background:var(--bg-color); padding:4px 10px; border-radius:var(--radius-pill); display:inline-block; margin-bottom:10px;">Document has 0 pages</span>
+      <span id="edit-page-hint" class="page-hint" style="font-size:0.7rem; color:var(--text-secondary); background:rgba(var(--ink-rgb),.06); padding:4px 10px; border-radius:var(--radius-pill); display:inline-block; margin-bottom:10px;">Document has 0 pages</span>
 
-      <input type="text" id="edit-page-input" placeholder="e.g., 5 or 9 10 11" autocomplete="off" style="width:100%; padding:10px 12px; border:1.5px solid var(--border-color); border-radius:var(--radius-sm); background:var(--bg-color); color:var(--text-primary); font-size:0.95rem; box-sizing:border-box; transition:border 0.2s;">
+      <input type="text" id="edit-page-input" placeholder="e.g., 5 or 9 10 11" autocomplete="off" style="width:100%; padding:10px 12px; border:1.5px solid var(--glass-border); border-radius:var(--radius-sm); background:rgba(var(--ink-rgb),.05); color:var(--text-primary); font-size:0.95rem; box-sizing:border-box; transition:border 0.2s;">
       
       <div id="edit-page-chips" class="chip-preview" style="display:flex; flex-wrap:wrap; gap:4px; margin-top:8px; min-height:28px;"></div>
 
@@ -719,7 +716,7 @@
             <div style="font-size:.8rem;opacity:.75;margin:-4px 0 10px;">Only the <b>API URL</b> is required. Key, Model ID and Name are optional — local servers (FreeLLMAPI, Ollama, LM Studio…) often need neither.</div>
             <details style="margin-bottom:12px;">
               <summary style="cursor:pointer;font-size:.88rem;font-weight:600;">Paste anything (curl, URL, JSON, .env, "url key model")</summary>
-              <textarea id="ai-model-paste-input" rows="4" placeholder="curl http://localhost:3001/v1/chat/completions -H 'Authorization: Bearer sk-...' -d '{&quot;model&quot;:&quot;auto&quot;}'&#10;or: http://localhost:3001&#10;or: base_url=...  api_key=...  model=..." style="width:100%;box-sizing:border-box;padding:9px 11px;border:1.5px solid var(--border-color);border-radius:var(--radius-sm);background:var(--bg-color);color:var(--text-primary);font-size:.85rem;font-family:monospace;margin-top:8px;"></textarea>
+              <textarea id="ai-model-paste-input" rows="4" placeholder="curl http://localhost:3001/v1/chat/completions -H 'Authorization: Bearer sk-...' -d '{&quot;model&quot;:&quot;auto&quot;}'&#10;or: http://localhost:3001&#10;or: base_url=...  api_key=...  model=..." style="width:100%;box-sizing:border-box;padding:9px 11px;border:1.5px solid var(--glass-border);border-radius:var(--radius-sm);background:var(--bg-color);color:var(--text-primary);font-size:.85rem;font-family:monospace;margin-top:8px;"></textarea>
               <button type="button" class="topbar-btn" style="margin-top:6px;" onclick="handleSmartPasteModel()">Fill the form from this text</button>
             </details>
             <div class="ai-model-form-grid">
@@ -751,9 +748,9 @@
             <details style="margin-top:10px;">
               <summary style="cursor:pointer;font-size:.85rem;">Advanced: extra headers / extra body (JSON)</summary>
               <label for="ai-model-headers-input" style="display:block;font-size:.78rem;margin:8px 0 4px;">Extra headers</label>
-              <textarea id="ai-model-headers-input" rows="2" placeholder='{"X-Custom-Header": "value"}' style="width:100%;box-sizing:border-box;padding:9px 11px;border:1.5px solid var(--border-color);border-radius:var(--radius-sm);background:var(--bg-color);color:var(--text-primary);font-size:.85rem;font-family:monospace;"></textarea>
+              <textarea id="ai-model-headers-input" rows="2" placeholder='{"X-Custom-Header": "value"}' style="width:100%;box-sizing:border-box;padding:9px 11px;border:1.5px solid var(--glass-border);border-radius:var(--radius-sm);background:var(--bg-color);color:var(--text-primary);font-size:.85rem;font-family:monospace;"></textarea>
               <label for="ai-model-body-input" style="display:block;font-size:.78rem;margin:8px 0 4px;">Extra body fields <span style="opacity:.6">(a null value removes a field, e.g. {"temperature": null})</span></label>
-              <textarea id="ai-model-body-input" rows="2" placeholder='{"max_tokens": 16000}' style="width:100%;box-sizing:border-box;padding:9px 11px;border:1.5px solid var(--border-color);border-radius:var(--radius-sm);background:var(--bg-color);color:var(--text-primary);font-size:.85rem;font-family:monospace;"></textarea>
+              <textarea id="ai-model-body-input" rows="2" placeholder='{"max_tokens": 16000}' style="width:100%;box-sizing:border-box;padding:9px 11px;border:1.5px solid var(--glass-border);border-radius:var(--radius-sm);background:var(--bg-color);color:var(--text-primary);font-size:.85rem;font-family:monospace;"></textarea>
             </details>
             <label class="ai-model-json-label"><input type="checkbox" id="ai-model-json-checkbox" checked> Supports JSON response format</label>
             <label class="ai-model-json-label"><input type="checkbox" id="ai-model-search-checkbox" checked> Enable Google Search grounding (Gemini only)</label>
