@@ -679,6 +679,7 @@ function prefetchPDFExportAssets() {
     _vecEnsureLibs().catch(() => {});
     ensurePDFRenderLibraries().catch(() => {});
     _vecLoadKalpurushBytes();
+    _pdfEnsureKatexFonts();
   } catch (_) { /* best effort */ }
 }
 (function schedulePDFPrefetch() {
@@ -760,8 +761,8 @@ function _vecMeasurePage(root, fx, opts) {
   const spriteMode = !(opts && opts.noSprites) && window.PDF_FAST_EQUATIONS !== false;
   const base = root.getBoundingClientRect();
   const W = PDF_LAYOUT.width, H = PDF_LAYOUT.height;
-  const out = { boxes: [], words: [], ghosts: [], markers: [], eqs: [], sprites: [], needsRaster: false, kept: 0, reasons: [] };
-  const need = (why, el) => { out.needsRaster = true; if (out.reasons.length < 12) out.reasons.push(why + (el && el.tagName ? ':' + el.tagName.toLowerCase() + (el.className && el.className.baseVal === undefined ? '.' + el.className : '') : '')); };
+  const out = { boxes: [], words: [], ghosts: [], markers: [], eqs: [], sprites: [], needsRaster: false, sharp: false, kept: 0, reasons: [] };
+  const need = (why, el) => { out.needsRaster = true; if (/^(media|kept-word|pseudo-content|bgimage)/.test(why)) out.sharp = true; if (out.reasons.length < 12) out.reasons.push(why + (el && el.tagName ? ':' + el.tagName.toLowerCase() + (el.className && el.className.baseVal === undefined ? '.' + el.className : '') : '')); };
   const csMap = new Map();
   const CS = (el) => { let c = csMap.get(el); if (!c) { c = getComputedStyle(el); csMap.set(el, c); } return c; };
   const hiddenMap = new Map();
@@ -795,6 +796,7 @@ function _vecMeasurePage(root, fx, opts) {
     const se = (m.parentElement && m.parentElement.classList.contains('katex-display')) ? m.parentElement : m;
     const r = se.getBoundingClientRect();
     if (!(r.width > 1 && r.height > 1)) return false;
+    if (se.getClientRects().length > 1) return false;   // FIX: equation wrapped over 2 lines -> one box would cover both lines (garbled picture)
     if (opacityOf(se) !== 1) return false;
     for (let n = se; n; n = n.parentElement) {
       const c = CS(n);
@@ -1797,6 +1799,68 @@ function _pdfFixKatexSvg(root) {
   } catch (_) { /* never break the export */ }
 }
 
+
+// ===== FIX: INLINE EQUATIONS MUST NEVER BREAK IN THE MIDDLE =====
+// KaTeX lets an inline equation wrap after every "+", "=" or "∈" (between its .base boxes). The editor hides that with its own CSS, but the
+// export pages live outside the editor, so "(x1,y1)+(x2,y2)=(x1+" / "x2,y1+y2)" was split over two lines. The equation was then
+// measured as ONE tall box and drawn as a garbled picture. Inside the export pages an equation is now an unbreakable unit:
+// it moves to the next line as a whole, exactly like a long word.
+(function _pdfInstallEquationNoWrapCSS() {
+  try {
+    if (typeof document === 'undefined' || document.getElementById('pdf-equation-nowrap-css')) return;
+    const st = document.createElement('style');
+    st.id = 'pdf-equation-nowrap-css';
+    st.textContent = '.pdf-export-measure-page .katex, .pdf-export-measure-page .katex-eq, #image-pdf-render-host .katex, #image-pdf-render-host .katex-eq { white-space: nowrap !important; }';
+    (document.head || document.documentElement).appendChild(st);
+  } catch (_) { /* cosmetic */ }
+})();
+
+// An inline equation that is wider than the whole line cannot fit even alone: only THOSE may wrap again (as before), otherwise
+// they would run past the right margin.
+function _pdfFitWideInlineMath(root) {
+  try {
+    if (!root || !root.querySelectorAll) return 0;
+    let n = 0;
+    root.querySelectorAll('.katex').forEach((k) => {
+      if (k.closest('.katex-display') || (k.parentElement && k.parentElement.closest('.katex'))) return;
+      let blk = k.parentElement;
+      while (blk && blk !== root) {
+        const d = getComputedStyle(blk).display;
+        if (d !== 'inline' && d !== 'inline-block' && d !== 'contents' && d !== 'inline-flex') break;
+        blk = blk.parentElement;
+      }
+      if (!blk) return;
+      const cs = getComputedStyle(blk);
+      const avail = blk.getBoundingClientRect().width - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0) - (parseFloat(cs.borderLeftWidth) || 0) - (parseFloat(cs.borderRightWidth) || 0);
+      if (avail > 20 && k.getBoundingClientRect().width > avail + 1) {
+        k.style.setProperty('white-space', 'normal', 'important');
+        const eq = k.closest('.katex-eq'); if (eq) eq.style.setProperty('white-space', 'normal', 'important');
+        n++;
+      }
+    });
+    return n;
+  } catch (_) { return 0; }
+}
+
+// KaTeX fonts (KaTeX_Size1-4 hold the big brackets/braces) are loaded lazily by the browser, only when a glyph is first used. If an export
+// measures / draws a tall delimiter before its font arrived, the glyph pieces get the wrong width and a fallback shape. Load them all once.
+let _pdfKatexFontsPromise = null;
+function _pdfEnsureKatexFonts() {
+  if (_pdfKatexFontsPromise) return _pdfKatexFontsPromise;
+  _pdfKatexFontsPromise = (async () => {
+    try {
+      if (!document.fonts || typeof document.fonts.load !== 'function') return;
+      const specs = ['KaTeX_Main', 'bold KaTeX_Main', 'italic KaTeX_Main', 'italic KaTeX_Math', 'bold italic KaTeX_Math', 'KaTeX_AMS',
+        'KaTeX_Size1', 'KaTeX_Size2', 'KaTeX_Size3', 'KaTeX_Size4', 'KaTeX_Caligraphic', 'KaTeX_Fraktur', 'KaTeX_SansSerif', 'KaTeX_Script', 'KaTeX_Typewriter'];
+      await Promise.race([
+        Promise.all(specs.map((sp) => document.fonts.load(sp.replace(/KaTeX_[A-Za-z0-9]+/, (m) => '16px "' + m + '"')).catch(() => null))),
+        new Promise((r) => setTimeout(r, 3000))
+      ]);
+    } catch (_) { /* best effort */ }
+  })();
+  return _pdfKatexFontsPromise;
+}
+
 // ---- drawing one measured page ----
 function _vecDrawPage(page, data, fx) {
   const { rgb } = window.PDFLib;
@@ -2005,7 +2069,7 @@ async function _vecRenderSprites(list, scale) {
       while (i < list.length && (h < MAXH || !group.length)) {
         const u = list[i++];
         const slot = document.createElement('div');
-        slot.style.cssText = `display:block;box-sizing:content-box;padding:${P}px;margin:0 0 6px 0;font-size:${u.fs};color:${u.color};` + (u.disp ? `width:${u.w}px;` : 'width:fit-content;');
+        slot.style.cssText = `display:block;box-sizing:content-box;padding:${P}px;margin:0 0 6px 0;font-size:${u.fs};color:${u.color};white-space:nowrap;` + (u.disp ? `width:${u.w}px;` : 'width:fit-content;');
         slot.appendChild(u.node);
         sheet.appendChild(slot);
         group.push({ u, slot });
@@ -2073,6 +2137,7 @@ async function _exportTruePDFVectorInBrowser(btn) {
     prog.set(2, 'Loading PDF engine');
     await Promise.all([_vecEnsureLibs(), ensurePDFRenderLibraries(), _vecLoadKalpurushBytes()]);
     await _pdfEnsureDocFonts();        // Times New Roman + Kalpurush must be active BEFORE pages are laid out and measured
+    await _pdfEnsureKatexFonts();      // KaTeX_Size1-4 (tall brackets/braces) too
     _pdfWarnIfNoKalpurush();
     prog.set(8, 'Preparing document');
     await runPreExportLocalQualityPass();
@@ -2284,6 +2349,7 @@ async function exportToImagePDF(btn) {
     const libs = await ensurePDFRenderLibraries();
     _assertPDFRenderLibraries(libs, true);
     await _pdfEnsureDocFonts();
+    await _pdfEnsureKatexFonts();
     await runPreExportLocalQualityPass();
     prog.set(12, 'Laying out pages');
 
@@ -2450,11 +2516,15 @@ async function _renderImagePDFPage(sourcePage, host, pageNumber, requestedScale,
     _pdfNativizeSimpleMath(el);                                       // plain equations (1 L = 1000 mL ...) become real text
     _pdfFixBengaliInMath(el);                                         // Bengali inside equations: one text node per word (matra stay attached)
     if (typeof nextFrame === 'function') await nextFrame();            // one frame is enough for the layout to settle
+    _pdfFitWideInlineMath(el);                                        // FIX: only equations wider than a whole line may wrap
+    _pdfFixKatexSvg(el);                                              // FIX: tall ( ) [ ] { } are redrawn as ONE svg in the LIVE, laid-out page (before they were only
+                                                                      //      redone inside html2canvas' hidden clone, where layout/fonts are not ready -> short, broken brackets)
     if (T) { T.settle = (T.settle || 0) + now() - t0; t0 = now(); }
     if (vec) {                                   // vector mode: measure text/boxes, skip the raster pass if nothing needs it
       vecData = vec.measure(el);
       if (T) { T.measure = (T.measure || 0) + now() - t0; t0 = now(); }
       if (!vecData.needsRaster) { if (T) T.vectorOnlyPages = (T.vectorOnlyPages || 0) + 1; return null; }
+      try { console.info('[PDF] page ' + pageNumber + ' needs a picture layer because: ' + (vecData.reasons.join(', ') || '?') + (vecData.sharp ? '  (sharp)' : '  (flat colours only)')); } catch (_) {}
     }
     let canvas;
     try {
@@ -2462,7 +2532,11 @@ async function _renderImagePDFPage(sourcePage, host, pageNumber, requestedScale,
     const mobileLayout = typeof isMobileDeviceLayout === 'function' && isMobileDeviceLayout();
     // every page that still needs a raster layer (equations, charts, images, kept words) is captured sharp: Bengali inside equations/charts lives
     // in this layer, and at 1.5x it looked small and blurred (vowel signs smeared away from the letter)
-    const rasterScale = (vec && vecData) ? Math.max(scale, mobileLayout ? 2.4 : 3) : scale;
+    // SPEED: a 3x full-page capture is only needed when the picture layer holds equations / images / words. When it only holds flat
+    // boxes, borders, shadows or a tinted background, 1.5x looks identical and is ~4x fewer pixels (the biggest cost of a long export).
+    const rasterScale = (vec && vecData)
+      ? (vecData.sharp ? Math.max(scale, mobileLayout ? 2.4 : 3) : Math.min(scale, mobileLayout ? 1.4 : 1.6))
+      : scale;
     canvas = await window.html2canvas(el, {
       scale: rasterScale,
       imageTimeout: 4000,
@@ -3699,6 +3773,7 @@ async function computeTruePDFPages(htmlOverride) {
   try { _keepHeadingsWithNext(pageEls); } catch (e) { console.warn('keep-with-next pass failed:', e); }
 
   for (const page of pageEls) {
+    _pdfFitWideInlineMath(page);
     if (typeof shrinkOverflowingKatexEquations === 'function') shrinkOverflowingKatexEquations(page);
     if (typeof waitForPDFLayoutStable === 'function') await waitForPDFLayoutStable(page);
     if (typeof shrinkPageToFit === 'function') {
