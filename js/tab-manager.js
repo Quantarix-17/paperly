@@ -142,6 +142,7 @@ const STUDIO_SETTINGS_DEFAULTS = Object.freeze({
   showToasts: true,
   pdfOutlineReview: true,
   showPdfSummary: true,
+  aiSuggestions: true,
 });
 
 function _loadStudioSettings() {
@@ -157,6 +158,7 @@ function _loadStudioSettings() {
     if (typeof parsed.showToasts === 'boolean') out.showToasts = parsed.showToasts;
     if (typeof parsed.pdfOutlineReview === 'boolean') out.pdfOutlineReview = parsed.pdfOutlineReview;
     if (typeof parsed.showPdfSummary === 'boolean') out.showPdfSummary = parsed.showPdfSummary;
+    if (typeof parsed.aiSuggestions === 'boolean') out.aiSuggestions = parsed.aiSuggestions;
     // Backward compat with the older key scheme
     if (parsed.ocrImagePolicy === 'keep-image' && typeof parsed.useAIVision !== 'boolean') out.useAIVision = false;
     if (parsed.ocrImagePolicy === 'read-vision' && typeof parsed.useAIVision !== 'boolean') out.useAIVision = true;
@@ -176,6 +178,7 @@ function _saveStudioSettings() {
       showToasts: s.showToasts !== false,
       pdfOutlineReview: s.pdfOutlineReview !== false,
       showPdfSummary: s.showPdfSummary !== false,
+      aiSuggestions: s.aiSuggestions !== false,
     }));
   } catch (_) {}
 }
@@ -548,6 +551,13 @@ window.renderStudioSwitches = function (containerEl, options) {
     desc: 'Show a summary card in the chat (pages, words, reading time, sections and more) once the PDF is ready.',
     onStatus: 'A summary card appears in the chat after the PDF is generated.',
     offStatus: 'No summary card is shown after the PDF is generated.'
+  }));
+  rows.push(buildSwitch({
+    key: 'aiSuggestions',
+    label: 'AI suggestions',
+    desc: 'When Chat is switched on next to Add, Edit or Refine, the AI offers a set of 3–5 ready-to-tap suggestions.',
+    onStatus: 'The AI shows 3–5 suggestion buttons you can tap to apply.',
+    offStatus: 'No suggestion buttons. The AI replies with a short plain message instead.'
   }));
 
   let resetBtn = null;
