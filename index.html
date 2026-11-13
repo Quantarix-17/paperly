@@ -23,7 +23,33 @@
   }}catch(e){}</script>
   <script>try{if(localStorage.getItem('paperly_theme')==='dark')document.documentElement.classList.add('dark');}catch(e){}</script>
   <!-- Keep the browser / status-bar colour in sync with the black-white glass theme (light: grey, dark: black) -->
-  <script>(function(){function s(){try{var m=document.getElementById('paperly-theme-color');if(m)var d=document.documentElement.classList.contains('dark')?'#000000':'#e9e9eb';m.setAttribute('content',d);var n=document.querySelector('meta[name=msapplication-navbutton-color]');if(n)n.setAttribute('content',d);}catch(e){}}s();try{new MutationObserver(s).observe(document.documentElement,{attributes:true,attributeFilter:['class']});}catch(e){}})();</script>
+  <script>(function(){function s(){try{var m=document.getElementById('paperly-theme-color');if(m){var d=document.documentElement.classList.contains('dark')?'#000000':'#e9e9eb';m.setAttribute('content',d);var n=document.querySelector('meta[name=msapplication-navbutton-color]');if(n)n.setAttribute('content',d);}}catch(e){}}s();try{new MutationObserver(s).observe(document.documentElement,{attributes:true,attributeFilter:['class']});}catch(e){}})();</script>
+  <!-- Startup: show ONE loading screen only (the gate). The "Working..." progress overlay stays hidden until boot finishes. -->
+  <style id="paperly-boot-guard-css">html.pl-boot #global-progress-overlay{display:none!important;visibility:hidden!important;opacity:0!important;pointer-events:none!important}</style>
+  <script>(function(){
+    var root=document.documentElement,done=false,mo=null,tm=null,iv=null;
+    root.classList.add('pl-boot');
+    function end(){
+      if(done)return;done=true;
+      root.classList.remove('pl-boot');
+      try{if(mo)mo.disconnect();}catch(e){}
+      clearTimeout(tm);clearInterval(iv);
+    }
+    function gateReady(){
+      try{
+        var g=document.getElementById('paperly-gate');
+        if(!g)return document.readyState==='complete';
+        if(g.hidden||getComputedStyle(g).display==='none')return document.readyState!=='loading';
+        var b=document.getElementById('pg-body');
+        return !!b&&!b.querySelector('.pg-spin');
+      }catch(e){return true;}
+    }
+    function check(){if(gateReady())end();}
+    try{mo=new MutationObserver(check);mo.observe(root,{childList:true,subtree:true,attributes:true,attributeFilter:['hidden','style','class']});}catch(e){}
+    window.addEventListener('load',check);
+    iv=setInterval(check,300);
+    tm=setTimeout(end,8000); /* safety: never block the overlay for long */
+  })();</script>
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="PaperLy">
