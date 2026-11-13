@@ -248,8 +248,8 @@ window.getTextFigurePolicy = function () {
   if (typeof document === 'undefined') return;
   function inject() {
     if (document.getElementById('studio-settings-style')) return;
-    const G = '#4ade80';              // light green accent
-    const GA = 'rgba(74,222,128,.18)'; // soft green fill
+    const G = 'rgba(var(--ink-rgb),.55)';  // neutral ink accent (theme-aware)
+    const GA = 'rgba(var(--ink-rgb),.10)'; // soft glass fill
     const st = document.createElement('style');
     st.id = 'studio-settings-style';
     st.textContent = [
@@ -272,13 +272,13 @@ window.getTextFigurePolicy = function () {
       /* ---- green instead of blue: active tab, focus, selection ---- */
       '.settings-tab-bar [data-tab].active,.settings-tab-bar [data-tab][aria-selected="true"]{background:' + GA + ' !important;color:inherit !important;border-color:' + G + ' !important;box-shadow:inset 0 -2px 0 ' + G + ' !important;}',
       '.settings-tab-bar [data-tab]:focus-visible,.settings-tab-panel :is(button,a,input,select,textarea,[role="switch"]):focus-visible{outline:2px solid ' + G + ' !important;outline-offset:2px;}',
-      '.settings-tab-panel :is(input,select,textarea):focus{border-color:' + G + ' !important;box-shadow:0 0 0 3px rgba(74,222,128,.28) !important;outline:none;}',
+      '.settings-tab-panel :is(input,select,textarea):focus{border-color:' + G + ' !important;box-shadow:0 0 0 3px rgba(var(--ink-rgb),.14) !important;outline:none;}',
       '.settings-tab-panel{accent-color:' + G + ';}',
-      '.settings-tab-panel ::selection{background:rgba(74,222,128,.35);}',
+      '.settings-tab-panel ::selection{background:rgba(var(--ink-rgb),.22);}',
       /* ---- studio rows ---- */
       '.studio-settings-list{display:flex;flex-direction:column;}',
-      '.studio-setting-row{display:flex;align-items:center;gap:16px;padding:12px 8px;border-bottom:1px solid rgba(148,163,184,.25);cursor:pointer;border-radius:8px;transition:background .15s;}',
-      '.studio-setting-row:hover,.studio-setting-row:focus-within{background:rgba(74,222,128,.09);}',
+      '.studio-setting-row{display:flex;align-items:center;gap:16px;padding:12px 8px;border-bottom:1px solid rgba(var(--ink-rgb),.12);cursor:pointer;border-radius:8px;transition:background .15s;}',
+      '.studio-setting-row:hover,.studio-setting-row:focus-within{background:rgba(var(--ink-rgb),.06);}',
       '.studio-setting-row.is-disabled{cursor:not-allowed;}',
       '.studio-setting-row.is-disabled:hover{background:transparent;}',
       '.studio-setting-text{flex:1;min-width:0;}',
@@ -294,20 +294,20 @@ window.getTextFigurePolicy = function () {
       'html.dark .studio-details-toggle:hover,body.dark .studio-details-toggle:hover,body.dark-mode .studio-details-toggle:hover,body.theme-dark .studio-details-toggle:hover,body.dark-theme .studio-details-toggle:hover,html.dark-mode .studio-details-toggle:hover,html.theme-dark .studio-details-toggle:hover,html.dark-theme .studio-details-toggle:hover,[data-theme="dark"] .studio-details-toggle:hover,.dark-theme .studio-details-toggle:hover,.dark-mode .studio-details-toggle:hover{color:#d1d5db !important;}',
       /* Fallback when the OS prefers dark AND the app hasn't explicitly set light theme */
       '@media (prefers-color-scheme: dark){html:not([data-theme="light"]):not(.light):not(.light-theme):not(.light-mode) .studio-details-toggle{color:#9ca3af;}html:not([data-theme="light"]):not(.light):not(.light-theme):not(.light-mode) .studio-details-toggle:hover{color:#d1d5db;}}',
-      '.studio-setting-details{margin-top:8px;padding:8px 10px;border-left:2px solid ' + G + ';background:rgba(74,222,128,.07);border-radius:0 6px 6px 0;cursor:default;}',
+      '.studio-setting-details{margin-top:8px;padding:8px 10px;border-left:2px solid ' + G + ';background:rgba(var(--ink-rgb),.05);border-radius:0 6px 6px 0;cursor:default;}',
       '.studio-setting-details[hidden]{display:none;}',
       '.studio-setting-desc{font-size:12.5px;opacity:.8;line-height:1.5;}',
       '.studio-setting-status{font-size:12px;margin-top:6px;line-height:1.45;opacity:.95;}',
       '.studio-setting-control{display:flex;flex-direction:column;align-items:center;gap:4px;flex:0 0 auto;}',
-      '.studio-switch{position:relative;width:46px;height:26px;border-radius:13px;border:none;cursor:pointer;background:rgba(148,163,184,.6);transition:background .2s;padding:0;flex:0 0 auto;}',
-      '.studio-switch[aria-checked="true"]{background:#16a34a;}',
+      '.studio-switch{position:relative;width:46px;height:26px;border-radius:13px;border:none;cursor:pointer;background:rgba(var(--ink-rgb),.28);transition:background .2s;padding:0;flex:0 0 auto;}',
+      '.studio-switch[aria-checked="true"]{background:var(--primary-color);}',
       '.studio-switch[aria-disabled="true"]{cursor:not-allowed;opacity:.5;}',
       '.studio-switch::after{content:"";position:absolute;inset:-9px -4px;}',
-      '.studio-switch-knob{position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.35);transition:transform .2s;}',
+      '.studio-switch-knob{position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:var(--on-primary,#fff);box-shadow:0 1px 3px rgba(0,0,0,.35);transition:transform .2s;}',
       '.studio-switch[aria-checked="true"] .studio-switch-knob{transform:translateX(20px);}',
       '.studio-switch-state{font-size:10.5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;opacity:.6;}',
       '.studio-settings-footer{display:flex;justify-content:flex-end;padding-top:12px;min-height:34px;}',
-      '.studio-reset-btn{font:inherit;font-size:12.5px;padding:6px 12px;border-radius:8px;border:1px solid rgba(148,163,184,.45);background:transparent;color:inherit;cursor:pointer;transition:background .15s;}',
+      '.studio-reset-btn{font:inherit;font-size:12.5px;padding:6px 12px;border-radius:8px;border:1px solid rgba(var(--ink-rgb),.22);background:transparent;color:inherit;cursor:pointer;transition:background .15s;}',
       '.studio-reset-btn:hover{background:' + GA + ';border-color:' + G + ';}',
       '.studio-reset-btn[hidden]{display:none;}',
       '@media (pointer:coarse){.studio-switch{width:52px;height:30px;border-radius:15px;}.studio-switch-knob{width:24px;height:24px;}.studio-switch[aria-checked="true"] .studio-switch-knob{transform:translateX(22px);}}',
