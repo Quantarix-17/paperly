@@ -1424,7 +1424,8 @@ function buildStandingInstructionBlock(text) {
       - Treat every sentence of the standing instruction as a hard requirement, not a preference.
       - Do not drift back to a harder or more academic style in later pages, later sections, examples, solutions or the summary; keep the same standard to the very end of a long document.
       - Before finishing, silently re-check the document against each line of the standing instruction and rewrite any part that does not comply.
-      - Following the instruction must never lower accuracy, drop requested content, or shorten the document: same completeness, same correctness, written the way the instruction demands.
+      - Following the instruction must never lower accuracy or drop content the request needs: same completeness, same correctness, written the way the instruction demands.
+      - If the standing instruction contains a document (PDF) length rule, that rule decides how long the document is (unless the user's own request names a length). Do not make the document longer or shorter than it says.
       - The standing instruction's own text decides where it applies. If it says it does or does not apply to exams / question papers / OMR sheets, follow that line exactly; for exam work, whatever it says about exams is binding.
   `;
 }
@@ -1736,16 +1737,15 @@ function buildSharedRules(isMonochromeMode, outputLanguage, options) {
   `;
 
   const detailInstruction = `
-    === ABSOLUTE REQUIREMENT: COMPREHENSIVE, DETAILED, UNTRUNCATED OUTPUT ===
-    You MUST produce the FULL, COMPLETE document as requested by the user. There is NO token limit or length restriction.
-    - Cover every subtopic, every example, every explanation, every formula, every application, every comparison, every table, and every useful visual (charts and illustrations only — never diagrams) that the user's request implies.
-    - Do NOT shorten, summarize, or abbreviate any part of the content.
-    - Do NOT omit any requested section, concept, or detail.
-    - If the user asks for a "detailed PDF", you MUST generate a very long, thorough document that leaves no relevant aspect untouched.
+    === DOCUMENT LENGTH AND DEPTH: RIGHT-SIZED, COMPLETE, NEVER TRUNCATED ===
+    Make the document exactly as long as the request needs: NO extending and NO shortening. Aim for a STANDARD level of length.
+    - Cover every part, concept, formula, example, table and useful visual (charts and illustrations only — never diagrams) that the request, and any attached source, genuinely needs, explained clearly and completely. Never leave out something the request needs, and never stop before the document is finished.
+    - Do NOT pad: no extra topics the user did not ask for, no repeated explanations, no filler examples, no restating the same point to fill pages.
+    - Do NOT compress: do not skip a requested section, a key step or a needed explanation just to be short.
+    - LENGTH PRIORITY (highest first): (1) the user's own wording in THIS request (e.g. "short", "summary", "detailed", "comprehensive", "in N pages"); (2) the length rules written in the standing Instruction below, if it has any; (3) this default: a typical single-topic request is about 4-8 A4 pages, a narrow topic is shorter, and a broad topic (several chapters or many sub-topics) is longer only as far as its real scope needs.
+    - Produce a very long, deeply detailed document ONLY when the user explicitly asks for detail, depth, a comprehensive or a long document.
     - The output must be self-contained and complete; do not assume the user knows anything about the topic.
-    - Include multiple examples, step-by-step derivations, side notes, and practical applications where appropriate.
-    - Use all the formatting and structural elements (headings, lists, tables, callouts) to create a professional, high-quality document.
-    - The user's instruction (e.g., "create a detailed PDF on quantum mechanics") must be fully realized in the content – the document must be about quantum mechanics with all necessary details, not a brief overview.
+    - Use headings, lists, tables and callouts where they help, to create a professional, high-quality document.
   `;
 
   // ===== STANDING "INSTRUCTION" (sidebar Instruction box) =====
@@ -1759,6 +1759,7 @@ function buildSharedRules(isMonochromeMode, outputLanguage, options) {
     'Keep necessary technical terms and explain each one briefly the first time it appears. Simplicity must never reduce correctness, precision or completeness.',
     'Do not write like a textbook. For difficult topics, build intuition first (a familiar example when it helps), then give the standard definition, formula or rule, then say in plain words what it means.',
     'Show math in small, logical steps. Do not announce the writing method.',
+    'Document length: standard level — exactly as long as the request needs, no extending and no shortening (a typical single-topic document is about 4-8 A4 pages). Follow any length the user asks for.',
     'Do NOT apply these style rules when creating exams, question papers or OMR sheets; use a standard academic exam format for those.'
   ].join('\n');
   let _standingInstruction = _builtInSimpleFallback;
@@ -1773,12 +1774,12 @@ function buildSharedRules(isMonochromeMode, outputLanguage, options) {
   return `
     ${detailInstruction}
     ${simpleByDefaultInstruction}
-    === CORE PHILOSOPHY: COMPLETENESS OVER BREVITY ===
-    Quality > Brevity | Completeness > Shortness | Clarity > Compression.
+    === CORE PHILOSOPHY: RIGHT-SIZED COMPLETENESS ===
+    Accuracy > Padding | Completeness of what is needed > Extra length | Clarity > Compression.
     Default behavior: UNDERSTAND → EXTRACT → PRESERVE → ORGANIZE → EXPLAIN.
-    Never delete useful information just to make output shorter.
-    Never compress a user-requested document merely to reduce tokens, request size, API calls, or page count.
-    When the task requests detail, depth and completeness take priority over brevity.
+    Never delete information the request needs just to make output shorter, and never add material the request does not need just to make output longer.
+    Do not stretch or squeeze a document to reach a page count; follow the DOCUMENT LENGTH AND DEPTH rule above.
+    When the user explicitly asks for detail, depth or a long document, go as deep as that request needs.
 
     === RESPONSE LANGUAGE RULE ===
     ${languageFormat !== 'default' ? `A LANGUAGE FORMAT has been explicitly selected by the user from the format menu (see the "LANGUAGE FORMAT" section below) — follow that format exactly for the document's language, regardless of what language the user's own message is written in. The rule below ("detect the user's language") only applies when no such format is selected.` : `Detect the language of the user's LATEST message (Bengali, English, or mixed) and reply in that SAME language.
@@ -2841,7 +2842,7 @@ async function generateDefaultPDFDirectMode(promptText, fileContextString, isMon
       `Language: ${outputLanguage}.\n` +
       `${buildSharedRules(isMonochromeMode, outputLanguage)}\n` +
       `${typeof buildAtCommandInstructionText === 'function' ? buildAtCommandInstructionText({ intent: 'create_pdf', length: null, language: outputLanguage, sectionMode: false, visual: (intentPayload && intentPayload.visual) || null }) : ''}\n` +      (pdfOutlineApproved ? `APPROVED PDF OUTLINE — follow this structure exactly and cover EVERY section and point in the final document:\n${_formatPDFOutlineForPrompt(intentPayload.pdfOutline)}\n` : '') +
-      `DEFAULT DIRECT RULES: create the complete requested document in one continuous generation flow. Follow the user's requested scope, depth and detail. There is no fixed page target. Do not intentionally compress a detailed request, and do not pad a simple request. Use natural headings, definitions, explanations, formulas, worked examples, tables and useful visuals where they materially improve the document.\n` +
+      `DEFAULT DIRECT RULES: create the complete requested document in one continuous generation flow at a STANDARD length — follow the DOCUMENT LENGTH AND DEPTH rule and the standing Instruction's length rule. Do not extend it with extra topics, repetition or filler, and do not shorten it by dropping what the request needs. Go long only if the user explicitly asked for a detailed, comprehensive or long document. Use natural headings, definitions, explanations, formulas, worked examples, tables and useful visuals where they materially improve the document.\n` +
       `OUTPUT SAFETY: the result must contain substantial visible explanatory content, not just a title or outline. Use semantic HTML suitable for the existing A4 pagination engine.`;
 
     let result = await callAIAPI([{ role: 'system', content: writingSystemPrompt }, { role: 'user', content: userPrompt }], {
@@ -5541,11 +5542,16 @@ async function sendChatPromptToAI() {
           : (typeof getCanvasContentWithLatexSource === 'function' ? getCanvasContentWithLatexSource().substring(0, 5000) : '');
         const askBn = /[\u0980-\u09FF]/.test(promptText);
         try {
-          const sugSystem = `You are a document co-pilot. The user selected the action "${intentPayload.intent.toUpperCase()}"${scopePages.length ? ` for page(s) ${scopePages.join(', ')}` : ''} and turned Chat on, so DO NOT change the document. Reply ONLY with JSON: {"action":"suggest","message":"1-3 short sentences","suggestions":[{"label":"short button text","prompt":"complete instruction that could be sent as the ${intentPayload.intent} request"}]}. Give 3 to 5 concrete, different suggestions grounded in the page content. Write in ${askBn ? 'Bengali' : 'the same language as the user'}.`;
+          // Preference "AI suggestions" (default ON). OFF -> no suggestion buttons,
+          // just a short plain reply.
+          const _sugOn = !(typeof window.getStudioSetting === 'function' && window.getStudioSetting('aiSuggestions') === false);
+          const sugSystem = !_sugOn
+            ? `You are a document co-pilot. The user selected the action "${intentPayload.intent.toUpperCase()}"${scopePages.length ? ` for page(s) ${scopePages.join(', ')}` : ''} and turned Chat on, so DO NOT change the document. Reply ONLY with JSON: {"action":"reply","message":"a short, helpful plain answer (1-4 sentences)"}. Do NOT include a suggestions list or options. Write in ${askBn ? 'Bengali' : 'the same language as the user'}.`
+            : `You are a document co-pilot. The user selected the action "${intentPayload.intent.toUpperCase()}"${scopePages.length ? ` for page(s) ${scopePages.join(', ')}` : ''} and turned Chat on, so DO NOT change the document. Reply ONLY with JSON: {"action":"suggest","message":"1-3 short sentences","suggestions":[{"label":"short button text","prompt":"complete instruction that could be sent as the ${intentPayload.intent} request"}]}. Give 3 to 5 concrete, different suggestions grounded in the page content. Write in ${askBn ? 'Bengali' : 'the same language as the user'}.`;
           const sugResult = await callAIAPI([{ role: 'system', content: sugSystem }, { role: 'user', content: `USER MESSAGE:\n${promptText}\n\nCURRENT CONTENT:\n${ctxText}` }], { forceJson: true, modelsUsedSet: modelsUsed, maxTokens: undefined });
           const sug = safeParseAIJson(sugResult.content, null);
           if (loadingElement && loadingElement.isConnected) loadingElement.remove();
-          const list = sug && Array.isArray(sug.suggestions) ? sug.suggestions.filter(x => x && (x.prompt || x.label)).slice(0, 5) : [];
+          const list = (_sugOn && sug && Array.isArray(sug.suggestions)) ? sug.suggestions.filter(x => x && (x.prompt || x.label)).slice(0, 5) : [];
           appendSuggestionMessageToUI((sug && sug.message) || (list.length ? 'Here are some ideas:' : String(sugResult.content || '').replace(/<[^>]*>/g, ' ').trim()), list);
         } catch (sugErr) {
           if (loadingElement && loadingElement.isConnected) loadingElement.remove();
