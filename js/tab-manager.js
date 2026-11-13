@@ -1926,6 +1926,10 @@ try {
       '#ai-models-modal .ai-models-modal-card{overscroll-behavior:contain;-webkit-overflow-scrolling:touch;scroll-behavior:auto;}',
       '#ai-models-modal .settings-tab-panel{overscroll-behavior:contain;}',
       '.studio-setting-row{contain:layout paint;}',
+      /* ---------- even left/right gutters so text no longer hugs the left edge ---------- */
+      '#ai-models-modal .settings-tab-panel{box-sizing:border-box;padding-left:max(16px,env(safe-area-inset-left)) !important;padding-right:max(16px,env(safe-area-inset-right)) !important;}',
+      '#ai-models-modal .settings-tab-panel .settings-subsection-title{margin-left:0 !important;padding-left:2px;}',
+      '#ai-models-modal .settings-tab-panel .studio-setting-row{padding-left:10px;padding-right:10px;}',
       /* ---------- mobile (bottom sheet stays as it is) ---------- */
       '@media (max-width:768px){',
       '  #ai-models-modal .ai-models-modal-card{touch-action:pan-y;will-change:scroll-position;transform:translateZ(0);}',
@@ -1937,6 +1941,7 @@ try {
       /* ---------- desktop: centred dialog ---------- */
       '@media (min-width:769px){',
       '  #ai-models-modal .settings-sheet-handle{display:none !important;}',
+      '  #ai-models-modal .settings-tab-panel{padding-left:26px !important;padding-right:26px !important;}',
       '  #ai-models-modal .ai-models-modal-card{position:fixed !important;top:50% !important;left:50% !important;right:auto !important;bottom:auto !important;margin:0 !important;transform:translate(-50%,-50%) !important;width:min(760px,92vw) !important;max-width:92vw !important;height:auto !important;max-height:min(86vh,820px) !important;border-radius:18px !important;overflow-y:auto;}',
       '  #ai-models-modal.settings-sheet-opening .ai-models-modal-card{animation:studioSettingsFadeIn .18s ease-out !important;}',
       '}',
@@ -1982,7 +1987,13 @@ window.initSettingsSheet = function () {
   };
   let wasShown = isShown();
   let openTimer = null;
+  let lastShownAt = 0;
   function onShown() {
+    // Play the open animation once per open: a second "shown" signal within
+    // 700ms (double-fired click/touch, two open functions) must not replay it.
+    const t0 = Date.now();
+    if (t0 - lastShownAt < 700) return;
+    lastShownAt = t0;
     card.style.transition = '';
     card.style.transform = '';
     card.scrollTop = 0;
@@ -2111,6 +2122,26 @@ window.initSettingsSheet = function () {
       detachBlocking();
     }, { passive: true });
   });
+
+  // Ignore a second openAIModelsModal() call that arrives right after the
+  // first (the same tap reaching two handlers). index.html and ai-models.js
+  // may define it, and scripts load in any order, so retry until it exists.
+  function installOpenGuard() {
+    const orig = window.openAIModelsModal;
+    if (typeof orig !== 'function') return false;
+    if (orig.__sheetOpenGuard) return true;
+    const guarded = function () {
+      if (isShown() && Date.now() - lastShownAt < 700) return undefined;
+      return orig.apply(this, arguments);
+    };
+    guarded.__sheetOpenGuard = true;
+    window.openAIModelsModal = guarded;
+    return true;
+  }
+  if (!installOpenGuard()) {
+    let tries = 0;
+    const iv = setInterval(function () { if (installOpenGuard() || ++tries > 20) clearInterval(iv); }, 500);
+  }
 
   if (wasShown) onShown();
   return true;
