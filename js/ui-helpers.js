@@ -8,10 +8,19 @@ let toastHideTimer = null;
 function displayToastNotification(msg) {
   const toast = document.getElementById('toast-notification');
   if (!toast) return;
+  toast.setAttribute('role', 'status');
+  toast.setAttribute('aria-live', 'polite');
   toast.textContent = msg;
-  toast.classList.add('show');
   clearTimeout(toastHideTimer);
-  toastHideTimer = setTimeout(() => toast.classList.remove('show'), 3000);
+  if (toast.classList.contains('show')) {
+    // already visible: let it slide down and rise again so the new message is noticed
+    toast.classList.remove('show');
+    void toast.offsetWidth;
+    setTimeout(() => toast.classList.add('show'), 60);
+  } else {
+    toast.classList.add('show');
+  }
+  toastHideTimer = setTimeout(() => toast.classList.remove('show'), 3200);
 }
 
 // ============================================================
@@ -766,7 +775,7 @@ const ProgressUI = {
 // ===== THEME MANAGEMENT =====
 // Keeps the mobile status bar / system navigation bar colour in step with the app theme.
 function syncSystemBarTheme(isDark) {
-  const color = isDark ? '#16171c' : '#f4f4f6';
+  const color = isDark ? '#16171c' : '#e9e9eb';
   try {
     let metas = Array.from(document.querySelectorAll('meta[name="theme-color"]'));
     if (!metas.length) {
@@ -996,7 +1005,7 @@ function toggleMobileReadingView() {
     if (readingPanel) { readingPanel.style.display = 'flex'; _syncReadingPanel(); }
     if (toggleBtn) toggleBtn.classList.add('active');
     if (previewArea) { previewArea.style.flexDirection = 'column'; previewArea.style.overflow = 'hidden'; }
-    displayToastNotification('📖 Reading mode — full-width reflow');
+    displayToastNotification('Reading mode — full-width reflow');
   } else {
     if (docContainer) docContainer.style.display = '';
     if (readingPanel) readingPanel.style.display = 'none';
@@ -1163,13 +1172,13 @@ function confirmEditPages() {
   if (!input) return;
   const raw = input.value.trim();
   if (!raw) {
-    displayToastNotification('⚠️ Please enter at least one page number.');
+    displayToastNotification('Please enter at least one page number.');
     return;
   }
   const parts = raw.split(/\s+/).filter(p => p.length > 0);
   const numbers = parts.map(n => parseInt(n, 10)).filter(n => !isNaN(n) && n > 0);
   if (numbers.length === 0) {
-    displayToastNotification('⚠️ Invalid page numbers. Use numbers separated by spaces (e.g., 9 10 11).');
+    displayToastNotification('Invalid page numbers. Use numbers separated by spaces (e.g., 9 10 11).');
     return;
   }
   const modal = document.getElementById('edit-page-modal');
