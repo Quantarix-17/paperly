@@ -6,6 +6,14 @@
   <!-- ===== PWA: installable app ===== -->
   <link rel="manifest" href="manifest.webmanifest">
   <meta name="theme-color" id="paperly-theme-color" content="#e9e9eb">
+  <meta name="color-scheme" content="light dark">
+  <meta name="msapplication-navbutton-color" content="#e9e9eb">
+  <!-- নিচের system navigation bar-এর পেছনে নীল না দেখিয়ে থিমের সাদা/কালো রঙ দেখাবে -->
+  <style id="paperly-system-bar-bg">
+    html{background-color:#e9e9eb;min-height:100%}
+    html.dark{background-color:#000}
+    @media (display-mode: standalone){html,body{overscroll-behavior:none}}
+  </style>
   <!-- Apply last-selected theme instantly (no light/dark flash on launch) -->
   <script src="js/paperly-keyguard.js"></script>   <!-- must stay the FIRST script: keeps API keys out of localStorage -->
   <script>try{['theme','mode','local_owner','sync_state'].forEach(function(k){var o=localStorage.getItem('pata_'+k);if(o!==null){if(localStorage.getItem('paperly_'+k)===null)localStorage.setItem('paperly_'+k,o);localStorage.removeItem('pata_'+k);}});}catch(e){}</script>
@@ -15,7 +23,7 @@
   }}catch(e){}</script>
   <script>try{if(localStorage.getItem('paperly_theme')==='dark')document.documentElement.classList.add('dark');}catch(e){}</script>
   <!-- Keep the browser / status-bar colour in sync with the black-white glass theme (light: grey, dark: black) -->
-  <script>(function(){function s(){try{var m=document.getElementById('paperly-theme-color');if(m)m.setAttribute('content',document.documentElement.classList.contains('dark')?'#000000':'#e9e9eb');}catch(e){}}s();try{new MutationObserver(s).observe(document.documentElement,{attributes:true,attributeFilter:['class']});}catch(e){}})();</script>
+  <script>(function(){function s(){try{var m=document.getElementById('paperly-theme-color');if(m)var d=document.documentElement.classList.contains('dark')?'#000000':'#e9e9eb';m.setAttribute('content',d);var n=document.querySelector('meta[name=msapplication-navbutton-color]');if(n)n.setAttribute('content',d);}catch(e){}}s();try{new MutationObserver(s).observe(document.documentElement,{attributes:true,attributeFilter:['class']});}catch(e){}})();</script>
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="PaperLy">
