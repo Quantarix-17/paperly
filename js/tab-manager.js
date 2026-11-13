@@ -1886,3 +1886,167 @@ try {
   window.addEventListener('pagehide', () => { try { TAB_MANAGER.flushPersist(); } catch (_) {} });
   document.addEventListener('visibilitychange', () => { if (document.hidden) { try { TAB_MANAGER.flushPersist(); } catch (_) {} } });
 } catch (_) { /* non-browser environment */ }
+
+// ========================================================================
+// SETTINGS MODAL AS A BOTTOM SHEET
+// ------------------------------------------------------------------------
+// The layout (card anchored to the bottom, max 2/3 of the screen so the top
+// third stays free) is pure CSS in index.html. This adds the behaviour:
+//   - slide-up animation every time the modal is shown
+//   - drag down to slide the sheet away:
+//       * from the handle or the header (mouse or touch), or
+//       * from anywhere in the body when the content is scrolled to the top
+//   - released past ~110px (or flicked down quickly) -> the modal closes;
+//     released earlier -> it springs back.
+// The modal is opened/closed by two different functions (index.html and
+// ai-models.js both define openAIModelsModal), so instead of wrapping them
+// we watch the element's own display style. Safe to call more than once.
+// ========================================================================
+window.initSettingsSheet = function () {
+  if (typeof document === 'undefined') return false;
+  const modal = document.getElementById('ai-models-modal');
+  if (!modal) return false;
+  if (modal.dataset.sheetInit === '1') return true;
+  const card = modal.querySelector('.ai-models-modal-card');
+  if (!card) return false;
+  modal.dataset.sheetInit = '1';
+
+  const CLOSE_DISTANCE = 110;   // px dragged down before release closes the sheet
+  const CLOSE_VELOCITY = 0.6;   // px/ms flick speed that also closes it
+  const SLOP = 4;               // px of downward pull before a body-drag begins
+
+  // Older markup without the handle: create it.
+  let handle = card.querySelector('.settings-sheet-handle');
+  if (!handle) {
+    handle = document.createElement('div');
+    handle.className = 'settings-sheet-handle';
+    handle.setAttribute('aria-hidden', 'true');
+    card.insertBefore(handle, card.firstChild);
+  }
+  const header = card.querySelector('.ai-models-modal-header');
+
+  // ---- slide-up on open ------------------------------------------------
+  const isShown = function () {
+    try { return window.getComputedStyle(modal).display !== 'none'; } catch (_) { return modal.style.display !== 'none'; }
+  };
+  let wasShown = isShown();
+  let openTimer = null;
+  function onShown() {
+    card.style.transition = '';
+    card.style.transform = '';
+    card.scrollTop = 0;
+    modal.classList.remove('settings-sheet-opening');
+    void modal.offsetWidth;                       // restart the animation
+    modal.classList.add('settings-sheet-opening');
+    clearTimeout(openTimer);
+    openTimer = setTimeout(function () { modal.classList.remove('settings-sheet-opening'); }, 400);
+  }
+  if (typeof MutationObserver !== 'undefined') {
+    new MutationObserver(function () {
+      const now = isShown();
+      if (now && !wasShown) onShown();
+      wasShown = now;
+    }).observe(modal, { attributes: true, attributeFilter: ['style', 'class'] });
+  }
+
+  // ---- drag core -------------------------------------------------------
+  let drag = null;                                // { startY, dy, lastY, lastT, v }
+  const now = function () { return (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now(); };
+
+  function start(y) {
+    clearTimeout(openTimer);
+    modal.classList.remove('settings-sheet-opening');
+    card.style.transition = 'none';
+    document.body.classList.add('settings-sheet-dragging');
+    drag = { startY: y, dy: 0, lastY: y, lastT: now(), v: 0 };
+  }
+  function move(y) {
+    if (!drag) return;
+    const t = now();
+    const dt = t - drag.lastT;
+    if (dt > 0) drag.v = 0.6 * ((y - drag.lastY) / dt) + 0.4 * drag.v;   // smoothed px/ms, + = downward
+    drag.lastY = y; drag.lastT = t;
+    drag.dy = Math.max(0, y - drag.startY);                              // never drag upward past rest
+    card.style.transform = drag.dy ? 'translateY(' + drag.dy + 'px)' : '';
+  }
+  function finishClose() {
+    card.style.transition = '';
+    try {
+      if (typeof window.closeAIModelsModal === 'function') window.closeAIModelsModal();
+      else modal.style.display = 'none';
+    } catch (_) { modal.style.display = 'none'; }
+    card.style.transform = '';                    // reset while hidden, ready for the next open
+  }
+  function end() {
+    if (!drag) return;
+    const dy = drag.dy, v = drag.v;
+    drag = null;
+    document.body.classList.remove('settings-sheet-dragging');
+    if (dy > CLOSE_DISTANCE || (v > CLOSE_VELOCITY && dy > 30)) {
+      card.style.transition = 'transform .2s ease-out';
+      card.style.transform = 'translateY(100%)';
+      setTimeout(finishClose, 200);
+    } else {
+      card.style.transition = 'transform .22s cubic-bezier(.2,.8,.2,1)';
+      card.style.transform = '';
+      setTimeout(function () { card.style.transition = ''; }, 240);
+    }
+  }
+
+  // ---- 1) handle + header: pointer events (mouse and touch) -------------
+  function bindPointerDrag(el) {
+    if (!el) return;
+    el.addEventListener('pointerdown', function (e) {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      if (e.target && e.target.closest && e.target.closest('button,a,input,select,textarea')) return;
+      start(e.clientY);
+      try { el.setPointerCapture(e.pointerId); } catch (_) {}
+    });
+    el.addEventListener('pointermove', function (e) { if (drag) move(e.clientY); });
+    ['pointerup', 'pointercancel'].forEach(function (t) {
+      el.addEventListener(t, function () { end(); });
+    });
+  }
+  bindPointerDrag(handle);
+  bindPointerDrag(header);
+
+  // ---- 2) body: touch drag, only when scrolled to the very top ----------
+  let cand = null;                                // { y, active }
+  card.addEventListener('touchstart', function (e) {
+    cand = null;
+    if (!e.touches || e.touches.length !== 1) return;
+    const t = e.target;
+    if (t && t.closest && t.closest('.settings-sheet-handle,.ai-models-modal-header,input,textarea,select,[contenteditable]')) return;
+    cand = { y: e.touches[0].clientY, active: false };
+  }, { passive: true });
+  card.addEventListener('touchmove', function (e) {
+    if (!cand || !e.touches || !e.touches.length) return;
+    const y = e.touches[0].clientY;
+    if (!cand.active) {
+      const dy = y - cand.y;
+      if (dy < -SLOP) { cand = null; return; }                 // scrolling up: ordinary scroll
+      if (card.scrollTop > 0 || dy < SLOP) return;             // not at top yet / not pulled enough
+      cand.active = true;
+      start(y);
+    }
+    if (e.cancelable) e.preventDefault();                      // stop the page/card from scrolling while dragging
+    move(y);
+  }, { passive: false });
+  ['touchend', 'touchcancel'].forEach(function (t) {
+    card.addEventListener(t, function () {
+      if (cand && cand.active) end();
+      cand = null;
+    }, { passive: true });
+  });
+
+  if (wasShown) onShown();
+  return true;
+};
+
+if (typeof document !== 'undefined') {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function () { try { window.initSettingsSheet(); } catch (e) { console.warn('[Settings] sheet init failed:', e); } });
+  } else {
+    try { window.initSettingsSheet(); } catch (e) { console.warn('[Settings] sheet init failed:', e); }
+  }
+}
