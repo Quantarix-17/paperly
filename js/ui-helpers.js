@@ -144,20 +144,20 @@ const ProgressUI = {
     st.id = 'progress-green-style';
     st.textContent =
       '#progress-steps{display:none!important}' +
-      '#global-progress-overlay{--pg-1:#16a34a;--pg-2:#22c55e;--pg-3:#4ade80;--pg-soft:rgba(34,197,94,.12);--pg-line:rgba(22,163,74,.28)}' +
-      '#global-progress-overlay #progress-bar-fill{background-color:#22c55e!important;background-image:linear-gradient(90deg,#16a34a,#4ade80,#16a34a)!important}' +
-      '#global-progress-overlay #progress-ring-fill{stroke:#22c55e!important}' +
-      '#global-progress-overlay #progress-ring-icon{color:#16a34a!important}' +
-      '#global-progress-overlay .progress-file-fill{background:linear-gradient(90deg,#16a34a,#4ade80)!important}' +
-      '#global-progress-overlay .progress-file-status.done{color:#16a34a!important}' +
-      'html.dark #global-progress-overlay #progress-ring-icon{color:#4ade80!important}' +
-      'html.dark #global-progress-overlay .progress-file-status.done{color:#4ade80!important}' +
+      '#global-progress-overlay{--pg-1:var(--primary-color);--pg-2:var(--primary-color);--pg-3:var(--text-secondary);--pg-soft:rgba(var(--ink-rgb),.08);--pg-line:rgba(var(--ink-rgb),.20)}' +
+      '#global-progress-overlay #progress-bar-fill{background-color:var(--primary-color)!important;background-image:var(--accent-gradient)!important}' +
+      '#global-progress-overlay #progress-ring-fill{stroke:var(--primary-color)!important}' +
+      '#global-progress-overlay #progress-ring-icon{color:var(--primary-color)!important}' +
+      '#global-progress-overlay .progress-file-fill{background:var(--accent-gradient)!important}' +
+      '#global-progress-overlay .progress-file-status.done{color:var(--text-secondary)!important}' +
+      'html.dark #global-progress-overlay #progress-ring-icon{color:var(--primary-color)!important}' +
+      'html.dark #global-progress-overlay .progress-file-status.done{color:var(--text-secondary)!important}' +
       // activity panel
       '.pa-wrap{width:100%;box-sizing:border-box;margin:10px 0 4px;padding:12px 14px;border-radius:14px;border:1px solid var(--pg-line);background:var(--pg-soft);text-align:left}' +
       '.pa-head{display:flex;align-items:center;gap:8px;margin-bottom:8px}' +
-      '.pa-live{width:8px;height:8px;border-radius:50%;background:var(--pg-2);box-shadow:0 0 0 0 rgba(34,197,94,.55);animation:pa-pulse 1.6s infinite}' +
+      '.pa-live{width:8px;height:8px;border-radius:50%;background:var(--pg-2);box-shadow:0 0 0 0 rgba(var(--ink-rgb),.55);animation:pa-pulse 1.6s infinite}' +
       '.pa-wrap.pa-done .pa-live{animation:none;box-shadow:none}' +
-      '.pa-title{font-size:12px;font-weight:700;letter-spacing:.02em;color:#15803d}' +
+      '.pa-title{font-size:12px;font-weight:700;letter-spacing:.02em;color:var(--text-primary)}' +
       '.pa-beat{margin-left:auto;font-size:11px;opacity:.7;font-variant-numeric:tabular-nums}' +
       '.pa-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}' +
       '.pa-chip{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;border:1px solid var(--pg-line);background:rgba(255,255,255,.55);font-size:11px;font-weight:600;font-variant-numeric:tabular-nums;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
@@ -165,27 +165,27 @@ const ProgressUI = {
       '.pa-log{list-style:none;margin:0;padding:0;padding-right:4px;position:relative;max-height:140px;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain}' +
       '.pa-log::-webkit-scrollbar{width:6px}' +
       '.pa-log::-webkit-scrollbar-track{background:transparent}' +
-      '.pa-log::-webkit-scrollbar-thumb{background:rgba(22,163,74,.35);border-radius:999px}' +
+      '.pa-log::-webkit-scrollbar-thumb{background:rgba(var(--ink-rgb),.35);border-radius:999px}' +
       '.pa-log li{position:relative;display:flex;gap:10px;align-items:flex-start;padding:0 0 9px 18px;font-size:12.5px;line-height:1.45;opacity:.62;animation:pa-in .28s ease both}' +
       '.pa-log li:last-child{padding-bottom:0}' +
       '.pa-log li::before{content:"";position:absolute;left:3px;top:6px;width:8px;height:8px;border-radius:50%;background:var(--pg-1)}' +
       '.pa-log li::after{content:"";position:absolute;left:6.5px;top:15px;bottom:-2px;width:1px;background:var(--pg-line)}' +
       '.pa-log li:last-child::after{display:none}' +
       '.pa-log li.active{opacity:1;font-weight:600}' +
-      '.pa-log li.active::before{background:var(--pg-2);box-shadow:0 0 0 3px rgba(34,197,94,.25);animation:pa-pulse 1.6s infinite}' +
+      '.pa-log li.active::before{background:var(--pg-2);box-shadow:0 0 0 3px rgba(var(--ink-rgb),.25);animation:pa-pulse 1.6s infinite}' +
       '.pa-wrap.pa-done .pa-log li.active::before{animation:none;box-shadow:none}' +
       '.pa-log .pa-t{flex:0 0 auto;min-width:38px;font-size:11px;opacity:.65;font-variant-numeric:tabular-nums}' +
       '.pa-log .pa-x{flex:1 1 auto;min-width:0;word-break:break-word}' +
-      'html.dark .pa-title{color:#4ade80}' +
+      'html.dark .pa-title{color:var(--text-primary)}' +
       'html.dark .pa-chip{background:rgba(255,255,255,.06)}' +
       // file-progress / live preview list — capped height, scrolls internally
       '#progress-live-preview-scroll{max-height:150px;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;padding-right:4px}' +
       '#progress-live-preview-scroll::-webkit-scrollbar{width:6px}' +
       '#progress-live-preview-scroll::-webkit-scrollbar-track{background:transparent}' +
-      '#progress-live-preview-scroll::-webkit-scrollbar-thumb{background:rgba(22,163,74,.35);border-radius:999px}' +
+      '#progress-live-preview-scroll::-webkit-scrollbar-thumb{background:rgba(var(--ink-rgb),.35);border-radius:999px}' +
       // AI quote box — capped so a long quote can't stretch the modal
       '#global-progress-overlay .progress-quote-container{max-height:150px;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain}' +
-      '@keyframes pa-pulse{0%{box-shadow:0 0 0 0 rgba(34,197,94,.55)}70%{box-shadow:0 0 0 7px rgba(34,197,94,0)}100%{box-shadow:0 0 0 0 rgba(34,197,94,0)}}' +
+      '@keyframes pa-pulse{0%{box-shadow:0 0 0 0 rgba(var(--ink-rgb),.55)}70%{box-shadow:0 0 0 7px rgba(var(--ink-rgb),0)}100%{box-shadow:0 0 0 0 rgba(var(--ink-rgb),0)}}' +
       '@keyframes pa-in{from{opacity:0;transform:translateY(4px)}to{opacity:inherit;transform:none}}' +
       '@media (prefers-reduced-motion:reduce){.pa-live,.pa-log li,.pa-log li.active::before{animation:none!important}}';
     document.head.appendChild(st);
