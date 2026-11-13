@@ -129,6 +129,13 @@ function _resetTransientChatState() {
 //        ON  → a document summary card is shown in chat after a PDF is made.
 //        OFF → no summary card is shown.
 //
+//   7) aiSuggestions       (default true) — AI suggestion buttons in chat.
+//
+//   8) darkEditorPage       (default true)
+//        ON  → in dark mode the editor page stays deep black.
+//        OFF → in dark mode the editor page stays white (like light mode).
+//        Applied by toggling the "editor-page-light" class on <html>.
+//
 // ocr.js reads the values through these compatibility shims:
 //   window.isOcrKeepImageSwitchOn()        → true  when images should NOT be read
 //   window.isTextFigureRecreateSwitchOn()  → true  only when vision is on AND keepFiguresAsImage is off
@@ -143,6 +150,7 @@ const STUDIO_SETTINGS_DEFAULTS = Object.freeze({
   pdfOutlineReview: true,
   showPdfSummary: true,
   aiSuggestions: true,
+  darkEditorPage: true,
 });
 
 function _loadStudioSettings() {
@@ -159,6 +167,7 @@ function _loadStudioSettings() {
     if (typeof parsed.pdfOutlineReview === 'boolean') out.pdfOutlineReview = parsed.pdfOutlineReview;
     if (typeof parsed.showPdfSummary === 'boolean') out.showPdfSummary = parsed.showPdfSummary;
     if (typeof parsed.aiSuggestions === 'boolean') out.aiSuggestions = parsed.aiSuggestions;
+    if (typeof parsed.darkEditorPage === 'boolean') out.darkEditorPage = parsed.darkEditorPage;
     // Backward compat with the older key scheme
     if (parsed.ocrImagePolicy === 'keep-image' && typeof parsed.useAIVision !== 'boolean') out.useAIVision = false;
     if (parsed.ocrImagePolicy === 'read-vision' && typeof parsed.useAIVision !== 'boolean') out.useAIVision = true;
@@ -179,6 +188,7 @@ function _saveStudioSettings() {
       pdfOutlineReview: s.pdfOutlineReview !== false,
       showPdfSummary: s.showPdfSummary !== false,
       aiSuggestions: s.aiSuggestions !== false,
+      darkEditorPage: s.darkEditorPage !== false,
     }));
   } catch (_) {}
 }
@@ -191,6 +201,21 @@ function _saveStudioSettings() {
 })();
 
 window.STUDIO_SETTINGS_DEFAULTS = STUDIO_SETTINGS_DEFAULTS;
+
+// ---- Dark-mode editor page (black / white) ----
+// Toggles the "editor-page-light" class on <html>; styles.css uses it to keep
+// the editor page white while the app is in dark mode. Runs immediately (no
+// flash on load) and again on every settings change / reset.
+function _applyDarkEditorPage() {
+  try {
+    const on = !window.APP_STATE || !window.APP_STATE.studioSettings ||
+      window.APP_STATE.studioSettings.darkEditorPage !== false;
+    document.documentElement.classList.toggle('editor-page-light', !on);
+  } catch (_) {}
+}
+_applyDarkEditorPage();
+window.applyDarkEditorPage = _applyDarkEditorPage;
+window.addEventListener('studio-settings-changed', _applyDarkEditorPage);
 
 window.getStudioSettings = function () {
   if (!window.APP_STATE) window.APP_STATE = {};
@@ -558,6 +583,13 @@ window.renderStudioSwitches = function (containerEl, options) {
     desc: 'When Chat is switched on next to Add, Edit or Refine, the AI offers a set of 3–5 ready-to-tap suggestions.',
     onStatus: 'The AI shows 3–5 suggestion buttons you can tap to apply.',
     offStatus: 'No suggestion buttons. The AI replies with a short plain message instead.'
+  }));
+  rows.push(buildSwitch({
+    key: 'darkEditorPage',
+    label: 'Black editor page in dark mode',
+    desc: 'Choose whether the editor page turns black when the app is in dark mode.',
+    onStatus: 'In dark mode the editor page stays black.',
+    offStatus: 'In dark mode the editor page stays white, like in light mode.'
   }));
 
   let resetBtn = null;
