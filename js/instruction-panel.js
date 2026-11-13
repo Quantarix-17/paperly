@@ -14,6 +14,9 @@
 //    general style rules do NOT apply to exams; the person can edit/remove it to change this.
 //    Reference books: section "9A. REFERENCE BOOK MODE (STRICT)" makes the AI copy definitions
 //    word for word from a book/reference the person attaches or names, build notes from it and cite it.
+//    Document length: section "10A. DOCUMENT (PDF) LENGTH" sets the standard PDF length (no extend,
+//    no shorten). app.js -> buildSharedRules() reads that rule through the same Instruction text, so
+//    editing 10A in the editor changes how long the AI's PDFs are.
 //    Priority in the AI prompt: the person's message > attached files > Instruction.
 //
 // Public API (window.PaperlyInstruction):
@@ -26,7 +29,7 @@
 (function () {
   'use strict';
 
-  var MAX_LEN = 14000;   // default text is ~12,500 chars; ~1,500 chars of headroom for edits
+  var MAX_LEN = 16500;   // default text is ~15,400 chars (incl. 10A document length); ~1,000 chars of headroom for edits
   var KEY = 'paperly_instruction_v1';
 
   var DEFAULT_TEXT = `Write clear, natural, professional, and easy-to-understand answers.
@@ -189,6 +192,20 @@ When the user is studying:
 * The normal pattern should be English grammar term or heading + English example + clear explanation in the user's language.
 * Do not translate standard English grammar terminology just to make the explanation simpler.
 
+### 10A. DOCUMENT (PDF) LENGTH
+
+This applies to PDFs, notes, and other documents the AI writes. It does not apply to exams (see section 11).
+
+* Write at a standard level: exactly as long as the request needs. Do not extend it and do not shorten it.
+* Cover every part the request asks for, with enough explanation, examples, and steps to be clear and correct.
+* Do not add extra topics, side stories, repeated explanations, or filler just to make the document longer.
+* Do not cut needed content just to make the document shorter.
+* A typical single-topic request (for example one concept or one chapter) is normally about 4-8 A4 pages. A narrow topic can be shorter. A broad request with many sub-topics can be longer, but only as far as its real scope needs.
+* If the user asks for a length or depth (for example "short", "summary", "detailed", "comprehensive", or "in 10 pages"), follow the user. Without such a request, use the standard level above.
+* If a file or reference is attached, its scope decides the length (see sections 9 and 9A), not a fixed page count.
+* Keep the same depth from the first page to the last.
+* To change the standard length, edit this section.
+
 ### 11. EXAM EXCEPTION
 
 Do NOT apply the general simplicity, language, formatting, or teaching-style instructions above when creating exams, question papers, model tests, MCQ sets, OMR sheets, or other formal assessment materials.
@@ -212,7 +229,7 @@ Before sending the answer, silently check:
 * Are the sentences appropriately short to medium in length without becoming too brief or fragmented?
 * Is it accurate and complete?
 * Did I explain difficult ideas naturally rather than announcing my method?
-* Did I match the requested depth and length?
+* Did I match the requested depth and length? For a document, is it at the standard length: not extended with filler and not shortened?
 * Did I avoid unnecessary repetition and formatting?
 * Did I answer the exact question?
 * If the answer is academic, grammar-related, scientific, mathematical, or otherwise technical, did I preserve standard subject terminology instead of unnecessarily translating or transliterating it?
