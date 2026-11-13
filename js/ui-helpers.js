@@ -154,10 +154,10 @@ const ProgressUI = {
     st.textContent =
       '#progress-steps{display:none!important}' +
       '#global-progress-overlay{--pg-1:var(--primary-color);--pg-2:var(--primary-color);--pg-3:var(--text-secondary);--pg-soft:rgba(var(--ink-rgb),.08);--pg-line:rgba(var(--ink-rgb),.20)}' +
-      '#global-progress-overlay #progress-bar-fill{background-color:transparent!important;background-image:linear-gradient(90deg,rgba(var(--ink-rgb),.55),rgba(var(--ink-rgb),.30))!important;box-shadow:inset 0 1px 0 var(--glass-hi,rgba(255,255,255,.4))}' +
-      '#global-progress-overlay #progress-ring-fill{stroke:rgba(var(--ink-rgb),.62)!important}' +
+      '#global-progress-overlay #progress-bar-fill{background-color:transparent!important;background-image:none!important;background-color:var(--primary-color)!important;box-shadow:none}' +
+      '#global-progress-overlay #progress-ring-fill{stroke:var(--primary-color)!important}' +
       '#global-progress-overlay #progress-ring-icon{color:var(--primary-color)!important}' +
-      '#global-progress-overlay .progress-file-fill{background:linear-gradient(90deg,rgba(var(--ink-rgb),.55),rgba(var(--ink-rgb),.30))!important}' +
+      '#global-progress-overlay .progress-file-fill{background:var(--primary-color)!important}' +
       '#global-progress-overlay .progress-file-status.done{color:var(--text-secondary)!important}' +
       'html.dark #global-progress-overlay #progress-ring-icon{color:var(--primary-color)!important}' +
       'html.dark #global-progress-overlay .progress-file-status.done{color:var(--text-secondary)!important}' +
@@ -169,7 +169,7 @@ const ProgressUI = {
       '.pa-title{font-size:12px;font-weight:700;letter-spacing:.02em;color:var(--text-primary)}' +
       '.pa-beat{margin-left:auto;font-size:11px;opacity:.7;font-variant-numeric:tabular-nums}' +
       '.pa-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}' +
-      '.pa-chip{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;border:1px solid var(--pg-line);background:rgba(255,255,255,.55);font-size:11px;font-weight:600;font-variant-numeric:tabular-nums;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
+      '.pa-chip{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;border:1px solid var(--pg-line);background:var(--surface-strong);font-size:11px;font-weight:600;font-variant-numeric:tabular-nums;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
       // live timeline — capped height, scrolls internally (kept compact)
       '.pa-log{list-style:none;margin:0;padding:0;padding-right:4px;position:relative;max-height:140px;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain}' +
       '.pa-log::-webkit-scrollbar{width:6px}' +
@@ -186,7 +186,7 @@ const ProgressUI = {
       '.pa-log .pa-t{flex:0 0 auto;min-width:38px;font-size:11px;opacity:.65;font-variant-numeric:tabular-nums}' +
       '.pa-log .pa-x{flex:1 1 auto;min-width:0;word-break:break-word}' +
       'html.dark .pa-title{color:var(--text-primary)}' +
-      'html.dark .pa-chip{background:rgba(255,255,255,.06)}' +
+      'html.dark .pa-chip{background:var(--surface-strong)}' +
       // file-progress / live preview list — capped height, scrolls internally
       '#progress-live-preview-scroll{max-height:150px;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;padding-right:4px}' +
       '#progress-live-preview-scroll::-webkit-scrollbar{width:6px}' +
@@ -775,7 +775,7 @@ const ProgressUI = {
 // ===== THEME MANAGEMENT =====
 // Keeps the mobile status bar / system navigation bar colour in step with the app theme.
 function syncSystemBarTheme(isDark) {
-  const color = isDark ? '#16171c' : '#e9e9eb';
+  const color = isDark ? '#0B1220' : '#F4F7FC';
   try {
     let metas = Array.from(document.querySelectorAll('meta[name="theme-color"]'));
     if (!metas.length) {
