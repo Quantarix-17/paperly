@@ -9124,3 +9124,99 @@ input[type="checkbox"], input[type="radio"], input[type="range"], progress { acc
   :root { --glass-active-bg: linear-gradient(rgba(37, 99, 235, 0.10), rgba(37, 99, 235, 0.10)); --user-bubble-bg: #2563EB; --system-bar-bg: #F4F7FC; }
   .dark { --glass-active-bg: linear-gradient(rgba(96, 165, 250, 0.16), rgba(96, 165, 250, 0.16)); --user-bubble-bg: #2563EB; --system-bar-bg: #0B1220; }
 }
+
+/* ==========================================================================
+   DARK MODE FIX — AI chat bubbles + deep-black editor page
+   (keep at the very END of the file)
+   ========================================================================== */
+
+/* ---------- 1. এআই চ্যাট মেসেজ: ডার্ক মোডে গাঢ় ব্যাকগ্রাউন্ড ---------- */
+.dark #chat-history .chat-message.ai {
+  background: #141a2a;
+  border: 1px solid #263553;
+  color: #e3e9f6;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.dark #chat-history .chat-message.ai :is(p, li, span, div, h1, h2, h3, h4, h5, h6, strong, em, td, th) {
+  color: inherit;
+}
+.dark #chat-history .chat-message.ai strong { color: #f1f5ff; }
+.dark #chat-history .chat-message.ai a { color: #7db8ff; }
+.dark #chat-history .chat-message.ai :not(pre) > code {
+  background: rgba(125, 184, 255, 0.12);
+  color: #bcd7ff;
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.dark #chat-history .chat-message.ai pre {
+  background: #0b0f1a;
+  color: #dbe4f5;
+  border: 1px solid #263553;
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+.dark #chat-history .chat-message.ai table :is(th, td) { border-color: #2a3a5c; }
+.dark #chat-history .chat-message.ai hr { border-color: #2a3a5c; }
+.dark #chat-history .chat-message.ai blockquote {
+  border-left: 3px solid #3b6fd8;
+  background: rgba(59, 111, 216, 0.10);
+  color: #cfd9ee;
+}
+.dark #chat-history .chat-message.system {
+  background: #101626;
+  border-color: #263553;
+  color: #9fb0cc;
+}
+.dark #chat-history .chat-message.error {
+  background: rgba(248, 113, 113, 0.10);
+  border-color: rgba(248, 113, 113, 0.35);
+  color: #fca5a5;
+}
+/* এআই মেসেজের নিচের বাটন (Copy/Retry/Edit) */
+.dark #chat-history .chat-message-action {
+  background: #101626;
+  border-color: #263553;
+  color: #9fb0cc;
+}
+.dark #chat-history .chat-message-action:hover {
+  background: rgba(96, 165, 250, 0.16);
+  color: #7db8ff;
+}
+
+/* ---------- 2. এডিটর: গভীর, আরামদায়ক কালো ---------- */
+.dark #preview-panel,
+.dark #document-view-container {
+  background: #050607;            /* ওয়ার্কস্পেস: প্রায় পিউর কালো */
+}
+
+.dark #document-view-container .doc-page-canvas:not(.pdf-export-measure-page):not([class*="pdf-format-"]) {
+  background: #0c0d10;            /* পেজ: ধুসর নয়, গভীর কালো */
+  color: #dfe2ea;                 /* সাদা নয়, চোখ-নরম অফ-হোয়াইট */
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.08),
+    0 14px 36px -12px rgba(0, 0, 0, 0.9);
+  caret-color: #e8eaf0 !important;
+}
+.dark #document-view-container .doc-page-canvas:not(.pdf-export-measure-page):not([class*="pdf-format-"])
+  :is(p, li, span, div, td, th, blockquote, figcaption, caption, dt, dd, a, strong, b, em, i) {
+  color: #dfe2ea !important;
+}
+.dark #document-view-container .doc-page-canvas:not(.pdf-export-measure-page):not([class*="pdf-format-"])
+  :is(h1, h2, h3, h4, h5, h6) {
+  color: #f0f2f7 !important;
+}
+.dark #document-view-container .doc-page-canvas:not(.pdf-export-measure-page):not([class*="pdf-format-"]) table th {
+  background: #17306b !important;
+  color: #f0f4ff !important;
+}
+.dark #document-view-container .doc-page-canvas:not(.pdf-export-measure-page):not([class*="pdf-format-"]) table :is(th, td) {
+  border-color: rgba(255, 255, 255, 0.16) !important;
+}
+.dark #document-view-container .doc-page-canvas:not(.pdf-export-measure-page):not([class*="pdf-format-"]) table tr:nth-child(even) td {
+  background: rgba(255, 255, 255, 0.03) !important;
+}
+.dark #document-view-container .doc-page-canvas:not(.pdf-export-measure-page):not([class*="pdf-format-"]) .page-footer-number {
+  color: rgba(223, 226, 234, 0.55) !important;
+}
