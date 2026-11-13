@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover">
   <!-- ===== PWA: installable app ===== -->
-  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="manifest" href="manifest.webmanifest?v=3">
   <meta name="theme-color" id="paperly-theme-color" content="#e9e9eb">
   <meta name="color-scheme" content="light dark">
   <meta name="msapplication-navbutton-color" content="#e9e9eb">
@@ -363,6 +363,15 @@
   <script>
     (function () { try { if (document.fonts && document.fonts.load) document.fonts.load('20px "Nazrul OMR"', 'কখগঘAaBb01১২').catch(function () {}); } catch (e) {} })();
   </script>
+  <!-- নিচের system navigation bar এলাকা: styles.css-এর পরে লোড হয়, তাই সবসময় সাদা/কালো থিম রঙ জেতে -->
+  <style id="paperly-navbar-fix">
+    html,html.dark{background-image:none!important}
+    html{background-color:#e9e9eb!important}
+    html.dark{background-color:#000!important}
+    body{min-height:100vh;min-height:100dvh}
+    html::after{content:"";position:fixed;left:0;right:0;bottom:0;height:max(env(safe-area-inset-bottom,0px),0px);background:#e9e9eb;pointer-events:none;z-index:2147483647}
+    html.dark::after{background:#000}
+  </style>
 </head>
 <body>
   <div id="paperly-gate" role="dialog" aria-modal="true" aria-label="Sign in">
