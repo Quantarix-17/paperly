@@ -117,6 +117,18 @@ function _resetTransientChatState() {
 //        ON  → the processing modal shows a fresh AI-written quote.
 //        OFF → no quote is shown and no AI request is made for quotes.
 //
+//   4) showToasts           (default true)
+//        ON  → toast notifications are shown.
+//        OFF → every displayToastNotification() call is silently skipped.
+//
+//   5) pdfOutlineReview     (default true)
+//        ON  → Create PDF first shows a compact outline for review/approval.
+//        OFF → Create PDF skips the outline step and writes the PDF directly.
+//
+//   6) showPdfSummary       (default true)
+//        ON  → a document summary card is shown in chat after a PDF is made.
+//        OFF → no summary card is shown.
+//
 // ocr.js reads the values through these compatibility shims:
 //   window.isOcrKeepImageSwitchOn()        → true  when images should NOT be read
 //   window.isTextFigureRecreateSwitchOn()  → true  only when vision is on AND keepFiguresAsImage is off
@@ -127,6 +139,9 @@ const STUDIO_SETTINGS_DEFAULTS = Object.freeze({
   useAIVision: true,
   keepFiguresAsImage: true,
   showQuotes: true,
+  showToasts: true,
+  pdfOutlineReview: true,
+  showPdfSummary: true,
 });
 
 function _loadStudioSettings() {
@@ -139,6 +154,9 @@ function _loadStudioSettings() {
     if (typeof parsed.useAIVision === 'boolean') out.useAIVision = parsed.useAIVision;
     if (typeof parsed.keepFiguresAsImage === 'boolean') out.keepFiguresAsImage = parsed.keepFiguresAsImage;
     if (typeof parsed.showQuotes === 'boolean') out.showQuotes = parsed.showQuotes;
+    if (typeof parsed.showToasts === 'boolean') out.showToasts = parsed.showToasts;
+    if (typeof parsed.pdfOutlineReview === 'boolean') out.pdfOutlineReview = parsed.pdfOutlineReview;
+    if (typeof parsed.showPdfSummary === 'boolean') out.showPdfSummary = parsed.showPdfSummary;
     // Backward compat with the older key scheme
     if (parsed.ocrImagePolicy === 'keep-image' && typeof parsed.useAIVision !== 'boolean') out.useAIVision = false;
     if (parsed.ocrImagePolicy === 'read-vision' && typeof parsed.useAIVision !== 'boolean') out.useAIVision = true;
@@ -155,6 +173,9 @@ function _saveStudioSettings() {
       useAIVision: !!s.useAIVision,
       keepFiguresAsImage: !!s.keepFiguresAsImage,
       showQuotes: s.showQuotes !== false,
+      showToasts: s.showToasts !== false,
+      pdfOutlineReview: s.pdfOutlineReview !== false,
+      showPdfSummary: s.showPdfSummary !== false,
     }));
   } catch (_) {}
 }
@@ -216,6 +237,37 @@ window.onStudioSettingChange = function (callback) {
   window.addEventListener('studio-settings-changed', handler);
   return function () { window.removeEventListener('studio-settings-changed', handler); };
 };
+
+// ---- Toast on/off gate ----
+// displayToastNotification() lives in ui-helpers.js (loaded before this file)
+// and is called from many places. Instead of touching every call site, the
+// function is wrapped ONCE here: when the "showToasts" setting is off the call
+// is skipped. The setting is read at call time, so toggling takes effect
+// immediately. Safe to run more than once (the wrapper is tagged).
+(function _installToastGate() {
+  function install() {
+    const orig = window.displayToastNotification;
+    if (typeof orig !== 'function') return false;
+    if (orig.__studioToastGate) return true;
+    const gated = function () {
+      let on = true;
+      try { on = window.getStudioSetting('showToasts') !== false; } catch (_) {}
+      if (!on) return undefined;
+      return orig.apply(this, arguments);
+    };
+    gated.__studioToastGate = true;
+    gated.__original = orig;
+    window.displayToastNotification = gated;
+    return true;
+  }
+  if (install()) return;
+  // ui-helpers.js not ready yet — retry once the page has finished loading.
+  const retry = function () { install(); };
+  document.addEventListener('DOMContentLoaded', retry);
+  window.addEventListener('load', function () {
+    if (!install()) console.warn('[StudioSettings] displayToastNotification not found — the toast switch has no effect.');
+  });
+})();
 
 // ---- OCR compatibility API (ocr.js reads only these) ----
 window.isOcrKeepImageSwitchOn = function () {
@@ -475,6 +527,27 @@ window.renderStudioSwitches = function (containerEl, options) {
     desc: 'Show a short quote in the processing window while your file is being processed.',
     onStatus: 'A fresh AI-written quote appears in the processing window.',
     offStatus: 'No quote is shown, and no AI request is made for quotes.'
+  }));
+  rows.push(buildSwitch({
+    key: 'showToasts',
+    label: 'Toast notifications',
+    desc: 'Small pop-up messages that appear briefly at the edge of the screen (for example when a note is generated).',
+    onStatus: 'Toast notifications are shown.',
+    offStatus: 'Toast notifications are hidden. Messages in the chat are not affected.'
+  }));
+  rows.push(buildSwitch({
+    key: 'pdfOutlineReview',
+    label: 'Outline before creating PDF',
+    desc: 'Show a short outline in the chat for you to review before the PDF is written.',
+    onStatus: 'You review and approve an outline first, then the PDF is written from it.',
+    offStatus: 'The outline step is skipped. The PDF is written directly from your request.'
+  }));
+  rows.push(buildSwitch({
+    key: 'showPdfSummary',
+    label: 'Summary after creating PDF',
+    desc: 'Show a summary card in the chat (pages, words, reading time, sections and more) once the PDF is ready.',
+    onStatus: 'A summary card appears in the chat after the PDF is generated.',
+    offStatus: 'No summary card is shown after the PDF is generated.'
   }));
 
   let resetBtn = null;
