@@ -6,13 +6,13 @@
   <!-- ===== PWA: installable app ===== -->
   <link rel="manifest" href="manifest.webmanifest?v=3">
   <!-- Status bar / system navigation bar colour. Kept in sync with the theme by the script below
-       and by syncSystemBarTheme() in ui-helpers.js (light: #e9e9eb, dark: #16171c). -->
-  <meta name="theme-color" id="paperly-theme-color" content="#e9e9eb">
+       and by syncSystemBarTheme() in ui-helpers.js (light: #F4F7FC, dark: #16171c). -->
+  <meta name="theme-color" id="paperly-theme-color" content="#F4F7FC">
   <meta name="color-scheme" content="light dark">
-  <meta name="msapplication-navbutton-color" content="#e9e9eb">
-  <!-- System navigation bar area: follows the theme (soft light / soft smoky dark), never solid black -->
+  <meta name="msapplication-navbutton-color" content="#F4F7FC">
+  <!-- System navigation bar area: follows the theme (light blue-white / soft smoky dark), never solid black -->
   <style id="paperly-system-bar-bg">
-    html{background-color:#e9e9eb;min-height:100%}
+    html{background-color:#F4F7FC;min-height:100%}
     html.dark{background-color:#16171c}
     @media (display-mode: standalone){html,body{overscroll-behavior:none}}
   </style>
@@ -24,8 +24,8 @@
     ['app','auth','firestore'].forEach(function(m){var l=document.createElement('link');l.rel='modulepreload';l.href='https://www.gstatic.com/firebasejs/10.14.1/firebase-'+m+'.js';document.head.appendChild(l);});
   }}catch(e){}</script>
   <script>try{if(localStorage.getItem('paperly_theme')==='dark')document.documentElement.classList.add('dark');}catch(e){}</script>
-  <!-- Keep the browser / status-bar colour in sync with the glass theme (light: #e9e9eb, dark: #16171c) -->
-  <script>(function(){function s(){try{var m=document.getElementById('paperly-theme-color');if(m){var d=document.documentElement.classList.contains('dark')?'#16171c':'#e9e9eb';m.setAttribute('content',d);var n=document.querySelector('meta[name=msapplication-navbutton-color]');if(n)n.setAttribute('content',d);}}catch(e){}}s();try{new MutationObserver(s).observe(document.documentElement,{attributes:true,attributeFilter:['class']});}catch(e){}})();</script>
+  <!-- Keep the browser / status-bar colour in sync with the theme (light: #F4F7FC, dark: #16171c) -->
+  <script>(function(){function s(){try{var m=document.getElementById('paperly-theme-color');if(m){var d=document.documentElement.classList.contains('dark')?'#16171c':'#F4F7FC';m.setAttribute('content',d);var n=document.querySelector('meta[name=msapplication-navbutton-color]');if(n)n.setAttribute('content',d);}}catch(e){}}s();try{new MutationObserver(s).observe(document.documentElement,{attributes:true,attributeFilter:['class']});}catch(e){}})();</script>
   <!-- Startup: show ONE loading screen only (the gate). The "Working..." progress overlay stays hidden until boot finishes. -->
   <style id="paperly-boot-guard-css">html.pl-boot #global-progress-overlay{display:none!important;visibility:hidden!important;opacity:0!important;pointer-events:none!important}</style>
   <script>(function(){
@@ -216,6 +216,8 @@
 
   <!-- Main Styles -->
   <link rel="stylesheet" href="css/styles.css">
+  <!-- Blue Design Language (must load right after styles.css) -->
+  <link rel="stylesheet" href="css/blue-theme.css">
   <style id="paperly-session-css">
     #tab-bar,#desktop-close-all-tabs-btn,#topbar-newtab-fab-btn,#tab-new-btn{display:none!important}
     :root,html,body{--tabbar-height:0px!important;--mobile-tabbar:0px!important}
@@ -415,7 +417,7 @@
        the frosted status-bar / navigation-bar strips are drawn by styles.css (body::before / body::after). -->
   <style id="paperly-navbar-fix">
     html,html.dark{background-image:none!important}
-    html{background-color:#e9e9eb!important}
+    html{background-color:#F4F7FC!important}
     html.dark{background-color:#16171c!important}
     body{min-height:100vh;min-height:100dvh}
   </style>
