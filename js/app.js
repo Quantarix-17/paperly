@@ -4786,6 +4786,17 @@ function _isPdfOutlineReviewEnabled() {
   } catch (_) { return true; }
 }
 
+// "AI suggestions" switch (Settings > Preference). When OFF the AI must not ask
+// the one-question-with-options clarifying step before a Create PDF / Exam /
+// Slides request. Flow becomes: request -> outline review (if the "Outline
+// before creating PDF" switch is ON) -> otherwise straight to the processing
+// modal. Chat + Add/Edit/Refine suggestion buttons are gated separately.
+function _isAiSuggestionsEnabled() {
+  try {
+    return typeof window.getStudioSetting !== 'function' || window.getStudioSetting('aiSuggestions') !== false;
+  } catch (_) { return true; }
+}
+
 // "Summary after creating PDF" switch (Settings > Preference).
 function _isPdfSummaryEnabled() {
   try {
@@ -5309,6 +5320,15 @@ async function sendChatPromptToAI() {
     if (_isPendingClarifyContinuation && intentPayload) {
       intentPayload._clarificationAlreadyAnswered = true;
       intentPayload._clarificationAnswer = _clarifyRawAnswer;
+    }
+    // "AI suggestions" switch OFF: never ask the clarifying question (the
+    // option-button "suggestions"). Reusing the same marker makes every PDF /
+    // Exam / Slides planner skip its clarify decision call, so the request goes
+    // straight to the outline review, or - when the outline switch is also OFF -
+    // straight to the processing modal.
+    if (intentPayload && !_isAiSuggestionsEnabled()) {
+      intentPayload._clarificationAlreadyAnswered = true;
+      intentPayload.skipClarify = true;
     }
 
     // Every other @ command is one-shot and clears itself after a single
