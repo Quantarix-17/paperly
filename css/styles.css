@@ -5910,7 +5910,7 @@ html.dark .ai-model-card.active,
 .slide-empty-icon { font-size: 2.2rem; opacity: 0.7; }
 .slide-empty-state p { max-width: 320px; font-size: 0.92rem; line-height: 1.5; }
 
-/* Slide nav (⬅ counter ➡) is now the first group inside .slide-edit-toolbar
+/* Slide nav (counter ) is now the first group inside .slide-edit-toolbar
    — see the "one compact row" rule below — so there's no separate
    .slide-toolbar row anymore. .slide-nav-btn/.slide-counter are still used
    there. */
@@ -5949,7 +5949,7 @@ html.dark .ai-model-card.active,
 }
 .slide-download-btn:hover { background: var(--primary-hover); }
 
-/* One compact row: slide nav (⬅ 1/5 ➡) + all edit controls together, so
+/* One compact row: slide nav (1/5 ) + all edit controls together, so
    the toolbar area stays short and the slide canvas below keeps as much
    vertical room as possible. flex-wrap:nowrap + overflow-x:auto means an
    overflowing set of controls scrolls horizontally instead of wrapping to
@@ -8401,4 +8401,149 @@ html.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)):not([class*="pd
   :is(html, body), #topbar::before, #sidebar, #preview-panel, .chat-message, #chat-form {
     transition: background-color .25s ease, border-color .25s ease, color .2s ease;
   }
+}
+
+
+/* ==========================================================================
+   MODAL BACKGROUND BLUR  (settings / AI-models, edit-page, page-range,
+   progress, PDF loading, mobile @-menu backdrop)
+   --------------------------------------------------------------------------
+   Whenever a modal floats up, everything behind it is frosted: a strong blur
+   plus a light dim, so the modal reads as the only sharp layer.
+   ========================================================================== */
+:root {
+  --modal-blur: blur(20px) saturate(135%);
+  --modal-scrim: rgba(60, 64, 82, 0.22);
+}
+.dark {
+  --modal-blur: blur(22px) saturate(120%);
+  --modal-scrim: rgba(10, 11, 16, 0.40);
+}
+
+#ai-models-modal,
+#edit-page-modal,
+#page-range-modal,
+#global-progress-overlay,
+#pdf-preview-loading,
+#at-command-menu-backdrop.open {
+  background: var(--modal-scrim) !important;
+  backdrop-filter: var(--modal-blur) !important;
+  -webkit-backdrop-filter: var(--modal-blur) !important;
+}
+/* the settings (AI models) modal is toggled by JS; make sure it always covers the screen */
+#ai-models-modal { position: fixed; inset: 0; z-index: 10000; }
+#at-command-menu-backdrop.open { z-index: 205; }
+
+/* a smooth fade-in so the blur eases in instead of popping */
+@media (prefers-reduced-motion: no-preference) {
+  #ai-models-modal,
+  #edit-page-modal,
+  #page-range-modal,
+  #global-progress-overlay,
+  #pdf-preview-loading { animation: modalBlurIn .22s ease-out both; }
+  @keyframes modalBlurIn {
+    from { background-color: transparent; backdrop-filter: blur(0); -webkit-backdrop-filter: blur(0); }
+  }
+}
+
+/* modal cards stay crisp and fully readable above the blur */
+:is(html, html.dark) .ai-models-modal-card,
+:is(html, html.dark) #edit-page-modal .modal-card,
+:is(html, html.dark) #page-range-modal .modal-card,
+:is(html, html.dark) .progress-card,
+:is(html, html.dark) .pdf-preview-loading-card {
+  backdrop-filter: blur(32px) saturate(160%) !important;
+  -webkit-backdrop-filter: blur(32px) saturate(160%) !important;
+}
+
+/* fallback when the browser can't blur or the user asked for less transparency */
+@media (prefers-reduced-transparency: reduce) {
+  :root { --modal-scrim: rgba(60, 64, 82, 0.55); }
+  .dark { --modal-scrim: rgba(10, 11, 16, 0.70); }
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root { --modal-scrim: rgba(60, 64, 82, 0.55); }
+  .dark { --modal-scrim: rgba(10, 11, 16, 0.70); }
+}
+
+
+/* ==========================================================================
+   CHAT ACTIONS: Retry / Edit only on the latest turn · Copy on every message
+   --------------------------------------------------------------------------
+   Any message that already has a newer user message after it loses its
+   Retry and Edit buttons; Copy always stays.
+   ========================================================================== */
+.chat-message:has(~ .chat-message.user) .chat-message-action.action-retry,
+.chat-message:has(~ .chat-message.user) .chat-message-action.action-edit {
+  display: none !important;
+}
+.chat-message .chat-message-action.action-copy { display: inline-flex; }
+
+/* ==========================================================================
+   Native (page-markup) switches inside Settings → Preference: never green
+   (fallback in case a control isn't proxied by tab-manager.js)
+   ========================================================================== */
+.settings-tab-panel input[type="checkbox"],
+.settings-tab-panel input[type="radio"] { accent-color: rgba(var(--ink-rgb), 0.70); }
+.studio-setting-control input:checked + :is(span, div, i, .slider, .track),
+.studio-setting-control :is(.on, .active, .checked, [aria-checked="true"]):not(.studio-switch):not(.studio-switch-knob) {
+  background: var(--glass-active-bg), var(--glass-active-tint) !important;
+  border-color: var(--glass-active-border) !important;
+  color: var(--text-primary) !important;
+}
+
+
+/* ==========================================================================
+   TOAST NOTIFICATION — slides up from the bottom, then slides back down
+   --------------------------------------------------------------------------
+   • Enter : springy rise with a tiny overshoot + fade/blur-in.
+   • Exit  : eases back down out of view (a touch slower, no bounce).
+   • Mobile: sits higher (clear of the chat input / nav bar / gesture area).
+   ========================================================================== */
+#toast-notification {
+  --toast-hidden-y: 140%;
+  transform: translate3d(0, var(--toast-hidden-y), 0) scale(0.96);
+  opacity: 0;
+  visibility: hidden;
+  filter: blur(4px);
+  will-change: transform, opacity;
+  /* exit: ease back down, then hide */
+  transition:
+    transform 0.42s cubic-bezier(0.55, 0, 0.75, 0.4),
+    opacity 0.30s ease-in 0.08s,
+    filter 0.30s ease-in,
+    visibility 0s linear 0.45s;
+}
+#toast-notification.show {
+  transform: translate3d(0, 0, 0) scale(1);
+  opacity: 1;
+  visibility: visible;
+  filter: blur(0);
+  /* enter: spring rise with slight overshoot */
+  transition:
+    transform 0.55s cubic-bezier(0.34, 1.45, 0.64, 1),
+    opacity 0.28s ease-out,
+    filter 0.35s ease-out,
+    visibility 0s linear 0s;
+}
+
+@media (max-width: 850px) {
+  #toast-notification {
+    --toast-hidden-y: calc(100% + 140px);
+    left: 14px;
+    right: 14px;
+    /* higher on phones: clears the chat input, nav bar and the system gesture area */
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 96px);
+    text-align: center;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #toast-notification,
+  #toast-notification.show {
+    transform: none;
+    filter: none;
+    transition: opacity 0.2s ease, visibility 0s linear 0.2s;
+  }
+  #toast-notification.show { transition: opacity 0.2s ease, visibility 0s; }
 }
