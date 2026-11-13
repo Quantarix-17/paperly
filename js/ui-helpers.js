@@ -145,10 +145,10 @@ const ProgressUI = {
     st.textContent =
       '#progress-steps{display:none!important}' +
       '#global-progress-overlay{--pg-1:var(--primary-color);--pg-2:var(--primary-color);--pg-3:var(--text-secondary);--pg-soft:rgba(var(--ink-rgb),.08);--pg-line:rgba(var(--ink-rgb),.20)}' +
-      '#global-progress-overlay #progress-bar-fill{background-color:var(--primary-color)!important;background-image:var(--accent-gradient)!important}' +
-      '#global-progress-overlay #progress-ring-fill{stroke:var(--primary-color)!important}' +
+      '#global-progress-overlay #progress-bar-fill{background-color:transparent!important;background-image:linear-gradient(90deg,rgba(var(--ink-rgb),.55),rgba(var(--ink-rgb),.30))!important;box-shadow:inset 0 1px 0 var(--glass-hi,rgba(255,255,255,.4))}' +
+      '#global-progress-overlay #progress-ring-fill{stroke:rgba(var(--ink-rgb),.62)!important}' +
       '#global-progress-overlay #progress-ring-icon{color:var(--primary-color)!important}' +
-      '#global-progress-overlay .progress-file-fill{background:var(--accent-gradient)!important}' +
+      '#global-progress-overlay .progress-file-fill{background:linear-gradient(90deg,rgba(var(--ink-rgb),.55),rgba(var(--ink-rgb),.30))!important}' +
       '#global-progress-overlay .progress-file-status.done{color:var(--text-secondary)!important}' +
       'html.dark #global-progress-overlay #progress-ring-icon{color:var(--primary-color)!important}' +
       'html.dark #global-progress-overlay .progress-file-status.done{color:var(--text-secondary)!important}' +
@@ -764,12 +764,39 @@ const ProgressUI = {
 };
 
 // ===== THEME MANAGEMENT =====
+// Keeps the mobile status bar / system navigation bar colour in step with the app theme.
+function syncSystemBarTheme(isDark) {
+  const color = isDark ? '#1a1b21' : '#f4f4f6';
+  try {
+    let metas = Array.from(document.querySelectorAll('meta[name="theme-color"]'));
+    if (!metas.length) {
+      const m = document.createElement('meta');
+      m.name = 'theme-color';
+      document.head.appendChild(m);
+      metas = [m];
+    }
+    // drop media-query variants (they follow the OS, not the in-app toggle) and keep one
+    metas.slice(1).forEach(m => m.remove());
+    metas[0].removeAttribute('media');
+    metas[0].setAttribute('content', color);
+
+    let cs = document.querySelector('meta[name="color-scheme"]');
+    if (!cs) { cs = document.createElement('meta'); cs.name = 'color-scheme'; document.head.appendChild(cs); }
+    cs.setAttribute('content', isDark ? 'dark' : 'light');
+
+    document.documentElement.style.colorScheme = isDark ? 'dark' : 'light';
+    document.documentElement.style.backgroundColor = color;
+  } catch (_) { /* non-critical */ }
+}
+window.syncSystemBarTheme = syncSystemBarTheme;
+
 function applyCurrentTheme() {
   const icon = document.getElementById('theme-toggle-icon');
   const themeState = (window.APP_STATE && APP_STATE.theme) || 'light';
   const finalDark = themeState === 'dark';
   document.body.classList.toggle('dark', finalDark);
   document.documentElement.classList.toggle('dark', finalDark);
+  syncSystemBarTheme(finalDark);
   if (typeof syncActiveModelVisualTheme === 'function') syncActiveModelVisualTheme();
   if (icon) {
     icon.innerHTML = finalDark ?
@@ -1306,8 +1333,11 @@ function openMobileTabSheet() {
     row.type = 'button';
     row.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:8px; width:100%; text-align:left; padding:11px 14px; border:1px solid var(--border-color); border-radius:var(--radius-sm); background:var(--surface-color); color:var(--text-primary); font:600 .88rem var(--font-ui); cursor:pointer; touch-action:manipulation;';
     if (tab.id === activeId) {
-      row.style.background = 'var(--primary-light)';
-      row.style.borderColor = 'var(--primary-color)';
+      row.style.background = 'var(--glass-active-bg), var(--glass-active-tint)';
+      row.style.borderColor = 'var(--glass-active-border)';
+      row.style.boxShadow = 'var(--glass-active-shadow)';
+      row.style.backdropFilter = 'var(--glass-blur-sm)';
+      row.style.webkitBackdropFilter = 'var(--glass-blur-sm)';
     }
     const name = document.createElement('span');
     name.textContent = tab.name || 'Untitled';
