@@ -766,7 +766,7 @@ const ProgressUI = {
 // ===== THEME MANAGEMENT =====
 // Keeps the mobile status bar / system navigation bar colour in step with the app theme.
 function syncSystemBarTheme(isDark) {
-  const color = isDark ? '#1a1b21' : '#f4f4f6';
+  const color = isDark ? '#16171c' : '#f4f4f6';
   try {
     let metas = Array.from(document.querySelectorAll('meta[name="theme-color"]'));
     if (!metas.length) {
