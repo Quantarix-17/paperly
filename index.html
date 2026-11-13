@@ -5,13 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover">
   <!-- ===== PWA: installable app ===== -->
   <link rel="manifest" href="manifest.webmanifest?v=3">
+  <!-- Status bar / system navigation bar colour. Kept in sync with the theme by the script below
+       and by syncSystemBarTheme() in ui-helpers.js (light: #e9e9eb, dark: #16171c). -->
   <meta name="theme-color" id="paperly-theme-color" content="#e9e9eb">
   <meta name="color-scheme" content="light dark">
   <meta name="msapplication-navbutton-color" content="#e9e9eb">
-  <!-- নিচের system navigation bar-এর পেছনে নীল না দেখিয়ে থিমের সাদা/কালো রঙ দেখাবে -->
+  <!-- System navigation bar area: follows the theme (soft light / soft smoky dark), never solid black -->
   <style id="paperly-system-bar-bg">
     html{background-color:#e9e9eb;min-height:100%}
-    html.dark{background-color:#000}
+    html.dark{background-color:#16171c}
     @media (display-mode: standalone){html,body{overscroll-behavior:none}}
   </style>
   <!-- Apply last-selected theme instantly (no light/dark flash on launch) -->
@@ -22,8 +24,8 @@
     ['app','auth','firestore'].forEach(function(m){var l=document.createElement('link');l.rel='modulepreload';l.href='https://www.gstatic.com/firebasejs/10.14.1/firebase-'+m+'.js';document.head.appendChild(l);});
   }}catch(e){}</script>
   <script>try{if(localStorage.getItem('paperly_theme')==='dark')document.documentElement.classList.add('dark');}catch(e){}</script>
-  <!-- Keep the browser / status-bar colour in sync with the black-white glass theme (light: grey, dark: black) -->
-  <script>(function(){function s(){try{var m=document.getElementById('paperly-theme-color');if(m){var d=document.documentElement.classList.contains('dark')?'#000000':'#e9e9eb';m.setAttribute('content',d);var n=document.querySelector('meta[name=msapplication-navbutton-color]');if(n)n.setAttribute('content',d);}}catch(e){}}s();try{new MutationObserver(s).observe(document.documentElement,{attributes:true,attributeFilter:['class']});}catch(e){}})();</script>
+  <!-- Keep the browser / status-bar colour in sync with the glass theme (light: #e9e9eb, dark: #16171c) -->
+  <script>(function(){function s(){try{var m=document.getElementById('paperly-theme-color');if(m){var d=document.documentElement.classList.contains('dark')?'#16171c':'#e9e9eb';m.setAttribute('content',d);var n=document.querySelector('meta[name=msapplication-navbutton-color]');if(n)n.setAttribute('content',d);}}catch(e){}}s();try{new MutationObserver(s).observe(document.documentElement,{attributes:true,attributeFilter:['class']});}catch(e){}})();</script>
   <!-- Startup: show ONE loading screen only (the gate). The "Working..." progress overlay stays hidden until boot finishes. -->
   <style id="paperly-boot-guard-css">html.pl-boot #global-progress-overlay{display:none!important;visibility:hidden!important;opacity:0!important;pointer-events:none!important}</style>
   <script>(function(){
@@ -218,36 +220,43 @@
     #tab-bar,#desktop-close-all-tabs-btn,#topbar-newtab-fab-btn,#tab-new-btn{display:none!important}
     :root,html,body{--tabbar-height:0px!important;--mobile-tabbar:0px!important}
     #topbar #paperly-avatar-btn{position:relative;display:flex!important;align-items:center;justify-content:center;flex:0 0 auto;width:38px!important;height:38px!important;
-      padding:0;border:1px solid var(--glass-border,rgba(0,0,0,.09));border-radius:50%!important;background:var(--accent-gradient,#111);color:var(--on-primary,#fff);cursor:pointer;font:700 16px Inter,Arial,sans-serif;box-shadow:0 6px 16px -6px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.22)}
+      padding:0;border:1px solid var(--glass-active-border,rgba(0,0,0,.18));border-radius:50%!important;
+      background:var(--glass-active-bg,linear-gradient(135deg,rgba(255,255,255,.78),rgba(255,255,255,.40))),var(--glass-active-tint,rgba(12,12,14,.10));
+      color:var(--text-primary,#0c0c0e);cursor:pointer;font:700 16px Inter,Arial,sans-serif;
+      box-shadow:var(--glass-active-shadow,0 8px 20px -10px rgba(40,42,54,.32),inset 0 1px 0 rgba(255,255,255,.9));
+      -webkit-backdrop-filter:var(--glass-blur-sm,blur(14px));backdrop-filter:var(--glass-blur-sm,blur(14px))}
     #paperly-avatar-btn .pa-face{width:100%;height:100%;border-radius:50%;overflow:hidden;display:flex;align-items:center;justify-content:center}
     #paperly-avatar-btn .pa-face img{width:100%;height:100%;object-fit:cover;display:block}
     #paperly-avatar-btn .pa-face svg{width:22px;height:22px}
-    #paperly-avatar-btn .pa-dot{position:absolute;right:-1px;bottom:-1px;width:11px;height:11px;border-radius:50%;background:#9a9aa2;border:2px solid #fff;box-sizing:border-box}
-    html.dark #paperly-avatar-btn .pa-dot{border-color:#121214}
-    #paperly-avatar-btn.ok .pa-dot{background:var(--text-primary,#0c0c0e)}#paperly-avatar-btn.busy .pa-dot{background:#9a9aa2;animation:paDotPulse 1.1s ease-in-out infinite}#paperly-avatar-btn.err .pa-dot{background:#e5484d}
+    #paperly-avatar-btn .pa-dot{position:absolute;right:-1px;bottom:-1px;width:11px;height:11px;border-radius:50%;background:#9a9aa2;border:2px solid #f4f4f6;box-sizing:border-box}
+    html.dark #paperly-avatar-btn .pa-dot{border-color:#1e1f25}
+    #paperly-avatar-btn.ok .pa-dot{background:var(--text-primary,#0c0c0e)}#paperly-avatar-btn.busy .pa-dot{background:#9a9aa2;animation:paDotPulse 1.1s ease-in-out infinite}#paperly-avatar-btn.err .pa-dot{background:var(--danger-color,#e5484d)}
     @keyframes paDotPulse{0%,100%{opacity:.35}50%{opacity:1}}
     #topbar .logo-text{margin-left:2px;color:var(--text-primary)!important;font-weight:800!important}
     .brand-l,.logo .logo-text .brand-l,#paperly-gate h1 .brand-l{color:var(--text-secondary,#5d5d64)!important;-webkit-text-fill-color:var(--text-secondary,#5d5d64);font-weight:inherit!important}
   </style>
   <!-- PaperLy: sign-in gate -->
   <style id="paperly-gate-css">
-    /* sign-in screen — black & white glass */
+    /* sign-in screen — soft glass (light: frosted grey, dark: smoky charcoal) */
     #paperly-gate{position:fixed;inset:0;z-index:2147482000;display:flex;align-items:center;justify-content:center;padding:20px;
-      background:radial-gradient(60vmax 46vmax at 88% -8%,rgba(255,255,255,.95),transparent 62%),radial-gradient(48vmax 40vmax at -8% 108%,rgba(0,0,0,.16),transparent 62%),radial-gradient(34vmax 28vmax at 55% 45%,rgba(0,0,0,.06),transparent 70%),linear-gradient(160deg,#f4f4f5,#dcdcdf);
+      background:radial-gradient(60vmax 46vmax at 88% -8%,rgba(255,255,255,.95),transparent 62%),radial-gradient(48vmax 40vmax at -8% 108%,rgba(60,64,82,.16),transparent 62%),radial-gradient(34vmax 28vmax at 55% 45%,rgba(60,64,82,.06),transparent 70%),linear-gradient(160deg,#f4f4f5,#dcdcdf);
       color:var(--text-primary,#0c0c0e);font-family:Inter,"Hind Siliguri",Arial,sans-serif;overflow:auto}
-    html.dark #paperly-gate{background:radial-gradient(56vmax 44vmax at 88% -8%,rgba(255,255,255,.16),transparent 62%),radial-gradient(46vmax 38vmax at -8% 108%,rgba(255,255,255,.09),transparent 62%),radial-gradient(30vmax 26vmax at 55% 45%,rgba(255,255,255,.04),transparent 70%),linear-gradient(160deg,#0b0b0c,#000);color:var(--text-primary,#f4f4f5)}
+    html.dark #paperly-gate{background:radial-gradient(56vmax 44vmax at 88% -8%,rgba(196,200,214,.11),transparent 62%),radial-gradient(46vmax 38vmax at -8% 108%,rgba(196,200,214,.07),transparent 62%),radial-gradient(30vmax 26vmax at 55% 45%,rgba(170,176,196,.045),transparent 70%),linear-gradient(160deg,#202228,#121317);color:var(--text-primary,#e3e5ea)}
     #paperly-gate[hidden]{display:none!important}
     html.paperly-guest #paperly-gate{display:none!important}
     #paperly-gate .pg-card{width:100%;max-width:400px;text-align:center;background:var(--glass-bg-strong,rgba(255,255,255,.8));border:1px solid var(--glass-border,rgba(0,0,0,.09));border-radius:28px;padding:30px 26px 24px;
-      -webkit-backdrop-filter:blur(32px) saturate(180%);backdrop-filter:blur(32px) saturate(180%);box-shadow:var(--glass-shadow,0 24px 70px rgba(0,0,0,.25))}
-    html.dark #paperly-gate .pg-card{background:var(--glass-bg-strong,rgba(16,16,18,.8))}
+      -webkit-backdrop-filter:blur(32px) saturate(160%);backdrop-filter:blur(32px) saturate(160%);box-shadow:var(--glass-shadow,0 24px 70px rgba(40,44,60,.22))}
+    html.dark #paperly-gate .pg-card{background:var(--glass-bg-strong,rgba(50,53,64,.60))}
     #paperly-gate .pg-logo{width:auto;height:84px;max-width:100%;border-radius:0;object-fit:contain;background:none;box-shadow:none;border:0;filter:none}
     #paperly-gate h1{margin:10px 0 2px;font-size:24px;font-weight:800;letter-spacing:-.01em}
     #paperly-gate h2{margin:14px 0 8px;font-size:19px;font-weight:800}
     #paperly-gate .pg-muted{margin:0 0 16px;font-size:14px;line-height:1.6;color:var(--text-secondary,#5d5d64)}
     #paperly-gate .pg-warn{margin:0 0 14px;font-size:13px;color:var(--text-secondary,#5d5d64);background:rgba(var(--ink-rgb,12,12,14),.06);border:1px solid var(--glass-border,rgba(0,0,0,.09));border-radius:12px;padding:8px 10px}
-    #paperly-gate .pg-err{min-height:18px;margin:2px 0 10px;font-size:13px;color:#e5484d}
-    #paperly-gate .pg-btn{width:100%;border:0;border-radius:14px;padding:13px 16px;font:700 15px Inter,Arial,sans-serif;background:var(--accent-gradient,#111);color:var(--on-primary,#fff);cursor:pointer;box-shadow:0 10px 22px -10px rgba(0,0,0,.55),inset 0 1px 0 rgba(255,255,255,.22);
+    #paperly-gate .pg-err{min-height:18px;margin:2px 0 10px;font-size:13px;color:var(--danger-color,#e5484d)}
+    #paperly-gate .pg-btn{width:100%;border:1px solid var(--glass-active-border,rgba(0,0,0,.18));border-radius:14px;padding:13px 16px;font:700 15px Inter,Arial,sans-serif;
+      background:var(--glass-active-bg,linear-gradient(135deg,rgba(255,255,255,.78),rgba(255,255,255,.40))),var(--glass-active-tint,rgba(12,12,14,.10));color:var(--text-primary,#0c0c0e);cursor:pointer;
+      box-shadow:var(--glass-active-shadow,0 8px 20px -10px rgba(40,42,54,.32),inset 0 1px 0 rgba(255,255,255,.9));
+      -webkit-backdrop-filter:blur(14px) saturate(130%);backdrop-filter:blur(14px) saturate(130%);
       display:flex;align-items:center;justify-content:center;gap:10px;transition:transform .12s,opacity .12s}
     #paperly-gate .pg-btn:active{transform:scale(.97)}#paperly-gate .pg-btn[disabled]{opacity:.55;cursor:not-allowed}
     #paperly-gate .pg-google{background:var(--glass-bg-soft,rgba(255,255,255,.4));color:var(--text-primary,#0c0c0e);border:1px solid var(--glass-border,rgba(0,0,0,.12));box-shadow:inset 0 1px 0 var(--glass-hi,rgba(255,255,255,.8));-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
@@ -255,14 +264,14 @@
     #paperly-gate .pg-row{display:flex;gap:8px;margin-bottom:12px}
     #paperly-gate .pg-in{width:100%;box-sizing:border-box;margin-bottom:10px;padding:12px 14px;font:500 15px Inter,Arial,sans-serif;border-radius:12px;
       border:1px solid var(--glass-border,rgba(0,0,0,.14));background:rgba(var(--ink-rgb,12,12,14),.04);color:inherit}
-    #paperly-gate .pg-in:focus{outline:2px solid rgba(var(--ink-rgb,12,12,14),.5);border-color:transparent}
+    #paperly-gate .pg-in:focus{outline:2px solid rgba(var(--ink-rgb,12,12,14),.45);border-color:transparent}
     #paperly-gate .pg-link{display:block;width:100%;margin-top:8px;border:0;background:transparent;color:var(--text-secondary,#5d5d64);font:600 13.5px Inter,Arial,sans-serif;padding:8px;cursor:pointer}
     #paperly-gate .pg-key{font:700 16px ui-monospace,Menlo,Consolas,monospace;letter-spacing:.04em;word-break:break-all;padding:14px;border-radius:12px;background:rgba(var(--ink-rgb,12,12,14),.07);border:1px solid var(--glass-border,rgba(0,0,0,.09));margin-bottom:12px;user-select:all}
-    #paperly-gate .pg-check{display:flex;gap:8px;align-items:center;justify-content:center;font-size:13.5px;margin:4px 0 14px;cursor:pointer;accent-color:var(--primary-color,#111)}
-    #paperly-gate .pg-spin{width:38px;height:38px;margin:22px auto 14px;border-radius:50%;border:4px solid rgba(var(--ink-rgb,12,12,14),.15);border-top-color:var(--primary-color,#111);animation:pgspin .8s linear infinite}
+    #paperly-gate .pg-check{display:flex;gap:8px;align-items:center;justify-content:center;font-size:13.5px;margin:4px 0 14px;cursor:pointer;accent-color:rgba(var(--ink-rgb,12,12,14),.7)}
+    #paperly-gate .pg-spin{width:38px;height:38px;margin:22px auto 14px;border-radius:50%;border:4px solid rgba(var(--ink-rgb,12,12,14),.15);border-top-color:rgba(var(--ink-rgb,12,12,14),.65);animation:pgspin .8s linear infinite}
     #paperly-gate .pg-tabs{display:flex;gap:4px;padding:4px;margin:14px 0 4px;border-radius:14px;background:rgba(var(--ink-rgb,12,12,14),.07);border:1px solid var(--glass-border,rgba(0,0,0,.09))}
-    #paperly-gate .pg-tabs button{flex:1;border:0;border-radius:10px;padding:9px 10px;font:700 14px Inter,Arial,sans-serif;background:transparent;color:inherit;cursor:pointer;opacity:.7}
-    #paperly-gate .pg-tabs button.on{background:var(--accent-gradient,#111);color:var(--on-primary,#fff);opacity:1}
+    #paperly-gate .pg-tabs button{flex:1;border:1px solid transparent;border-radius:10px;padding:9px 10px;font:700 14px Inter,Arial,sans-serif;background:transparent;color:inherit;cursor:pointer;opacity:.7}
+    #paperly-gate .pg-tabs button.on{background:var(--glass-active-bg,linear-gradient(135deg,rgba(255,255,255,.78),rgba(255,255,255,.40))),var(--glass-active-tint,rgba(12,12,14,.10));color:var(--text-primary,#0c0c0e);border-color:var(--glass-active-border,rgba(0,0,0,.18));box-shadow:var(--glass-active-shadow,inset 0 1px 0 rgba(255,255,255,.9));opacity:1}
     #paperly-gate .pg-list{list-style:none;margin:0 0 16px;padding:0;text-align:left;font-size:13.5px;line-height:1.9;color:var(--text-secondary,#5d5d64)}
     #paperly-gate .pg-list li::before{content:"✓ ";color:var(--text-primary,#0c0c0e);font-weight:800}
     @keyframes pgspin{to{transform:rotate(360deg)}}
@@ -288,8 +297,8 @@
     #topbar-export-btn[aria-expanded="true"] .export-caret{transform:rotate(180deg)}
     #export-menu-panel{display:none;position:fixed;z-index:100000;min-width:190px;padding:6px;border-radius:14px;
       background:var(--glass-bg-strong,rgba(255,255,255,.8));border:1px solid var(--glass-border,rgba(0,0,0,.09));color:var(--text-primary,#0c0c0e);
-      -webkit-backdrop-filter:blur(28px) saturate(180%);backdrop-filter:blur(28px) saturate(180%);
-      box-shadow:var(--glass-shadow,0 10px 30px rgba(0,0,0,.2))}
+      -webkit-backdrop-filter:blur(28px) saturate(160%);backdrop-filter:blur(28px) saturate(160%);
+      box-shadow:var(--glass-shadow,0 10px 30px rgba(40,44,60,.2))}
     #export-menu-panel.open{display:block;animation:exportMenuIn .14s ease-out}
     @keyframes exportMenuIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
     #export-menu-panel button{display:block;width:100%;text-align:left;padding:9px 12px;border:0;border-radius:9px;
@@ -320,22 +329,23 @@
       flex:1 1 0;
       min-width:0;
       padding:9px 12px;
-      border:0;
+      border:1px solid transparent;
       border-radius:9px;
       background:transparent;
       color:inherit;
       font:600 13px Inter,Arial,sans-serif;
       cursor:pointer;
       white-space:nowrap;
-      transition:background .15s ease, color .15s ease;
+      transition:background .15s ease, color .15s ease, border-color .15s ease;
       opacity:.72;
     }
     .settings-tab:hover{ background:rgba(var(--ink-rgb,12,12,14),.10); opacity:1; }
     .settings-tab.active{
-      background:var(--accent-gradient,#111);
-      color:var(--on-primary,#fff);
+      background:var(--glass-active-bg,linear-gradient(135deg,rgba(255,255,255,.78),rgba(255,255,255,.40))),var(--glass-active-tint,rgba(12,12,14,.10));
+      color:var(--text-primary,#0c0c0e);
+      border-color:var(--glass-active-border,rgba(0,0,0,.18));
       opacity:1;
-      box-shadow:0 6px 14px -6px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.2);
+      box-shadow:var(--glass-active-shadow,0 8px 20px -10px rgba(40,42,54,.32),inset 0 1px 0 rgba(255,255,255,.9));
     }
 
     .settings-tab-panel{ padding:4px 0 8px; }
@@ -363,14 +373,13 @@
   <script>
     (function () { try { if (document.fonts && document.fonts.load) document.fonts.load('20px "Nazrul OMR"', 'কখগঘAaBb01১২').catch(function () {}); } catch (e) {} })();
   </script>
-  <!-- নিচের system navigation bar এলাকা: styles.css-এর পরে লোড হয়, তাই সবসময় সাদা/কালো থিম রঙ জেতে -->
+  <!-- System navigation bar area. Loads after styles.css. Only the page background colour is pinned here;
+       the frosted status-bar / navigation-bar strips are drawn by styles.css (body::before / body::after). -->
   <style id="paperly-navbar-fix">
     html,html.dark{background-image:none!important}
     html{background-color:#e9e9eb!important}
-    html.dark{background-color:#000!important}
+    html.dark{background-color:#16171c!important}
     body{min-height:100vh;min-height:100dvh}
-    html::after{content:"";position:fixed;left:0;right:0;bottom:0;height:max(env(safe-area-inset-bottom,0px),0px);background:#e9e9eb;pointer-events:none;z-index:2147483647}
-    html.dark::after{background:#000}
   </style>
 </head>
 <body>
@@ -395,7 +404,7 @@
           <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8 12h8M12 8v8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
         </span>
         <select id="active-model-select" onchange="setActiveAIModel(this.value)">
-          <option value="">⚠️ No model added</option>
+          <option value="">No model added</option>
         </select>
       </div>
       <div id="creation-mode-bar" title="Choose what 'New document' creates">
@@ -580,7 +589,9 @@
         </div>
         <div id="slide-view-container">
           <div class="slide-empty-state">
-            <div class="slide-empty-icon">🖼️</div>
+            <div class="slide-empty-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="12" rx="1.5"/><path d="M8 20.5h8M12 17v3.5"/></svg>
+            </div>
             <p>No slide deck yet. Use <b>@Create Slides</b> in the chat to generate one.</p>
           </div>
         </div>
@@ -623,13 +634,13 @@
       </div>
 
       <div id="progress-steps" class="progress-steps" aria-hidden="true">
-        <span data-step="1"><span class="step-icon">📝</span> Plan</span>
+        <span data-step="1"><span class="step-icon"></span> Plan</span>
         <i></i>
-        <span data-step="2"><span class="step-icon">✍️</span> Write</span>
+        <span data-step="2"><span class="step-icon"></span> Write</span>
         <i></i>
-        <span data-step="3"><span class="step-icon">🧮</span> Render</span>
+        <span data-step="3"><span class="step-icon"></span> Render</span>
         <i></i>
-        <span data-step="4"><span class="step-icon">✅</span> Finish</span>
+        <span data-step="4"><span class="step-icon"></span> Finish</span>
       </div>
 
       <div class="progress-bar-track">
@@ -652,11 +663,11 @@
   <input type="file" id="project-load-input" accept=".aipdf" onchange="loadProjectFromFile(this.files)" style="display:none;">
 
   <!-- ===== PAGE RANGE MODAL ===== -->
-  <div id="page-range-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); backdrop-filter:blur(8px); z-index:10000; align-items:center; justify-content:center; padding:16px; box-sizing:border-box;">
-    <div class="modal-card" style="background:var(--glass-bg-strong); -webkit-backdrop-filter:blur(32px) saturate(180%); backdrop-filter:blur(32px) saturate(180%); padding:28px 30px 24px; border-radius:26px; max-width:400px; width:100%; box-shadow:var(--glass-shadow); box-sizing:border-box; border:1px solid var(--glass-border);">
+  <div id="page-range-modal" style="display:none; position:fixed; inset:0; background:var(--modal-scrim, rgba(60,64,82,0.28)); -webkit-backdrop-filter:var(--modal-blur, blur(20px)); backdrop-filter:var(--modal-blur, blur(20px)); z-index:10000; align-items:center; justify-content:center; padding:16px; box-sizing:border-box;">
+    <div class="modal-card" style="background:var(--glass-bg-strong); -webkit-backdrop-filter:blur(32px) saturate(160%); backdrop-filter:blur(32px) saturate(160%); padding:28px 30px 24px; border-radius:26px; max-width:400px; width:100%; box-shadow:var(--glass-shadow); box-sizing:border-box; border:1px solid var(--glass-border);">
       <h3 style="margin-bottom:4px; font-family:var(--font-display); font-size:1.1rem;">Select Page Range</h3>
       <p class="modal-desc" style="color:var(--text-secondary); font-size:0.82rem; margin-bottom:8px; line-height:1.5;">Enter start and end page numbers (1‑based).</p>
-      <span id="page-range-total-badge" class="total-pages-badge" style="font-size:0.7rem; font-weight:700; color:var(--primary-color); background:var(--primary-light); padding:2px 12px; border-radius:var(--radius-pill); display:inline-block; margin-bottom:10px;">Total: 0 pages</span>
+      <span id="page-range-total-badge" class="total-pages-badge" style="font-size:0.7rem; font-weight:700; color:var(--text-primary); background:rgba(var(--ink-rgb),.10); padding:2px 12px; border-radius:var(--radius-pill); display:inline-block; margin-bottom:10px;">Total: 0 pages</span>
       
       <div class="range-inputs" style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
         <input type="number" id="range-start" min="1" value="1" style="flex:1; padding:8px 10px; border:1.5px solid var(--glass-border); border-radius:var(--radius-sm); background:rgba(var(--ink-rgb),.05); color:var(--text-primary); font-size:0.95rem; box-sizing:border-box; min-width:0;">
@@ -679,8 +690,8 @@
   </div>
 
   <!-- ===== EDIT PAGE MODAL ===== -->
-  <div id="edit-page-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); backdrop-filter:blur(8px); z-index:10000; align-items:center; justify-content:center; padding:16px; box-sizing:border-box;">
-    <div class="modal-card" style="background:var(--glass-bg-strong); -webkit-backdrop-filter:blur(32px) saturate(180%); backdrop-filter:blur(32px) saturate(180%); padding:28px 30px 24px; border-radius:26px; max-width:440px; width:100%; box-shadow:var(--glass-shadow); box-sizing:border-box; border:1px solid var(--glass-border);">
+  <div id="edit-page-modal" style="display:none; position:fixed; inset:0; background:var(--modal-scrim, rgba(60,64,82,0.28)); -webkit-backdrop-filter:var(--modal-blur, blur(20px)); backdrop-filter:var(--modal-blur, blur(20px)); z-index:10000; align-items:center; justify-content:center; padding:16px; box-sizing:border-box;">
+    <div class="modal-card" style="background:var(--glass-bg-strong); -webkit-backdrop-filter:blur(32px) saturate(160%); backdrop-filter:blur(32px) saturate(160%); padding:28px 30px 24px; border-radius:26px; max-width:440px; width:100%; box-shadow:var(--glass-shadow); box-sizing:border-box; border:1px solid var(--glass-border);">
       <h3 style="margin-bottom:4px; font-family:var(--font-display); font-size:1.1rem;">Edit Page(s)</h3>
       <p class="modal-desc" style="color:var(--text-secondary); font-size:0.82rem; margin-bottom:8px; line-height:1.5;">
         Enter page numbers separated by spaces (e.g., <b>9 10 11</b>).
@@ -699,7 +710,8 @@
   </div>
 
   <!-- SETTINGS MODAL — horizontal tabs: Preference / AI Models / Permissions.
-       All labels are in English. -->
+       The "Auto-switch on error" switch is built by tab-manager.js and shown in the Preference tab
+       (section "AI Behavior"). The hidden checkbox below is the real control that ai-models.js reads. -->
   <div id="ai-models-modal" style="display:none; position:fixed; inset:0; z-index:10000; align-items:center; justify-content:center; padding:14px; box-sizing:border-box;">
     <div class="ai-models-modal-card">
       <div class="ai-models-modal-header">
@@ -728,6 +740,7 @@
           <h4 class="settings-subsection-title">Image &amp; Figure Handling</h4>
           <div id="settings-switches-container"></div>
         </div>
+        <!-- "AI Behavior" section (Auto-switch on error) is added here by tab-manager.js -->
       </div>
 
       <!-- ========== TAB 2: AI MODELS ========== -->
@@ -737,11 +750,9 @@
             <div class="ai-model-info-row"><span class="ai-model-info-label">Connection</span><span>OpenAI-compatible, Gemini, Anthropic and Ollama endpoints (cloud or local) can be configured; only the URL is required. API keys remain in this browser.</span></div>
             <div class="ai-model-info-row"><span class="ai-model-info-label">Fallback</span><span>Models are tried in the order shown below when an AI request fails.</span></div>
             <div class="ai-model-info-row"><span class="ai-model-info-label">Reorder</span><span>Use the handle at the left of a model card to change its priority.</span></div>
-            <div class="ai-model-auto-row">
-              <div class="ai-model-auto-main">
-                <input type="checkbox" id="ai-model-autoswitch-checkbox" onchange="handleAutoSwitchToggle(this.checked)">
-                <div><b style="color:var(--text-primary)">Auto-switch on error</b><div>Always enabled by the application.</div></div>
-              </div>
+            <!-- Real auto-switch control (kept for ai-models.js). Its visible switch lives in Preference. -->
+            <div class="ai-model-auto-row" hidden style="display:none">
+              <input type="checkbox" id="ai-model-autoswitch-checkbox" onchange="handleAutoSwitchToggle(this.checked)">
             </div>
           </div>
         </div>
@@ -880,7 +891,7 @@
             console.warn('[Settings] could not init tabs:', e);
         }
 
-        // Render the two Preference switches (English labels only).
+        // Render the Preference switches (English labels only).
         try {
             const swContainer = document.getElementById('settings-switches-container');
             if (swContainer && typeof window.renderStudioSwitches === 'function' && !swContainer.dataset.rendered) {
