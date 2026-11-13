@@ -148,7 +148,7 @@ function _getClarifyUILanguage(question = '') {
 }
 
 function _getLocalizedWriteOwnLabel(question = '') {
-  return _getClarifyUILanguage(question) === 'bn' ? '✍️ নিজের উত্তর লিখুন' : '✍️ Write my own answer';
+  return _getClarifyUILanguage(question) === 'bn' ? 'নিজের উত্তর লিখুন' : 'Write my own answer';
 }
 
 function _getLocalizedWriteOwnToast(question = '') {
@@ -158,7 +158,7 @@ function _getLocalizedWriteOwnToast(question = '') {
 }
 
 function _getLocalizedClarifyOwnLabel(question = '') {
-  return _getLocalizedClarifyLanguage(question) === 'bn' ? '✍️ নিজের মতো লিখুন' : '✍️ Write my own';
+  return _getLocalizedClarifyLanguage(question) === 'bn' ? 'নিজের মতো লিখুন' : 'Write my own';
 }
 
 function _getLocalizedClarifyLanguage(question = '') {
@@ -648,9 +648,9 @@ async function copySentChatMessage(messageDiv) {
   try {
     if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
     else throw new Error('Clipboard API unavailable');
-    if (typeof displayToastNotification === 'function') displayToastNotification('✅ Message copied');
+    if (typeof displayToastNotification === 'function') displayToastNotification('Message copied');
   } catch (_) {
-    if (typeof displayToastNotification === 'function') displayToastNotification('⚠️ Could not copy the message.');
+    if (typeof displayToastNotification === 'function') displayToastNotification('Could not copy the message.');
   }
 }
 
@@ -673,7 +673,7 @@ function retrySentChatMessage(messageDiv) {
   restoreChatMessageCommandState(messageDiv);
   input.value = messageDiv?.dataset.prompt || '';
   if (typeof autoResizeTextarea === 'function') autoResizeTextarea(input);
-  if (typeof displayToastNotification === 'function') displayToastNotification('↻ Document reset — retrying request');
+  if (typeof displayToastNotification === 'function') displayToastNotification('Document reset — retrying request');
   triggerChatSend();
 }
 
@@ -1121,7 +1121,7 @@ async function callAIAPI(messages, opts = {}) {
         // its own; nothing here needs to force that.
         if (modelIndex < models.length - 1) {
           if (typeof displayToastNotification === 'function') {
-            displayToastNotification(`⚠️ "${cfg.name}" ${describeAIErrorForToast(err)} — trying "${models[modelIndex + 1].name}"`);
+            displayToastNotification(`"${cfg.name}" ${describeAIErrorForToast(err)} — trying "${models[modelIndex + 1].name}"`);
           }
         }
       }
@@ -2012,12 +2012,12 @@ function _examScopeText(scope, isBn) {
       noun: 'OMR', failNoun: 'OMR তৈরি',
       outlineFresh: 'OMR তৈরির আগে outline review করুন:', outlineUpdated: 'আপডেট করা OMR outline:',
       hint: 'পরিবর্তন করতে চাইলে লিখুন (যেমন “প্রশ্নসংখ্যা বাড়াও” বা “রোল নম্বরের ঘর যোগ করো”), অথবা নিচের বোতাম চাপুন।',
-      button: '✅ OMR তৈরি করুন', input: 'OMR তৈরি করুন', summaryFallback: '✅ OMR শিট তৈরি হয়েছে।'
+      button: 'OMR তৈরি করুন', input: 'OMR তৈরি করুন', summaryFallback: 'OMR শিট তৈরি হয়েছে।'
     } : {
       noun: 'OMR', failNoun: 'OMR generation',
       outlineFresh: 'Review the OMR outline before generation:', outlineUpdated: 'Updated OMR outline:',
       hint: 'Type a change (for example, “increase the number of questions” or “add a roll-number grid”), or press the button below to build the OMR sheet.',
-      button: '✅ Generate OMR sheet', input: 'Generate OMR sheet', summaryFallback: '✅ OMR sheet generated.'
+      button: 'Generate OMR sheet', input: 'Generate OMR sheet', summaryFallback: 'OMR sheet generated.'
     };
   }
   if (scope === 'questions') {
@@ -2025,24 +2025,24 @@ function _examScopeText(scope, isBn) {
       noun: 'প্রশ্নপত্র', failNoun: 'প্রশ্নপত্র তৈরি',
       outlineFresh: 'প্রশ্নপত্র তৈরির আগে outline review করুন:', outlineUpdated: 'আপডেট করা প্রশ্নপত্রের outline:',
       hint: 'পরিবর্তন করতে চাইলে লিখুন (যেমন “MCQ অংশে আরও কভারেজ যোগ করো”), অথবা নিচের বোতাম চাপুন।',
-      button: '✅ প্রশ্নপত্র তৈরি করুন', input: 'প্রশ্নপত্র তৈরি করুন', summaryFallback: '✅ প্রশ্নপত্র তৈরি হয়েছে।'
+      button: 'প্রশ্নপত্র তৈরি করুন', input: 'প্রশ্নপত্র তৈরি করুন', summaryFallback: 'প্রশ্নপত্র তৈরি হয়েছে।'
     } : {
       noun: 'question paper', failNoun: 'question-paper generation',
       outlineFresh: 'Review the question-paper outline before generation:', outlineUpdated: 'Updated question-paper outline:',
       hint: 'Type a change (for example, add more MCQ coverage), or press the button below to build the question paper.',
-      button: '✅ Generate question paper', input: 'Generate question paper', summaryFallback: '✅ Question paper generated.'
+      button: 'Generate question paper', input: 'Generate question paper', summaryFallback: 'Question paper generated.'
     };
   }
   return isBn ? {
     noun: 'পরীক্ষা', failNoun: 'পরীক্ষা তৈরি',
     outlineFresh: 'পরীক্ষা তৈরির আগে outline review করুন:', outlineUpdated: 'আপডেট করা পরীক্ষার outline:',
     hint: 'পরিবর্তন করতে চাইলে লিখুন (যেমন “MCQ অংশে আরও কভারেজ যোগ করো” বা “OMR অংশ রাখো”), অথবা নিচের বোতাম চাপুন।',
-    button: '✅ পরীক্ষা তৈরি করুন', input: 'পরীক্ষা তৈরি করুন', summaryFallback: '✅ পরীক্ষার প্রশ্নপত্র তৈরি হয়েছে।'
+    button: 'পরীক্ষা তৈরি করুন', input: 'পরীক্ষা তৈরি করুন', summaryFallback: 'পরীক্ষার প্রশ্নপত্র তৈরি হয়েছে।'
   } : {
     noun: 'exam', failNoun: 'exam generation',
     outlineFresh: 'Review the exam outline before generation:', outlineUpdated: 'Updated exam outline:',
     hint: 'Type a change (for example, add more MCQ coverage or keep the OMR section), or press the button below to build the exam.',
-    button: '✅ Generate exam', input: 'Generate exam', summaryFallback: '✅ Exam paper generated.'
+    button: 'Generate exam', input: 'Generate exam', summaryFallback: 'Exam paper generated.'
   };
 }
 function _examScopeRule(scope) {
@@ -2191,7 +2191,7 @@ async function generateHtmlContentWithAutoContinue(promptText, htmlSoFar, finish
     if (isCancellationRequested) break;
     loops++;
     if (typeof displayToastNotification === 'function') {
-      displayToastNotification(`🔃 Token limit reached — continuing generation (part ${loops + 1})...`);
+      displayToastNotification(`Token limit reached — continuing generation (part ${loops + 1})...`);
     }
     if (typeof ProgressUI !== 'undefined' && ProgressUI.setLabel) {
       ProgressUI.setLabel(`Token limit reached — continuing generation (part ${loops + 1} of up to ${maxLoops + 1})...`);
@@ -2686,7 +2686,7 @@ async function generateComprehensiveDocumentStepByStep(promptText, fileContextSt
       } catch (e) {
         console.error(`[StepByStep] Section ${i + 1} failed:`, e);
         const reason = describeAIErrorForToast(e) || (e && e.message) || 'unknown error';
-        if (typeof displayToastNotification === 'function') displayToastNotification(`⚠️ Section ${i + 1} failed — ${reason}`);
+        if (typeof displayToastNotification === 'function') displayToastNotification(`Section ${i + 1} failed — ${reason}`);
         allSectionsSuccess = false;
         if (typeof HISTORY !== 'undefined' && HISTORY.saveState) HISTORY.saveState();
         break;
@@ -2711,7 +2711,7 @@ async function generateComprehensiveDocumentStepByStep(promptText, fileContextSt
       if (typeof HISTORY !== 'undefined' && HISTORY.saveState) HISTORY.saveState();
       if (typeof ProgressUI !== 'undefined') { ProgressUI.finish();
         setTimeout(() => { if (typeof ProgressUI !== 'undefined' && ProgressUI.hide) ProgressUI.hide(); }, 500); }
-      if (typeof appendChatMessageToUI === 'function') appendChatMessageToUI('ai', `✅ "${docTitle}" — notes generated!`);
+      if (typeof appendChatMessageToUI === 'function') appendChatMessageToUI('ai', `"${docTitle}" — notes generated!`);
       intentPayloadForGeneration = null;
       _generationLockedModelConfig = null;
       return true;
@@ -2719,7 +2719,7 @@ async function generateComprehensiveDocumentStepByStep(promptText, fileContextSt
       if (typeof HISTORY !== 'undefined' && HISTORY.saveState) HISTORY.saveState();
       if (typeof ProgressUI !== 'undefined') { ProgressUI.finish();
         setTimeout(() => { if (typeof ProgressUI !== 'undefined' && ProgressUI.hide) ProgressUI.hide(); }, 500); }
-      if (typeof appendChatMessageToUI === 'function') appendChatMessageToUI('ai', `✅ "${docTitle}" — partially generated (some sections skipped).`);
+      if (typeof appendChatMessageToUI === 'function') appendChatMessageToUI('ai', `"${docTitle}" — partially generated (some sections skipped).`);
       intentPayloadForGeneration = null;
       return true;
     }
@@ -2729,7 +2729,7 @@ async function generateComprehensiveDocumentStepByStep(promptText, fileContextSt
     if (loadingElement && loadingElement.isConnected) loadingElement.remove();
     if (typeof ProgressUI !== 'undefined' && ProgressUI.hide) ProgressUI.hide();
     intentPayloadForGeneration = null;
-    if (typeof appendChatMessageToUI === 'function') appendChatMessageToUI('error', `⚠️ Error: ${error.message}`);
+    if (typeof appendChatMessageToUI === 'function') appendChatMessageToUI('error', `Error: ${error.message}`);
     return false;
   }
 }
@@ -2939,14 +2939,14 @@ async function generateDefaultPDFDirectMode(promptText, fileContextString, isMon
     const errorMsg = (e && e.message) ? String(e.message) : 'Unknown error.';
     if (e && e.noModelConfigured) {
       if (typeof appendChatMessageToUI === 'function') {
-        appendChatMessageToUI('error', '⚠️ No AI model configured. Please click the "AI Models" button in the top bar, add a model, and try again.');
+        appendChatMessageToUI('error', 'No AI model configured. Please click the "AI Models" button in the top bar, add a model, and try again.');
       }
       if (typeof displayToastNotification === 'function') {
-        displayToastNotification('⚠️ No AI model added — please configure one in AI Models.');
+        displayToastNotification('No AI model added — please configure one in AI Models.');
       }
     } else {
       if (typeof appendChatMessageToUI === 'function') {
-        appendChatMessageToUI('error', `⚠️ PDF generation failed: ${errorMsg}`);
+        appendChatMessageToUI('error', `PDF generation failed: ${errorMsg}`);
       }
       if (typeof displayToastNotification === 'function') {
         displayToastNotification(`Error: ${errorMsg}`);
@@ -3495,7 +3495,7 @@ function formatAnalyticsChatMessage(analytics) {
   html += `<div style="display:grid; grid-template-columns:1fr 1fr; gap:4px 12px; font-size:0.9rem;">`;
   html += `<span>Pages: ${totalPages}</span>`;
   html += `<span>Words: ${wordCount.toLocaleString()}</span>`;
-  html += `<span>⏱ Reading: ~${readingTime} min</span>`;
+  html += `<span>Reading: ~${readingTime} min</span>`;
   html += `<span>Sections: ${sections}</span>`;
   html += `<span>Tables: ${tables}</span>`;
   html += `<span>Equations: ${equations}</span>`;
@@ -3704,7 +3704,7 @@ function validateAIActionHandlers() {
   const missing = Object.entries(required).filter(([, name]) => typeof window[name] !== 'function').map(([action, name]) => `${action} → ${name}`);
   if (missing.length) {
     console.error('[AI Action Self-Check] Missing handlers:', missing);
-    if (typeof displayToastNotification === 'function') displayToastNotification(`⚠️ AI action handler missing: ${missing[0]}`);
+    if (typeof displayToastNotification === 'function') displayToastNotification(`AI action handler missing: ${missing[0]}`);
     return false;
   }
   return true;
@@ -4072,7 +4072,7 @@ async function _copyInjectFigures(html) {
     if (rec && rec.dataUrl) found.set(tok, rec); else missing++;
   }
   if (missing > 0 && typeof displayToastNotification === 'function') {
-    displayToastNotification(`⚠️ ${missing} picture(s) from the source file are no longer available — please re-attach the file to include them.`);
+    displayToastNotification(`${missing} picture(s) from the source file are no longer available — please re-attach the file to include them.`);
   }
   // token alone in a <p> (possibly inside <b>/<span>): replace the whole paragraph by a figure block
   const alone = new RegExp(`<p[^>]*>\\s*(?:<(?:b|strong|i|em|span|code)[^>]*>\\s*)*(${T})\\s*(?:</(?:b|strong|i|em|span|code)>\\s*)*</p>`, 'g');
@@ -4113,7 +4113,7 @@ async function _copyRestyleChunk(chunk, idx, total, env, depth = 0) {
       if (/429|rate|quota|too many|overload|503|resource.?exhausted/i.test(_msg)) {
         if (env.limit > 1) {
           env.limit = Math.max(1, Math.floor(env.limit * 0.6));
-          if (!env.notifiedSlow && typeof displayToastNotification === 'function') { env.notifiedSlow = true; displayToastNotification('⏳ API rate limit reached — slowing down automatically.'); }
+          if (!env.notifiedSlow && typeof displayToastNotification === 'function') { env.notifiedSlow = true; displayToastNotification('API rate limit reached — slowing down automatically.'); }
         }
         await new Promise(r => setTimeout(r, 2500 * (attempt + 1) + Math.random() * 1000));
       } else {
@@ -4177,13 +4177,13 @@ async function handleCopyStyleCommand(inputField, opts = {}) {
     if (typeof displayToastNotification === 'function') {
       const filesStillReading = Object.values(APP_STATE.attachedFiles || {}).some(fileData => fileData && fileData.status === 'queued');
       displayToastNotification(filesStillReading
-        ? '⏳ Please wait until the uploaded file has finished being read.'
-        : '⚠️ Attach a readable file first, then use Copy / Copy & Refine.');
+        ? 'Please wait until the uploaded file has finished being read.'
+        : 'Attach a readable file first, then use Copy / Copy & Refine.');
     }
     return;
   }
   if (APP_STATE.isAIGenerating) {
-    if (typeof displayToastNotification === 'function') displayToastNotification('⏳ Please wait for the current AI task to finish first.');
+    if (typeof displayToastNotification === 'function') displayToastNotification('Please wait for the current AI task to finish first.');
     return;
   }
 
@@ -4317,7 +4317,7 @@ async function handleCopyStyleCommand(inputField, opts = {}) {
 
     if (isCancellationRequested && parts.some(p => !p)) {
       env.stats.warnings++;
-      if (typeof displayToastNotification === 'function') displayToastNotification('⚠️ Stopped early — only the finished parts were inserted.');
+      if (typeof displayToastNotification === 'function') displayToastNotification('Stopped early — only the finished parts were inserted.');
     }
     if (typeof ProgressUI !== 'undefined' && ProgressUI.setStage) ProgressUI.setStage('Finalizing…', 78, 92);
 
@@ -4346,14 +4346,14 @@ async function handleCopyStyleCommand(inputField, opts = {}) {
     if (loadingElement && loadingElement.isConnected) loadingElement.remove();
     if (typeof appendChatMessageToUI === 'function') {
       appendChatMessageToUI('ai', isRefine
-        ? `✅ Copied & refined${copyLanguageFormat !== 'default' ? ` (${_COPY_LANGUAGE_FORMAT_LABELS[copyLanguageFormat]})` : ''} — AI chatter removed, headings sized, content otherwise unchanged.`
+        ? `Copied & refined${copyLanguageFormat !== 'default' ? ` (${_COPY_LANGUAGE_FORMAT_LABELS[copyLanguageFormat]})` : ''} — AI chatter removed, headings sized, content otherwise unchanged.`
         : (attachedEntries.length > 1 ?
-          `✅ Copied and restyled ${attachedEntries.length} files' content — nothing added or removed.` :
-          `✅ Copied and restyled the file's content — nothing added or removed.`));
+          `Copied and restyled ${attachedEntries.length} files' content — nothing added or removed.` :
+          `Copied and restyled the file's content — nothing added or removed.`));
     }
-    if (typeof displayToastNotification === 'function') displayToastNotification(isRefine ? '✅ Copy & Refine complete.' : '✅ Copy complete — restyled only, content unchanged.');
+    if (typeof displayToastNotification === 'function') displayToastNotification(isRefine ? 'Copy & Refine complete.' : 'Copy complete — restyled only, content unchanged.');
     if (typeof env !== 'undefined' && env.stats && env.stats.rawParts && typeof appendChatMessageToUI === 'function') {
-      appendChatMessageToUI('ai', `⚠️ ${env.stats.rawParts} part(s) could not be restyled by the AI, so their original text was inserted as plain paragraphs — nothing was lost.`);
+      appendChatMessageToUI('ai', `${env.stats.rawParts} part(s) could not be restyled by the AI, so their original text was inserted as plain paragraphs — nothing was lost.`);
     }
   } catch (err) {
     if (loadingElement && loadingElement.isConnected) loadingElement.remove();
@@ -4745,7 +4745,7 @@ function appendSlideOutlineToUI(result) {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'clarify-option-btn';
-  btn.textContent = isBn ? '✅ ডেক বানাও' : '✅ Generate deck';
+  btn.textContent = isBn ? 'ডেক বানাও' : 'Generate deck';
   btn.addEventListener('click', () => {
     const pend = (typeof _getPendingSlideOutline === 'function') ? _getPendingSlideOutline() : APP_STATE.pendingOutline;
     if (!pend) return;
@@ -4776,6 +4776,22 @@ function appendSlideOutlineToUI(result) {
 // 4) Only then run the existing PDF writer unchanged except for using
 //    the approved outline as its structure.
 //
+// "Outline before creating PDF" switch (Settings > Preference). An outline that is
+// already awaiting review is always allowed to finish, even if the switch is turned
+// off meanwhile, so a half-finished flow is never stranded.
+function _isPdfOutlineReviewEnabled() {
+  try {
+    return typeof window.getStudioSetting !== 'function' || window.getStudioSetting('pdfOutlineReview') !== false;
+  } catch (_) { return true; }
+}
+
+// "Summary after creating PDF" switch (Settings > Preference).
+function _isPdfSummaryEnabled() {
+  try {
+    return typeof window.getStudioSetting !== 'function' || window.getStudioSetting('showPdfSummary') !== false;
+  } catch (_) { return true; }
+}
+
 function _normalizePDFOutline(rawOutline) {
   if (!rawOutline || typeof rawOutline !== 'object') return null;
 
@@ -4899,7 +4915,7 @@ function appendPDFOutlineToUI(result) {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'clarify-option-btn';
-  btn.textContent = isBn ? '✅ PDF তৈরি করুন' : '✅ Generate PDF';
+  btn.textContent = isBn ? 'PDF তৈরি করুন' : 'Generate PDF';
 
   btn.addEventListener('click', () => {
     const pending = APP_STATE.pendingPDFOutline;
@@ -5209,7 +5225,7 @@ async function sendChatPromptToAI() {
       }
       if (typeof renderSelectedCommandChips === 'function') renderSelectedCommandChips();
       intentPayload = typeof buildIntentPayload === 'function' ? buildIntentPayload() : null;
-      if (!intentPayload) { if (typeof displayToastNotification === 'function') displayToastNotification('⚠️ Failed to build intent after edit selection.'); return; }
+      if (!intentPayload) { if (typeof displayToastNotification === 'function') displayToastNotification('Failed to build intent after edit selection.'); return; }
     }
 
     try { console.info('[PDF Outline] send — intentPayload:', JSON.stringify(intentPayload), '| pendingPDFOutline:', !!APP_STATE.pendingPDFOutline); } catch (_) {}
@@ -5296,7 +5312,7 @@ async function sendChatPromptToAI() {
 
     // Every other @ command is one-shot and clears itself after a single
     // send. "@Edit Slide N" (pinned via the pencil icon in the slide
-    // thumbnail rail) and "✨ Custom Background" (pinned via the Custom
+    // thumbnail rail) and "Custom Background" (pinned via the Custom
     // Background swatch) are deliberately kept — they stay pinned across
     // several follow-up prompts until the user removes the chip by hand,
     // per the slide-scoped AI editing feature (see slide-studio.js).
@@ -5406,7 +5422,8 @@ async function sendChatPromptToAI() {
     // Exam requests keep their own outline flow further below.
     if (intentPayload.intent === 'create_pdf' && !intentPayload.chatCompanion &&
         !APP_STATE.pendingExamOutline &&
-        !_isExamLikeRequest(promptText)) {
+        !_isExamLikeRequest(promptText) &&
+        (_isPdfOutlineReviewEnabled() || !!APP_STATE.pendingPDFOutline)) {
       const _pdfPending = APP_STATE.pendingPDFOutline;
       const _pdfFileContext = typeof buildAttachmentContextForAI === 'function'
         ? buildAttachmentContextForAI(promptText, true, intentPayload) : '';
@@ -5662,8 +5679,8 @@ async function sendChatPromptToAI() {
           }
           const result = await handleRefineAction(promptText, intentPayload, pageContext, modelsUsed);
           if (result && result.applied) {
-            if (typeof appendChatMessageToUI === 'function') appendChatMessageToUI('ai', result.summary || '✅ Refinement applied.');
-            if (typeof displayToastNotification === 'function') displayToastNotification('✅ Refinement completed.');
+            if (typeof appendChatMessageToUI === 'function') appendChatMessageToUI('ai', result.summary || 'Refinement applied.');
+            if (typeof displayToastNotification === 'function') displayToastNotification('Refinement completed.');
             _updateLivePageNumberFromCurrentDocument();
           } else {
             throw new Error('Refinement could not be applied.');
@@ -5725,14 +5742,14 @@ async function sendChatPromptToAI() {
             : { ok: false, message: 'Slide Studio module not loaded.' };
           if (typeof ProgressUI !== 'undefined' && ProgressUI.hide) ProgressUI.hide();
           if (slideEditResult && slideEditResult.ok) {
-            if (typeof appendChatMessageToUI === 'function') appendChatMessageToUI('ai', `✅ Slide ${slideEditResult.slideNumber} updated. This chip stays pinned — send another prompt to keep editing this slide, or remove the "@Edit Slide ${slideEditResult.slideNumber}" chip to go back to normal chat.`);
+            if (typeof appendChatMessageToUI === 'function') appendChatMessageToUI('ai', `Slide ${slideEditResult.slideNumber} updated. This chip stays pinned — send another prompt to keep editing this slide, or remove the "@Edit Slide ${slideEditResult.slideNumber}" chip to go back to normal chat.`);
             if (typeof switchPreviewTab === 'function') switchPreviewTab('slides');
           } else {
             const reason = (slideEditResult && slideEditResult.message) ? slideEditResult.message : 'Unknown error.';
             if (slideEditResult && slideEditResult.noModelConfigured) {
-              if (typeof appendChatMessageToUI === 'function') appendChatMessageToUI('error', '⚠️ No AI model configured. Please click the "AI Models" button in the top bar, add a model, and try again.');
+              if (typeof appendChatMessageToUI === 'function') appendChatMessageToUI('error', 'No AI model configured. Please click the "AI Models" button in the top bar, add a model, and try again.');
             } else {
-              if (typeof appendChatMessageToUI === 'function') appendChatMessageToUI('error', `⚠️ Slide edit failed: ${reason}`);
+              if (typeof appendChatMessageToUI === 'function') appendChatMessageToUI('error', `Slide edit failed: ${reason}`);
             }
           }
         } catch (slideEditErr) {
@@ -5747,7 +5764,7 @@ async function sendChatPromptToAI() {
         return;
       }
 
-      // ========== CUSTOM SLIDE BACKGROUND PIPELINE (✨ swatch in the Background picker) ==========
+      // ========== CUSTOM SLIDE BACKGROUND PIPELINE (swatch in the Background picker) ==========
       // Scoped to either every slide or just one, per intentPayload.bgEditTarget
       // ("all" or a 1-based slide number) — set by the "Same on all slides /
       // Different per slide" toolbar toggle at the moment the chip was pinned
@@ -5777,14 +5794,14 @@ async function sendChatPromptToAI() {
           if (typeof ProgressUI !== 'undefined' && ProgressUI.hide) ProgressUI.hide();
           if (bgResult && bgResult.ok) {
             const scopeText = bgTarget === 'all' ? 'every slide' : `Slide ${bgTarget}`;
-            if (typeof appendChatMessageToUI === 'function') appendChatMessageToUI('ai', `✅ Custom background "${bgResult.label}" applied to ${scopeText}. This chip stays pinned — send another description to keep adjusting, or remove the chip to go back to normal chat.`);
+            if (typeof appendChatMessageToUI === 'function') appendChatMessageToUI('ai', `Custom background "${bgResult.label}" applied to ${scopeText}. This chip stays pinned — send another description to keep adjusting, or remove the chip to go back to normal chat.`);
             if (typeof switchPreviewTab === 'function') switchPreviewTab('slides');
           } else {
             const reason = (bgResult && bgResult.message) ? bgResult.message : 'Unknown error.';
             if (bgResult && bgResult.noModelConfigured) {
-              if (typeof appendChatMessageToUI === 'function') appendChatMessageToUI('error', '⚠️ No AI model configured. Please click the "AI Models" button in the top bar, add a model, and try again.');
+              if (typeof appendChatMessageToUI === 'function') appendChatMessageToUI('error', 'No AI model configured. Please click the "AI Models" button in the top bar, add a model, and try again.');
             } else {
-              if (typeof appendChatMessageToUI === 'function') appendChatMessageToUI('error', `⚠️ Background generation failed: ${reason}`);
+              if (typeof appendChatMessageToUI === 'function') appendChatMessageToUI('error', `Background generation failed: ${reason}`);
             }
           }
         } catch (bgErr) {
@@ -5861,7 +5878,7 @@ async function sendChatPromptToAI() {
           appendSlideOutlineToUI(slideResult);
         } else if (slideResult && slideResult.ok) {
           APP_STATE.pendingClarify = null;
-          if (typeof appendChatMessageToUI === 'function') appendChatMessageToUI('ai', `✅ Slide deck generated (${slideResult.deck.slides.length} slides). Use the download buttons in the Slides view to export it as PowerPoint or PDF.`);
+          if (typeof appendChatMessageToUI === 'function') appendChatMessageToUI('ai', `Slide deck generated (${slideResult.deck.slides.length} slides). Use the download buttons in the Slides view to export it as PowerPoint or PDF.`);
           // A slide deck is slide-shaped content, not an A4 document — show
           // it in the dedicated Slides view (16:9 pages) immediately rather
           // than leaving the A4 document editor showing.
@@ -6295,10 +6312,10 @@ async function sendChatPromptToAI() {
         if (directResult && directResult.ok) {
           APP_STATE.pendingClarify = null;
           if (typeof isMobileDeviceLayout === 'function' && isMobileDeviceLayout() && typeof setMobileView === 'function') setMobileView('editor');
-          if (typeof appendChatMessageToUI === 'function') appendChatMessageToUI('ai', '✅ PDF generated successfully.');
+          if (typeof appendChatMessageToUI === 'function') appendChatMessageToUI('ai', 'PDF generated successfully.');
           _updateLivePageNumberFromCurrentDocument();
           try {
-            const analytics = typeof computeDocumentAnalytics === 'function' ? await computeDocumentAnalytics(analyticsStart, modelsUsed) : null;
+            const analytics = (_isPdfSummaryEnabled() && typeof computeDocumentAnalytics === 'function') ? await computeDocumentAnalytics(analyticsStart, modelsUsed) : null;
             if (analytics && typeof appendChatMessageToUI === 'function' && typeof formatAnalyticsChatMessage === 'function') {
               appendChatMessageToUI('ai', formatAnalyticsChatMessage(analytics));
             }
@@ -6333,11 +6350,11 @@ async function sendChatPromptToAI() {
         if (directSuccess === true) {
           APP_STATE.pendingClarify = null;
           if (typeof isMobileDeviceLayout === 'function' && isMobileDeviceLayout() && typeof setMobileView === 'function') setMobileView('editor');
-          if (typeof displayToastNotification === 'function') displayToastNotification(`✅ ${intentPayload.length === 'long_pdf' ? 'Long' : 'Short'} PDF generated.`);
-          if (typeof appendChatMessageToUI === 'function') appendChatMessageToUI('ai', `✅ ${intentPayload.length === 'long_pdf' ? 'Long' : 'Short'} PDF generated successfully.`);
+          if (typeof displayToastNotification === 'function') displayToastNotification(`${intentPayload.length === 'long_pdf' ? 'Long' : 'Short'} PDF generated.`);
+          if (typeof appendChatMessageToUI === 'function') appendChatMessageToUI('ai', `${intentPayload.length === 'long_pdf' ? 'Long' : 'Short'} PDF generated successfully.`);
           _updateLivePageNumberFromCurrentDocument();
           try {
-            const analytics = typeof computeDocumentAnalytics === 'function' ? await computeDocumentAnalytics(analyticsStart, modelsUsed) : null;
+            const analytics = (_isPdfSummaryEnabled() && typeof computeDocumentAnalytics === 'function') ? await computeDocumentAnalytics(analyticsStart, modelsUsed) : null;
             if (analytics && typeof appendChatMessageToUI === 'function' && typeof formatAnalyticsChatMessage === 'function') {
               appendChatMessageToUI('ai', formatAnalyticsChatMessage(analytics));
             }
@@ -6375,12 +6392,12 @@ async function sendChatPromptToAI() {
           loadingElement.remove();
         } else {
           if (success && typeof isMobileDeviceLayout === 'function' && isMobileDeviceLayout() && typeof setMobileView === 'function') setMobileView('editor');
-          if (success && typeof displayToastNotification === 'function') displayToastNotification("✅ Note generated!");
+          if (success && typeof displayToastNotification === 'function') displayToastNotification("Note generated!");
           _updateLivePageNumberFromCurrentDocument();
           if (success) {
             APP_STATE.pendingClarify = null;
             try {
-              const analytics = typeof computeDocumentAnalytics === 'function' ? await computeDocumentAnalytics(analyticsStart, modelsUsed) : null;
+              const analytics = (_isPdfSummaryEnabled() && typeof computeDocumentAnalytics === 'function') ? await computeDocumentAnalytics(analyticsStart, modelsUsed) : null;
               if (analytics && typeof appendChatMessageToUI === 'function' && typeof formatAnalyticsChatMessage === 'function') {
                 appendChatMessageToUI('ai', formatAnalyticsChatMessage(analytics));
               }
@@ -6432,7 +6449,7 @@ async function sendChatPromptToAI() {
       if (!parsedJson && result.content && result.content.trim().startsWith('{')) {
         parsedJson = attemptRepairAndParse(result.content);
         if (!parsedJson) {
-          if (typeof displayToastNotification === 'function') displayToastNotification('⚠️ JSON parsing failed, retrying...');
+          if (typeof displayToastNotification === 'function') displayToastNotification('JSON parsing failed, retrying...');
           const retryMessages = [{ role: 'system', content: `You are a JSON-only assistant. Your previous output contained unescaped backslashes and was not valid JSON. Ensure every backslash inside string values is doubled (\\\\). Output ONLY valid JSON.` }, { role: 'user', content: `Please respond to the original request: ${promptText}` }];
           const retryResult = await callAIAPI(retryMessages, { forceJson: true, modelsUsedSet: modelsUsed, maxTokens: undefined });
           parsedJson = safeParseAIJson(retryResult.content, null);
@@ -6453,7 +6470,7 @@ async function sendChatPromptToAI() {
         const looksLikeJsonWrapper = content.trim().startsWith('{') && /"action"\s*:/.test(content);
         if (looksLikeJsonWrapper) {
           loadingElement.remove();
-          if (typeof appendChatMessageToUI === 'function') appendChatMessageToUI('error', '⚠️ The AI response was malformed JSON and could not be parsed. Please try again.');
+          if (typeof appendChatMessageToUI === 'function') appendChatMessageToUI('error', 'The AI response was malformed JSON and could not be parsed. Please try again.');
           if (typeof displayToastNotification === 'function') displayToastNotification('Error JSON parsing failed. Please retry.');
           APP_STATE.isAIGenerating = false;
           document.getElementById('send-message-btn').disabled = false;
@@ -6461,9 +6478,9 @@ async function sendChatPromptToAI() {
           return;
         }
         if (/<[a-z][\s\S]*>/i.test(content)) {
-          parsedJson = { action: 'append_content', html_content: content, chat_summary: "✅ Document generated!" };
+          parsedJson = { action: 'append_content', html_content: content, chat_summary: "Document generated!" };
         } else if (content.trim() && content.trim().length > 10) {
-          parsedJson = { action: 'append_content', html_content: convertTextToDocumentHTML(content), chat_summary: "✅ Document generated!" };
+          parsedJson = { action: 'append_content', html_content: convertTextToDocumentHTML(content), chat_summary: "Document generated!" };
         } else {
           parsedJson = { action: 'chat_reply', message: "I couldn't generate content from your request." };
         }
@@ -6500,14 +6517,14 @@ async function sendChatPromptToAI() {
       if (isDocumentRequest && parsedJson.action === 'chat_reply' && parsedJson.message) {
         const content = parsedJson.message;
         if (/<[a-z][\s\S]*>/i.test(content)) {
-          parsedJson = { action: 'append_content', html_content: content, chat_summary: parsedJson.chat_summary || "✅ Document generated!" };
+          parsedJson = { action: 'append_content', html_content: content, chat_summary: parsedJson.chat_summary || "Document generated!" };
         } else if (content.trim() && content.trim().length > 10) {
-          parsedJson = { action: 'append_content', html_content: convertTextToDocumentHTML(content), chat_summary: parsedJson.chat_summary || "✅ Document generated!" };
+          parsedJson = { action: 'append_content', html_content: convertTextToDocumentHTML(content), chat_summary: parsedJson.chat_summary || "Document generated!" };
         }
       }
 
       if (isDocumentRequest && !parsedJson.html_content && !parsedJson.new_html && result.content && /<[a-z][\s\S]*>/i.test(result.content)) {
-        parsedJson = { action: 'append_content', html_content: result.content, chat_summary: "✅ Document generated!" };
+        parsedJson = { action: 'append_content', html_content: result.content, chat_summary: "Document generated!" };
       }
 
       if (result.finishReason === 'length') {
@@ -6541,11 +6558,11 @@ async function sendChatPromptToAI() {
           if (typeof HISTORY !== 'undefined' && HISTORY.saveState) HISTORY.saveState();
           const inserted = typeof insertHtmlAfterPage === 'function' ? await insertHtmlAfterPage(afterPage, parsedJson.html_content) : false;
           if (inserted) {
-            chatReplyMessage = parsedJson.chat_summary || `✅ Added after page ${afterPage}.`;
+            chatReplyMessage = parsedJson.chat_summary || `Added after page ${afterPage}.`;
             documentWasUpdated = true;
             _updateLivePageNumberFromCurrentDocument();
           } else {
-            chatReplyMessage = `⚠️ Could not add after page ${afterPage} — no changes made.`;
+            chatReplyMessage = `Could not add after page ${afterPage} — no changes made.`;
             if (typeof appendChatMessageToUI === 'function') appendChatMessageToUI('error', chatReplyMessage);
           }
         } else if (parsedJson.action === 'prepend_content' && parsedJson.html_content) {
@@ -6553,30 +6570,30 @@ async function sendChatPromptToAI() {
           if (typeof setDocumentHTMLAndPaginate === 'function') setDocumentHTMLAndPaginate(isCanvasEmpty ? parsedJson.html_content : parsedJson.html_content + currentFullHTML);
           const container = document.getElementById('document-view-container');
           if (container) container.scrollTop = 0;
-          chatReplyMessage = parsedJson.chat_summary || "✅ Content inserted!";
+          chatReplyMessage = parsedJson.chat_summary || "Content inserted!";
           documentWasUpdated = true;
           _updateLivePageNumberFromCurrentDocument();
         } else if (parsedJson.action === 'update_section' && parsedJson.target_heading && parsedJson.new_html) {
           if (typeof HISTORY !== 'undefined' && HISTORY.saveState) HISTORY.saveState();
           if (typeof updateSpecificSectionByHeading === 'function' && !(await updateSpecificSectionByHeading(parsedJson.target_heading, parsedJson.new_html))) {
-            chatReplyMessage = `⚠️ Could not locate the existing section "${parsedJson.target_heading}" — no content was appended.`;
+            chatReplyMessage = `Could not locate the existing section "${parsedJson.target_heading}" — no content was appended.`;
             if (typeof appendChatMessageToUI === 'function') appendChatMessageToUI('error', chatReplyMessage);
             documentWasUpdated = false;
           } else {
-            chatReplyMessage = parsedJson.chat_summary || "✅ Section updated!";
+            chatReplyMessage = parsedJson.chat_summary || "Section updated!";
             documentWasUpdated = true;
             _updateLivePageNumberFromCurrentDocument();
           }
         } else if (parsedJson.action === 'replace_all' && parsedJson.html_content) {
           if (typeof HISTORY !== 'undefined' && HISTORY.saveState) HISTORY.saveState();
           if (typeof setDocumentHTMLAndPaginate === 'function') setDocumentHTMLAndPaginate(parsedJson.html_content);
-          chatReplyMessage = parsedJson.chat_summary || "✅ Document generated!";
+          chatReplyMessage = parsedJson.chat_summary || "Document generated!";
           documentWasUpdated = true;
           _updateLivePageNumberFromCurrentDocument();
         } else if ((parsedJson.action === 'append_content' || !parsedJson.action) && parsedJson.html_content) {
           if (typeof HISTORY !== 'undefined' && HISTORY.saveState) HISTORY.saveState();
           if (typeof setDocumentHTMLAndPaginate === 'function') setDocumentHTMLAndPaginate(isCanvasEmpty ? parsedJson.html_content : currentFullHTML + "<br><br>" + parsedJson.html_content);
-          chatReplyMessage = parsedJson.chat_summary || "✅ Content added!";
+          chatReplyMessage = parsedJson.chat_summary || "Content added!";
           documentWasUpdated = true;
           _updateLivePageNumberFromCurrentDocument();
         } else if (parsedJson.action === 'update_pages' && Array.isArray(parsedJson.updates) && parsedJson.updates.length) {
@@ -6584,37 +6601,37 @@ async function sendChatPromptToAI() {
           const actual = parsedJson.updates.map(u => parseInt(u.page_number, 10)).filter(Number.isInteger).sort((a, b) => a - b);
           const complete = !expected || (expected.length === actual.length && expected.every((n, i) => n === actual[i]));
           if (!complete) {
-            chatReplyMessage = '⚠️ The AI did not return every selected page. No changes were made.';
+            chatReplyMessage = 'The AI did not return every selected page. No changes were made.';
             if (typeof appendChatMessageToUI === 'function') appendChatMessageToUI('error', chatReplyMessage);
           } else {
             if (typeof HISTORY !== 'undefined' && HISTORY.saveState) HISTORY.saveState();
             if (typeof updateSpecificPagesByNumber === 'function' && updateSpecificPagesByNumber(parsedJson.updates)) {
-              chatReplyMessage = parsedJson.chat_summary || '✅ Selected pages updated!';
+              chatReplyMessage = parsedJson.chat_summary || 'Selected pages updated!';
               documentWasUpdated = true;
               _updateLivePageNumberFromCurrentDocument();
             } else {
-              chatReplyMessage = '⚠️ Selected page updates could not be applied safely.';
+              chatReplyMessage = 'Selected page updates could not be applied safely.';
               if (typeof appendChatMessageToUI === 'function') appendChatMessageToUI('error', chatReplyMessage);
             }
           }
         } else if (parsedJson.action === 'update_page' && parsedJson.page_number && typeof parsedJson.new_html === 'string' && _addIsPageScoped && !(intentPayload.pageNumbers.length === 1 && intentPayload.pageNumbers[0] === parseInt(parsedJson.page_number, 10))) {
-          chatReplyMessage = '⚠️ The AI tried to change a page you did not select. No changes were made.';
+          chatReplyMessage = 'The AI tried to change a page you did not select. No changes were made.';
           if (typeof appendChatMessageToUI === 'function') appendChatMessageToUI('error', chatReplyMessage);
         } else if (parsedJson.action === 'update_page' && parsedJson.page_number && typeof parsedJson.new_html === 'string') {
           if (typeof HISTORY !== 'undefined' && HISTORY.saveState) HISTORY.saveState();
           const pageUpdateApplied = typeof updateSpecificPageByNumber === 'function' ? updateSpecificPageByNumber(parseInt(parsedJson.page_number, 10), parsedJson.new_html) : false;
           if (pageUpdateApplied) {
-            chatReplyMessage = parsedJson.chat_summary || `✅ Page ${parsedJson.page_number} updated!`;
+            chatReplyMessage = parsedJson.chat_summary || `Page ${parsedJson.page_number} updated!`;
             documentWasUpdated = true;
             _updateLivePageNumberFromCurrentDocument();
           } else {
-            chatReplyMessage = `⚠️ Page ${parsedJson.page_number} not found — no changes made.`;
+            chatReplyMessage = `Page ${parsedJson.page_number} not found — no changes made.`;
             if (typeof appendChatMessageToUI === 'function') appendChatMessageToUI('error', chatReplyMessage);
           }
         } else if (parsedJson.message && /<(h[1-3]|table|div class="(block-|fc-)|ul|ol)[\s>]/i.test(parsedJson.message)) {
           if (typeof HISTORY !== 'undefined' && HISTORY.saveState) HISTORY.saveState();
           if (typeof setDocumentHTMLAndPaginate === 'function') setDocumentHTMLAndPaginate(isCanvasEmpty ? parsedJson.message : currentFullHTML + "<br><br>" + parsedJson.message);
-          chatReplyMessage = parsedJson.chat_summary || "✅ Content added!";
+          chatReplyMessage = parsedJson.chat_summary || "Content added!";
           documentWasUpdated = true;
           _updateLivePageNumberFromCurrentDocument();
         } else if (parsedJson.message) {
@@ -6646,12 +6663,12 @@ async function sendChatPromptToAI() {
 
       if (typeof isMobileDeviceLayout === 'function' && isMobileDeviceLayout() && documentWasUpdated && typeof setMobileView === 'function') {
         setMobileView('editor');
-        if (typeof displayToastNotification === 'function') displayToastNotification("✅ Note generated!");
+        if (typeof displayToastNotification === 'function') displayToastNotification("Note generated!");
       }
 
       if (documentWasUpdated) {
         try {
-          const analytics = typeof computeDocumentAnalytics === 'function' ? await computeDocumentAnalytics(analyticsStart, modelsUsed) : null;
+          const analytics = (_isPdfSummaryEnabled() && typeof computeDocumentAnalytics === 'function') ? await computeDocumentAnalytics(analyticsStart, modelsUsed) : null;
           if (analytics && typeof appendChatMessageToUI === 'function' && typeof formatAnalyticsChatMessage === 'function') {
             appendChatMessageToUI('ai', formatAnalyticsChatMessage(analytics));
           }
@@ -6672,7 +6689,7 @@ async function sendChatPromptToAI() {
       } else if (error.kind === 'malformed_response') {
         userFriendlyMsg = 'The AI returned malformed data. Please try again.';
       }
-      if (typeof appendChatMessageToUI === 'function') appendChatMessageToUI('error', `⚠️ ${userFriendlyMsg}`);
+      if (typeof appendChatMessageToUI === 'function') appendChatMessageToUI('error', `${userFriendlyMsg}`);
       console.error('sendChatPromptToAI error:', error);
     }
     APP_STATE.suppressDocumentAIChat = false;
@@ -6790,7 +6807,7 @@ window.onload = function() {
   // (saved on this device + cloud). Runs last so nothing above overrides it.
   try { if (window.PaperlyMenuPrefs) window.PaperlyMenuPrefs.restore(); } catch (e) { console.warn('Menu prefs restore skipped:', e); }
 
-  console.log('✅ AI PDF Studio initialized successfully!');
+  console.log('AI PDF Studio initialized successfully!');
 };
 
 // ===== KEYBOARD SHORTCUTS FOR CHAT =====
