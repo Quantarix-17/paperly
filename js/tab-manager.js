@@ -305,6 +305,7 @@ window.getTextFigurePolicy = function () {
       '.studio-switch::after{content:"";position:absolute;inset:-9px -4px;}',
       '.studio-switch-knob{position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:linear-gradient(180deg,rgba(255,255,255,.98),rgba(236,238,244,.92));box-shadow:0 1px 4px rgba(40,44,60,.28),inset 0 1px 0 #fff;transition:transform .2s;}',
       '.studio-switch[aria-checked="true"] .studio-switch-knob{transform:translateX(20px);}',
+      '.studio-native-hidden{position:absolute !important;width:1px !important;height:1px !important;margin:-1px !important;padding:0 !important;overflow:hidden !important;clip:rect(0 0 0 0) !important;opacity:0 !important;pointer-events:none !important;border:0 !important;}',
       '.studio-switch-state{font-size:10.5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;opacity:.6;}',
       '.studio-settings-footer{display:flex;justify-content:flex-end;padding-top:12px;min-height:34px;}',
       '.studio-reset-btn{font:inherit;font-size:12.5px;padding:6px 12px;border-radius:8px;border:1px solid rgba(var(--ink-rgb),.22);background:transparent;color:inherit;cursor:pointer;transition:background .15s;}',
@@ -476,10 +477,6 @@ window.renderStudioSwitches = function (containerEl, options) {
     offStatus: 'No quote is shown, and no AI request is made for quotes.'
   }));
 
-  // Auto-switch lives here now (moved out of the AI Models panel). Its row is
-  // kept by reference so a re-render re-attaches it instead of losing it.
-  if (window._studioAutoSwitchRow) list.appendChild(window._studioAutoSwitchRow);
-
   let resetBtn = null;
   function renderReset() {
     if (!resetBtn) return;
@@ -648,50 +645,90 @@ window.restructureSettingsPanel = function () {
 };
 
 function _studioMoveAutoSwitch() {
-  if (window._studioAutoSwitchRow) return true;
-  const scope = document.querySelectorAll('.settings-tab-panel');
-  let labelEl = null;
-  scope.forEach(function (p) {
-    if (labelEl) return;
-    p.querySelectorAll('*').forEach(function (el) {
-      if (labelEl || el.children.length) return;
-      if (/^\s*auto[\s-]*switch\s*:?\s*$/i.test(el.textContent || '')) labelEl = el;
-    });
-  });
-  if (!labelEl) return false;
+  // Already built and still attached: nothing to do.
+  if (window._studioAutoSwitchRow && document.body.contains(window._studioAutoSwitchRow)) return true;
 
-  const isCtl = function (el) {
-    return el && (el.matches('input,button,label,[role="switch"],.switch,.toggle') ||
-                  el.querySelector('input,[role="switch"]'));
-  };
-  let ctrl = labelEl.nextElementSibling;
-  if (!isCtl(ctrl)) {
-    const scopeEl = labelEl.parentElement;
-    const inp = scopeEl && scopeEl.querySelector('input[type="checkbox"],[role="switch"]');
-    ctrl = inp ? ((inp.closest('label') && scopeEl.contains(inp.closest('label'))) ? inp.closest('label') : inp) : null;
-  }
-  if (!ctrl) return false;
+  // The real checkbox (owned by ai-models.js) stays in the page so its logic and
+  // saved state keep working; this section only provides the Preference UI for it.
+  const native = document.getElementById('ai-model-autoswitch-checkbox');
+  const prefPanel = document.querySelector('.settings-tab-panel[data-panel="preference"]') ||
+                    document.querySelector('.settings-tab-panel');
+  if (!native || !prefPanel) return false;
+
+  // Hide the old row inside the AI Models panel.
+  const oldRow = native.closest('.ai-model-auto-row');
+  if (oldRow) { oldRow.hidden = true; oldRow.style.display = 'none'; }
+  else { native.classList.add('studio-native-hidden'); }
 
   const shell = _studioBuildRowShell(
     'studio-autoswitch',
-    labelEl.textContent.replace(/:\s*$/, '').trim() || 'Auto-switch',
+    'Auto-switch on error',
     'Automatically switches to another working AI model when the current one fails.'
   );
   shell.row.setAttribute('data-setting-key', 'autoSwitch');
   shell.status.remove();
-  shell.control.appendChild(ctrl);        // moves the real node: its listeners survive
-  labelEl.remove();
-  // Clicking the label forwards to the real control.
-  shell.row.addEventListener('click', function (e) {
-    if (e.target.closest('.studio-details-toggle, .studio-setting-details') || shell.control.contains(e.target)) return;
-    const t = ctrl.matches('input,button,[role="switch"]') ? ctrl : ctrl.querySelector('input,button,[role="switch"]');
-    if (t) t.click();
-  });
-  window._studioAutoSwitchRow = shell.row;
 
-  const list = document.querySelector('.studio-settings-list');
-  const pref = document.querySelector('.settings-tab-panel[data-panel*="pref" i]') || document.querySelector('.settings-tab-panel');
-  (list || pref).appendChild(shell.row);
+  const proxy = document.createElement('button');
+  proxy.type = 'button';
+  proxy.className = 'studio-switch';
+  proxy.id = 'studio-autoswitch-proxy';
+  proxy.setAttribute('role', 'switch');
+  proxy.setAttribute('aria-labelledby', shell.label.id);
+  proxy.setAttribute('aria-describedby', shell.details.id);
+  const knob = document.createElement('span');
+  knob.className = 'studio-switch-knob';
+  proxy.appendChild(knob);
+  const stateText = document.createElement('span');
+  stateText.className = 'studio-switch-state';
+  stateText.setAttribute('aria-hidden', 'true');
+  shell.control.appendChild(proxy);
+  shell.control.appendChild(stateText);
+
+  const sync = function () {
+    const on = !!native.checked;
+    proxy.setAttribute('aria-checked', on ? 'true' : 'false');
+    proxy.setAttribute('aria-disabled', native.disabled ? 'true' : 'false');
+    stateText.textContent = on ? 'On' : 'Off';
+    shell.row.classList.toggle('is-on', on);
+  };
+  const toggle = function () {
+    if (native.disabled) return;
+    native.click();                         // fires the original onchange handler
+    setTimeout(sync, 0);
+  };
+  proxy.addEventListener('click', function (e) { e.stopPropagation(); toggle(); });
+  shell.row.addEventListener('click', function (e) {
+    if (e.target.closest('.studio-switch, .studio-details-toggle, .studio-setting-details')) return;
+    toggle();
+  });
+  ['change', 'input', 'click'].forEach(function (ev) {
+    native.addEventListener(ev, function () { setTimeout(sync, 0); });
+  });
+  try {
+    new MutationObserver(sync).observe(native, { attributes: true, attributeFilter: ['checked', 'disabled'] });
+  } catch (_) {}
+  // programmatic changes (ai-models.js setting .checked) fire no events
+  const iv = setInterval(function () {
+    if (!document.body.contains(proxy)) { clearInterval(iv); return; }
+    sync();
+  }, 500);
+  sync();
+
+  // Own subsection in Preference, under the image/figure switches.
+  const section = document.createElement('div');
+  section.className = 'settings-subsection';
+  section.id = 'studio-autoswitch-section';
+  const title = document.createElement('h4');
+  title.className = 'settings-subsection-title';
+  title.textContent = 'AI Behavior';
+  const list = document.createElement('div');
+  list.className = 'studio-settings-list';
+  list.appendChild(shell.row);
+  section.appendChild(title);
+  section.appendChild(list);
+  prefPanel.appendChild(section);
+
+  window._studioAutoSwitchRow = shell.row;
   return true;
 }
 
@@ -1490,7 +1527,7 @@ const TAB_MANAGER = {
       }
     );
     this.switchTo(newTab.id);
-    if (typeof displayToastNotification === 'function') displayToastNotification(`✅ New tab: "${newTab.name}"`);
+    if (typeof displayToastNotification === 'function') displayToastNotification(`New tab: "${newTab.name}"`);
   },
 
   closeAllTabsWithConfirm() {
@@ -1511,7 +1548,7 @@ const TAB_MANAGER = {
     this._loadStateIntoUI(tab);
     this._persist();
     this.renderTabBar();
-    if (typeof displayToastNotification === 'function') displayToastNotification("✅ New session");
+    if (typeof displayToastNotification === 'function') displayToastNotification("New session");
     if (typeof requestAnimationFrame === 'function') {
       requestAnimationFrame(() => { if (typeof fitEditorPagesToScreen === 'function') fitEditorPagesToScreen(); });
     }
@@ -1526,7 +1563,7 @@ const TAB_MANAGER = {
     const tab = this.createTab('Blank', state.htmlContent, state);
     TAB_FILE_OBJECTS.set(tab.id, {});
     this.switchTo(tab.id);
-    if (typeof displayToastNotification === 'function') displayToastNotification(`✅ New blank tab`);
+    if (typeof displayToastNotification === 'function') displayToastNotification(`New blank tab`);
   },
 
   createBlankSlideTab() {
@@ -1539,7 +1576,7 @@ const TAB_MANAGER = {
     const tab = this.createTab('Blank Slide Deck', state.htmlContent, state);
     TAB_FILE_OBJECTS.set(tab.id, {});
     this.switchTo(tab.id);
-    if (typeof displayToastNotification === 'function') displayToastNotification(`✅ New blank slide deck`);
+    if (typeof displayToastNotification === 'function') displayToastNotification(`New blank slide deck`);
   },
 
   switchTo(tabId) {
@@ -1564,7 +1601,7 @@ const TAB_MANAGER = {
   deleteTab(tabId) {
     if (this.tabs.length <= 1) {
       if (typeof displayToastNotification === 'function') {
-        displayToastNotification("⚠️ Cannot delete the last tab. Start a new document if you need a fresh one.");
+        displayToastNotification("Cannot delete the last tab. Start a new document if you need a fresh one.");
       }
       return;
     }
@@ -1584,7 +1621,7 @@ const TAB_MANAGER = {
     }
     this._persist();
     this.renderTabBar();
-    if (typeof displayToastNotification === 'function') displayToastNotification(`🗑️ Tab "${tab.name}" deleted`);
+    if (typeof displayToastNotification === 'function') displayToastNotification(`Tab "${tab.name}" deleted`);
     if (typeof requestAnimationFrame === 'function') {
       requestAnimationFrame(() => { if (typeof fitEditorPagesToScreen === 'function') fitEditorPagesToScreen(); });
     }
@@ -1704,7 +1741,7 @@ window.saveProjectFile = function() {
   link.click();
   URL.revokeObjectURL(link.href);
   if (typeof displayToastNotification === 'function') {
-    displayToastNotification(`💾 Saved Project (tab: ${projectData.tabName})`);
+    displayToastNotification(`Saved Project (tab: ${projectData.tabName})`);
   }
 };
 
@@ -1732,7 +1769,7 @@ window.loadProjectFromFile = function(fileList) {
       );
       TAB_MANAGER.switchTo(tab.id);
       if (typeof displayToastNotification === 'function') {
-        displayToastNotification(`📂 Loaded project: "${tab.name}"`);
+        displayToastNotification(`Loaded project: "${tab.name}"`);
       }
     } catch (e) {
       if (typeof displayToastNotification === 'function') {
