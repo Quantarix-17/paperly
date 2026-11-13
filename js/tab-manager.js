@@ -303,8 +303,8 @@ window.getTextFigurePolicy = function () {
   if (typeof document === 'undefined') return;
   function inject() {
     if (document.getElementById('studio-settings-style')) return;
-    const G = 'rgba(var(--ink-rgb),.55)';  // neutral ink accent (theme-aware)
-    const GA = 'rgba(var(--ink-rgb),.10)'; // soft glass fill
+    const G = 'var(--primary-color)';  // blue design language: Primary
+    const GA = 'var(--primary-light)'; // soft blue tint
     const st = document.createElement('style');
     st.id = 'studio-settings-style';
     st.textContent = [
@@ -324,8 +324,8 @@ window.getTextFigurePolicy = function () {
       '[data-studio-gap="hide"]{display:none !important;}',
       '[data-studio-gap="flat"],[data-studio-gap="flat"] *{margin-top:0 !important;margin-bottom:0 !important;padding-top:0 !important;padding-bottom:0 !important;border-top-width:0 !important;border-bottom-width:0 !important;min-height:0 !important;height:auto !important;max-height:none !important;}',
       '[data-studio-top="1"]{margin-top:0 !important;padding-top:0 !important;border-top-width:0 !important;}',
-      /* ---- green instead of blue: active tab, focus, selection ---- */
-      '.settings-tab-bar [data-tab].active,.settings-tab-bar [data-tab][aria-selected="true"]{background:' + GA + ' !important;color:inherit !important;border-color:' + G + ' !important;box-shadow:inset 0 -2px 0 ' + G + ' !important;}',
+      /* ---- blue design language: active tab, focus, selection ---- */
+      '.settings-tab-bar [data-tab].active,.settings-tab-bar [data-tab][aria-selected="true"]{background:' + GA + ' !important;color:var(--primary-color) !important;border-color:' + G + ' !important;box-shadow:inset 0 -2px 0 ' + G + ' !important;}',
       '.settings-tab-bar [data-tab]:focus-visible,.settings-tab-panel :is(button,a,input,select,textarea,[role="switch"]):focus-visible{outline:2px solid ' + G + ' !important;outline-offset:2px;}',
       '.settings-tab-panel :is(input,select,textarea):focus{border-color:' + G + ' !important;box-shadow:0 0 0 3px rgba(var(--ink-rgb),.14) !important;outline:none;}',
       '.settings-tab-panel{accent-color:' + G + ';}',
@@ -340,25 +340,25 @@ window.getTextFigurePolicy = function () {
       '.studio-setting-label{font-weight:600;font-size:14px;line-height:1.3;}',
       '.studio-setting-row.is-disabled .studio-setting-label{opacity:.55;}',
       /* ---- "See details" toggle: neutral gray (was green) ---- */
-      '.studio-details-toggle{display:inline-flex;align-items:center;gap:4px;margin-top:3px;padding:0;border:none;background:none;font:inherit;font-size:12px;color:#6b7280;cursor:pointer;transition:color .15s;}',
-      '.studio-details-toggle:hover{text-decoration:underline;color:#4b5563;}',
+      '.studio-details-toggle{display:inline-flex;align-items:center;gap:4px;margin-top:3px;padding:0;border:none;background:none;font:inherit;font-size:12px;color:var(--text-secondary);cursor:pointer;transition:color .15s;}',
+      '.studio-details-toggle:hover{text-decoration:underline;color:var(--primary-color);}',
       '.studio-details-toggle::after{content:"";width:5px;height:5px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg) translateY(-1px);transition:transform .2s;}',
       '.studio-details-toggle[aria-expanded="true"]::after{transform:rotate(225deg);}',
       /* ---- Dark mode: keep the "See details" toggle gray, never green ---- */
-      'html.dark .studio-details-toggle,body.dark .studio-details-toggle,body.dark-mode .studio-details-toggle,body.theme-dark .studio-details-toggle,body.dark-theme .studio-details-toggle,html.dark-mode .studio-details-toggle,html.theme-dark .studio-details-toggle,html.dark-theme .studio-details-toggle,[data-theme="dark"] .studio-details-toggle,.dark-theme .studio-details-toggle,.dark-mode .studio-details-toggle{color:#9ca3af !important;}',
-      'html.dark .studio-details-toggle:hover,body.dark .studio-details-toggle:hover,body.dark-mode .studio-details-toggle:hover,body.theme-dark .studio-details-toggle:hover,body.dark-theme .studio-details-toggle:hover,html.dark-mode .studio-details-toggle:hover,html.theme-dark .studio-details-toggle:hover,html.dark-theme .studio-details-toggle:hover,[data-theme="dark"] .studio-details-toggle:hover,.dark-theme .studio-details-toggle:hover,.dark-mode .studio-details-toggle:hover{color:#d1d5db !important;}',
+      'html.dark .studio-details-toggle,body.dark .studio-details-toggle,body.dark-mode .studio-details-toggle,body.theme-dark .studio-details-toggle,body.dark-theme .studio-details-toggle,html.dark-mode .studio-details-toggle,html.theme-dark .studio-details-toggle,html.dark-theme .studio-details-toggle,[data-theme="dark"] .studio-details-toggle,.dark-theme .studio-details-toggle,.dark-mode .studio-details-toggle{color:var(--text-secondary) !important;}',
+      'html.dark .studio-details-toggle:hover,body.dark .studio-details-toggle:hover,body.dark-mode .studio-details-toggle:hover,body.theme-dark .studio-details-toggle:hover,body.dark-theme .studio-details-toggle:hover,html.dark-mode .studio-details-toggle:hover,html.theme-dark .studio-details-toggle:hover,html.dark-theme .studio-details-toggle:hover,[data-theme="dark"] .studio-details-toggle:hover,.dark-theme .studio-details-toggle:hover,.dark-mode .studio-details-toggle:hover{color:var(--accent-color) !important;}',
       /* Fallback when the OS prefers dark AND the app hasn't explicitly set light theme */
-      '@media (prefers-color-scheme: dark){html:not([data-theme="light"]):not(.light):not(.light-theme):not(.light-mode) .studio-details-toggle{color:#9ca3af;}html:not([data-theme="light"]):not(.light):not(.light-theme):not(.light-mode) .studio-details-toggle:hover{color:#d1d5db;}}',
+      '@media (prefers-color-scheme: dark){html:not([data-theme="light"]):not(.light):not(.light-theme):not(.light-mode) .studio-details-toggle{color:var(--text-secondary);}html:not([data-theme="light"]):not(.light):not(.light-theme):not(.light-mode) .studio-details-toggle:hover{color:var(--accent-color);}}',
       '.studio-setting-details{margin-top:8px;padding:8px 10px;border-left:2px solid ' + G + ';background:rgba(var(--ink-rgb),.05);border-radius:0 6px 6px 0;cursor:default;}',
       '.studio-setting-details[hidden]{display:none;}',
       '.studio-setting-desc{font-size:12.5px;opacity:.8;line-height:1.5;}',
       '.studio-setting-status{font-size:12px;margin-top:6px;line-height:1.45;opacity:.95;}',
       '.studio-setting-control{display:flex;flex-direction:column;align-items:center;gap:4px;flex:0 0 auto;}',
-      '.studio-switch{position:relative;width:46px;height:26px;border-radius:13px;border:none;cursor:pointer;background:rgba(var(--ink-rgb),.28);transition:background .2s;padding:0;flex:0 0 auto;}',
-      '.studio-switch[aria-checked="true"]{background:var(--glass-active-bg,rgba(var(--ink-rgb),.2)),var(--glass-active-tint,rgba(var(--ink-rgb),.14));box-shadow:inset 0 0 0 1px var(--glass-active-border,rgba(var(--ink-rgb),.3)),inset 0 1px 0 var(--glass-hi,rgba(255,255,255,.5));backdrop-filter:blur(10px) saturate(160%);-webkit-backdrop-filter:blur(10px) saturate(160%);}',
+      '.studio-switch{position:relative;width:46px;height:26px;border-radius:13px;border:none;cursor:pointer;background:rgba(100,116,139,.35);transition:background .2s;padding:0;flex:0 0 auto;}',
+      '.studio-switch[aria-checked=\"true\"]{background:var(--primary-color);box-shadow:none;}',
       '.studio-switch[aria-disabled="true"]{cursor:not-allowed;opacity:.5;}',
       '.studio-switch::after{content:"";position:absolute;inset:-9px -4px;}',
-      '.studio-switch-knob{position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:linear-gradient(180deg,rgba(255,255,255,.98),rgba(236,238,244,.92));box-shadow:0 1px 4px rgba(40,44,60,.28),inset 0 1px 0 #fff;transition:transform .2s;}',
+      '.studio-switch-knob{position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(23,37,84,.25);transition:transform .2s;}',
       '.studio-switch[aria-checked="true"] .studio-switch-knob{transform:translateX(20px);}',
       '.studio-native-hidden{position:absolute !important;width:1px !important;height:1px !important;margin:-1px !important;padding:0 !important;overflow:hidden !important;clip:rect(0 0 0 0) !important;opacity:0 !important;pointer-events:none !important;border:0 !important;}',
       '.studio-switch-state{font-size:10.5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;opacity:.6;}',
