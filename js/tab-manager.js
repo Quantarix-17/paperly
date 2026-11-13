@@ -580,9 +580,9 @@ window.renderStudioSwitches = function (containerEl, options) {
   rows.push(buildSwitch({
     key: 'aiSuggestions',
     label: 'AI suggestions',
-    desc: 'When Chat is switched on next to Add, Edit or Refine, the AI offers a set of 3–5 ready-to-tap suggestions.',
-    onStatus: 'The AI shows 3–5 suggestion buttons you can tap to apply.',
-    offStatus: 'No suggestion buttons. The AI replies with a short plain message instead.'
+    desc: 'Lets the AI offer tap-to-choose suggestions: a clarifying question with options before it creates a PDF, exam or slides, and 3–5 ideas when Chat is on next to Add, Edit or Refine.',
+    onStatus: 'The AI may ask a question with options first, and shows suggestion buttons you can tap.',
+    offStatus: 'No questions or suggestion buttons. Create goes straight to the outline (or straight to processing if the outline is off), and Chat replies with a short plain message.'
   }));
   rows.push(buildSwitch({
     key: 'darkEditorPage',
