@@ -748,36 +748,40 @@ function openAIModelEditDialog(id) {
     <label style="${_AI_DLG_LABEL}">Model ID (optional - blank = the server decides)</label>
     <input type="text" id="edit-ai-modelid" value="${escapeHTML(m.modelId)}" style="${_AI_DLG_INPUT}">
 
-    <label style="${_AI_DLG_LABEL}">API Type</label>
-    <select id="edit-ai-type" style="${_AI_DLG_INPUT}">
-      <option value="auto" ${type === 'auto' ? 'selected' : ''}>Auto-detect from URL</option>
-      <option value="openai" ${type === 'openai' ? 'selected' : ''}>OpenAI-compatible</option>
-      <option value="gemini" ${type === 'gemini' ? 'selected' : ''}>Google Gemini</option>
-      <option value="anthropic" ${type === 'anthropic' ? 'selected' : ''}>Anthropic (Claude)</option>
-      <option value="ollama" ${type === 'ollama' ? 'selected' : ''}>Ollama (native)</option>
-    </select>
-
-    <label style="${_AI_DLG_LABEL}">Authentication</label>
-    <select id="edit-ai-auth" style="${_AI_DLG_INPUT}">
-      <option value="auto" ${auth === 'auto' ? 'selected' : ''}>Auto (Bearer key; none if no key)</option>
-      <option value="bearer" ${auth === 'bearer' ? 'selected' : ''}>Authorization: Bearer</option>
-      <option value="x-api-key" ${auth === 'x-api-key' ? 'selected' : ''}>x-api-key header</option>
-      <option value="api-key" ${auth === 'api-key' ? 'selected' : ''}>api-key header (Azure)</option>
-      <option value="none" ${auth === 'none' ? 'selected' : ''}>No authentication</option>
-    </select>
-
-    <label style="${_AI_DLG_LABEL}">Extra headers (JSON, optional)</label>
-    <textarea id="edit-ai-headers" rows="2" placeholder='{"X-Custom": "value"}' style="${_AI_DLG_INPUT}font-family:monospace;">${escapeHTML(m.extraHeaders || '')}</textarea>
-    <label style="${_AI_DLG_LABEL}">Extra body fields (JSON, optional)</label>
-    <textarea id="edit-ai-body" rows="2" placeholder='{"max_tokens": 16000}' style="${_AI_DLG_INPUT}font-family:monospace;">${escapeHTML(m.extraBody || '')}</textarea>
-
-    <label style="display:flex;gap:8px;align-items:center;margin-top:12px;font-size:.88rem;"><input type="checkbox" id="edit-ai-json" ${m.supportsJson !== false ? 'checked' : ''}> Supports JSON response format</label>
-    <label id="edit-ai-search-row" style="display:${type === 'gemini' ? 'flex' : 'none'};gap:8px;align-items:center;margin-top:8px;font-size:.88rem;"><input type="checkbox" id="edit-ai-search" ${m.enableGoogleSearch !== false ? 'checked' : ''}> Enable Google Search grounding (Gemini only)</label>
-
     <label style="${_AI_DLG_LABEL}">API URL (locked)</label>
     <div style="${_AI_DLG_INPUT}opacity:.65;word-break:break-all;">${escapeHTML(m.apiUrl)}</div>
     <label style="${_AI_DLG_LABEL}">API Key (locked)</label>
     <div style="${_AI_DLG_INPUT}opacity:.65;">••••••••••••</div>
+
+    <details id="edit-ai-more" style="margin-top:16px;border-top:1px solid var(--border-color);padding-top:10px;">
+      <summary style="cursor:pointer;font-size:.88rem;font-weight:600;color:var(--text-secondary);padding:4px 0;">More options</summary>
+
+      <label style="${_AI_DLG_LABEL}">API Type</label>
+      <select id="edit-ai-type" style="${_AI_DLG_INPUT}">
+        <option value="auto" ${type === 'auto' ? 'selected' : ''}>Auto-detect from URL</option>
+        <option value="openai" ${type === 'openai' ? 'selected' : ''}>OpenAI-compatible</option>
+        <option value="gemini" ${type === 'gemini' ? 'selected' : ''}>Google Gemini</option>
+        <option value="anthropic" ${type === 'anthropic' ? 'selected' : ''}>Anthropic (Claude)</option>
+        <option value="ollama" ${type === 'ollama' ? 'selected' : ''}>Ollama (native)</option>
+      </select>
+
+      <label style="${_AI_DLG_LABEL}">Authentication</label>
+      <select id="edit-ai-auth" style="${_AI_DLG_INPUT}">
+        <option value="auto" ${auth === 'auto' ? 'selected' : ''}>Auto (Bearer key; none if no key)</option>
+        <option value="bearer" ${auth === 'bearer' ? 'selected' : ''}>Authorization: Bearer</option>
+        <option value="x-api-key" ${auth === 'x-api-key' ? 'selected' : ''}>x-api-key header</option>
+        <option value="api-key" ${auth === 'api-key' ? 'selected' : ''}>api-key header (Azure)</option>
+        <option value="none" ${auth === 'none' ? 'selected' : ''}>No authentication</option>
+      </select>
+
+      <label style="${_AI_DLG_LABEL}">Extra headers (JSON, optional)</label>
+      <textarea id="edit-ai-headers" rows="2" placeholder='{"X-Custom": "value"}' style="${_AI_DLG_INPUT}font-family:monospace;">${escapeHTML(m.extraHeaders || '')}</textarea>
+      <label style="${_AI_DLG_LABEL}">Extra body fields (JSON, optional)</label>
+      <textarea id="edit-ai-body" rows="2" placeholder='{"max_tokens": 16000}' style="${_AI_DLG_INPUT}font-family:monospace;">${escapeHTML(m.extraBody || '')}</textarea>
+
+      <label style="display:flex;gap:8px;align-items:center;margin-top:12px;font-size:.88rem;"><input type="checkbox" id="edit-ai-json" ${m.supportsJson !== false ? 'checked' : ''}> Supports JSON response format</label>
+      <label id="edit-ai-search-row" style="display:${type === 'gemini' ? 'flex' : 'none'};gap:8px;align-items:center;margin-top:8px;font-size:.88rem;"><input type="checkbox" id="edit-ai-search" ${m.enableGoogleSearch !== false ? 'checked' : ''}> Enable Google Search grounding (Gemini only)</label>
+    </details>
 
     <div id="edit-ai-error" style="color:var(--danger-color);font-size:.82rem;margin-top:10px;min-height:1em;"></div>
     <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px;">
@@ -792,7 +796,7 @@ function openAIModelEditDialog(id) {
     const modelId = $('#edit-ai-modelid').value.trim();
     const name = $('#edit-ai-name').value.trim() || autoModelName({ apiUrl: m.apiUrl, modelId });
     const hdrs = $('#edit-ai-headers').value.trim(), bdy = $('#edit-ai-body').value.trim();
-    if ((hdrs && !_aiParseJsonObject(hdrs)) || (bdy && !_aiParseJsonObject(bdy))) { $('#edit-ai-error').textContent = 'Extra headers / body must be a valid JSON object, e.g. {"key": "value"}.'; return; }
+    if ((hdrs && !_aiParseJsonObject(hdrs)) || (bdy && !_aiParseJsonObject(bdy))) { const _more = $('#edit-ai-more'); if (_more) _more.open = true; $('#edit-ai-error').textContent = 'Extra headers / body must be a valid JSON object, e.g. {"key": "value"}.'; return; }
     const newType = AI_API_TYPES.includes($('#edit-ai-type').value) ? $('#edit-ai-type').value : 'auto';
     const newAuth = $('#edit-ai-auth').value || 'auto';
     const newJson = $('#edit-ai-json').checked;
