@@ -93,7 +93,7 @@ body {
   overflow-y: hidden;
   overscroll-behavior-y: none;
   display: block;
-  transition: background-color 0.3s ease, color 0.3s ease;
+  transition: none;
   -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
 }
@@ -233,7 +233,7 @@ body {
   align-items: center;
   gap: 6px;
   white-space: nowrap;
-  transition: all 0.2s var(--ease);
+  transition: transform 0.2s var(--ease), opacity 0.2s var(--ease), box-shadow 0.2s var(--ease), width 0.2s var(--ease), height 0.2s var(--ease), max-height 0.2s var(--ease), padding 0.2s var(--ease), margin 0.2s var(--ease), border-radius 0.2s var(--ease), left 0.2s var(--ease), right 0.2s var(--ease), top 0.2s var(--ease), bottom 0.2s var(--ease), filter 0.2s var(--ease), visibility 0.2s var(--ease);
   touch-action: manipulation;
 }
 .topbar-btn:hover {
@@ -300,7 +300,7 @@ body {
   align-items: center;
   gap: 6px;
   white-space: nowrap;
-  transition: all 0.2s var(--ease);
+  transition: transform 0.2s var(--ease), opacity 0.2s var(--ease), box-shadow 0.2s var(--ease), width 0.2s var(--ease), height 0.2s var(--ease), max-height 0.2s var(--ease), padding 0.2s var(--ease), margin 0.2s var(--ease), border-radius 0.2s var(--ease), left 0.2s var(--ease), right 0.2s var(--ease), top 0.2s var(--ease), bottom 0.2s var(--ease), filter 0.2s var(--ease), visibility 0.2s var(--ease);
 }
 .mode-toggle-btn:hover {
   background: var(--surface-hover);
@@ -320,7 +320,7 @@ body {
   background: var(--surface-color);
   white-space: nowrap;
   font-weight: 600;
-  transition: all 0.2s var(--ease);
+  transition: transform 0.2s var(--ease), opacity 0.2s var(--ease), box-shadow 0.2s var(--ease), width 0.2s var(--ease), height 0.2s var(--ease), max-height 0.2s var(--ease), padding 0.2s var(--ease), margin 0.2s var(--ease), border-radius 0.2s var(--ease), left 0.2s var(--ease), right 0.2s var(--ease), top 0.2s var(--ease), bottom 0.2s var(--ease), filter 0.2s var(--ease), visibility 0.2s var(--ease);
 }
 .topbar-toggle-label:hover {
   background: var(--surface-hover);
@@ -346,7 +346,7 @@ body {
   letter-spacing: 0.01em;
   cursor: pointer;
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.2);
-  transition: all 0.2s var(--ease);
+  transition: transform 0.2s var(--ease), opacity 0.2s var(--ease), box-shadow 0.2s var(--ease), width 0.2s var(--ease), height 0.2s var(--ease), max-height 0.2s var(--ease), padding 0.2s var(--ease), margin 0.2s var(--ease), border-radius 0.2s var(--ease), left 0.2s var(--ease), right 0.2s var(--ease), top 0.2s var(--ease), bottom 0.2s var(--ease), filter 0.2s var(--ease), visibility 0.2s var(--ease);
   color-scheme: dark;
   background-image: linear-gradient(45deg, transparent 50%, #545454 50%), linear-gradient(135deg, #545454 50%, transparent 50%);
   background-position: calc(100% - 16px) calc(50% - 2px), calc(100% - 12px) calc(50% - 2px);
@@ -403,7 +403,7 @@ html.dark #active-model-select option,
   letter-spacing: 0.01em;
   cursor: pointer;
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.2);
-  transition: all 0.2s var(--ease);
+  transition: transform 0.2s var(--ease), opacity 0.2s var(--ease), box-shadow 0.2s var(--ease), width 0.2s var(--ease), height 0.2s var(--ease), max-height 0.2s var(--ease), padding 0.2s var(--ease), margin 0.2s var(--ease), border-radius 0.2s var(--ease), left 0.2s var(--ease), right 0.2s var(--ease), top 0.2s var(--ease), bottom 0.2s var(--ease), filter 0.2s var(--ease), visibility 0.2s var(--ease);
   color-scheme: dark;
   background-image: linear-gradient(45deg, transparent 50%, #545454 50%), linear-gradient(135deg, #545454 50%, transparent 50%);
   background-position: calc(100% - 16px) calc(50% - 2px), calc(100% - 12px) calc(50% - 2px);
@@ -522,7 +522,7 @@ html.dark #creation-mode-select,
   cursor: pointer;
   border: 1px solid transparent;
   white-space: nowrap;
-  transition: all 0.2s var(--ease);
+  transition: transform 0.2s var(--ease), opacity 0.2s var(--ease), box-shadow 0.2s var(--ease), width 0.2s var(--ease), height 0.2s var(--ease), max-height 0.2s var(--ease), padding 0.2s var(--ease), margin 0.2s var(--ease), border-radius 0.2s var(--ease), left 0.2s var(--ease), right 0.2s var(--ease), top 0.2s var(--ease), bottom 0.2s var(--ease), filter 0.2s var(--ease), visibility 0.2s var(--ease);
   max-width: 180px;
   min-width: 60px;
   flex-shrink: 0;
@@ -554,7 +554,7 @@ html.dark #creation-mode-select,
   font-size: 0;
   line-height: 1;
   cursor: pointer;
-  transition: all 0.15s var(--ease);
+  transition: transform 0.15s var(--ease), opacity 0.15s var(--ease), box-shadow 0.15s var(--ease), width 0.15s var(--ease), height 0.15s var(--ease), max-height 0.15s var(--ease), padding 0.15s var(--ease), margin 0.15s var(--ease), border-radius 0.15s var(--ease), left 0.15s var(--ease), right 0.15s var(--ease), top 0.15s var(--ease), bottom 0.15s var(--ease), filter 0.15s var(--ease), visibility 0.15s var(--ease);
   padding: 0;
   margin-left: 2px;
   flex: 0 0 20px;
@@ -606,7 +606,7 @@ html.dark #creation-mode-select,
   font-weight: 600;
   cursor: pointer;
   flex-shrink: 0;
-  transition: all 0.2s var(--ease);
+  transition: transform 0.2s var(--ease), opacity 0.2s var(--ease), box-shadow 0.2s var(--ease), width 0.2s var(--ease), height 0.2s var(--ease), max-height 0.2s var(--ease), padding 0.2s var(--ease), margin 0.2s var(--ease), border-radius 0.2s var(--ease), left 0.2s var(--ease), right 0.2s var(--ease), top 0.2s var(--ease), bottom 0.2s var(--ease), filter 0.2s var(--ease), visibility 0.2s var(--ease);
   touch-action: manipulation;
   margin-right: 4px;
 }
@@ -638,7 +638,7 @@ html.dark #creation-mode-select,
   font-weight: 700;
   cursor: pointer;
   box-shadow: 0 2px 8px -2px rgba(23,23,23,0.18), inset 0 1px 0 rgba(255,255,255,0.45);
-  transition: transform 0.18s var(--ease), box-shadow 0.18s var(--ease), background-color 0.18s var(--ease);
+  transition: transform 0.18s var(--ease), box-shadow 0.18s var(--ease);
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
   transform: translateZ(0);
@@ -701,7 +701,7 @@ html.dark #creation-mode-select,
   font-size: 0.85rem;
   cursor: pointer;
   text-align: center;
-  transition: all 0.25s var(--ease);
+  transition: transform 0.25s var(--ease), opacity 0.25s var(--ease), box-shadow 0.25s var(--ease), width 0.25s var(--ease), height 0.25s var(--ease), max-height 0.25s var(--ease), padding 0.25s var(--ease), margin 0.25s var(--ease), border-radius 0.25s var(--ease), left 0.25s var(--ease), right 0.25s var(--ease), top 0.25s var(--ease), bottom 0.25s var(--ease), filter 0.25s var(--ease), visibility 0.25s var(--ease);
   white-space: nowrap;
   touch-action: manipulation;
 }
@@ -884,7 +884,7 @@ html.dark #creation-mode-select,
   border-radius: var(--radius-pill);
   cursor: pointer;
   white-space: nowrap;
-  transition: all 0.2s var(--ease);
+  transition: transform 0.2s var(--ease), opacity 0.2s var(--ease), box-shadow 0.2s var(--ease), width 0.2s var(--ease), height 0.2s var(--ease), max-height 0.2s var(--ease), padding 0.2s var(--ease), margin 0.2s var(--ease), border-radius 0.2s var(--ease), left 0.2s var(--ease), right 0.2s var(--ease), top 0.2s var(--ease), bottom 0.2s var(--ease), filter 0.2s var(--ease), visibility 0.2s var(--ease);
   box-shadow: var(--shadow-sm);
 }
 .chat-suggestion-chip:hover {
@@ -983,9 +983,7 @@ html.dark #creation-mode-select,
   overflow: hidden;
   opacity: 0;
   transform: translateY(4px);
-  transition: max-height 0.22s var(--ease), margin-top 0.22s var(--ease),
-    padding-top 0.22s var(--ease),
-    opacity 0.18s var(--ease), transform 0.18s var(--ease);
+  transition: max-height 0.22s var(--ease), margin-top 0.22s var(--ease), padding-top 0.22s var(--ease), opacity 0.18s var(--ease), transform 0.18s var(--ease);
 }
 .chat-message.actions-open .chat-message-actions,
 .chat-message:hover .chat-message-actions,
@@ -1009,7 +1007,7 @@ html.dark #creation-mode-select,
   font-weight: 700;
   letter-spacing: 0.01em;
   cursor: pointer;
-  transition: all 0.15s var(--ease);
+  transition: transform 0.15s var(--ease), opacity 0.15s var(--ease), box-shadow 0.15s var(--ease), width 0.15s var(--ease), height 0.15s var(--ease), max-height 0.15s var(--ease), padding 0.15s var(--ease), margin 0.15s var(--ease), border-radius 0.15s var(--ease), left 0.15s var(--ease), right 0.15s var(--ease), top 0.15s var(--ease), bottom 0.15s var(--ease), filter 0.15s var(--ease), visibility 0.15s var(--ease);
 }
 .chat-message-action:hover {
   transform: translateY(-1px);
@@ -1051,7 +1049,7 @@ html.dark #creation-mode-select,
   line-height: 1.35;
   text-align: left;
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.5);
-  transition: all 0.15s var(--ease);
+  transition: transform 0.15s var(--ease), opacity 0.15s var(--ease), box-shadow 0.15s var(--ease), width 0.15s var(--ease), height 0.15s var(--ease), max-height 0.15s var(--ease), padding 0.15s var(--ease), margin 0.15s var(--ease), border-radius 0.15s var(--ease), left 0.15s var(--ease), right 0.15s var(--ease), top 0.15s var(--ease), bottom 0.15s var(--ease), filter 0.15s var(--ease), visibility 0.15s var(--ease);
 }
 .clarify-option-btn:hover:not(:disabled) {
   background: rgba(255,255,255,0.55);
@@ -1158,7 +1156,7 @@ html.dark #creation-mode-select,
   font-size: 0.7rem;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.15s var(--ease);
+  transition: transform 0.15s var(--ease), opacity 0.15s var(--ease), box-shadow 0.15s var(--ease), width 0.15s var(--ease), height 0.15s var(--ease), max-height 0.15s var(--ease), padding 0.15s var(--ease), margin 0.15s var(--ease), border-radius 0.15s var(--ease), left 0.15s var(--ease), right 0.15s var(--ease), top 0.15s var(--ease), bottom 0.15s var(--ease), filter 0.15s var(--ease), visibility 0.15s var(--ease);
   margin-left: 4px;
 }
 .file-tag .ai-vision-btn:hover {
@@ -1237,7 +1235,7 @@ html.dark #creation-mode-select,
   box-sizing: border-box;
   overflow-wrap: anywhere;
   word-break: break-word;
-  transition: all 0.2s var(--ease);
+  transition: transform 0.2s var(--ease), opacity 0.2s var(--ease), box-shadow 0.2s var(--ease), width 0.2s var(--ease), height 0.2s var(--ease), max-height 0.2s var(--ease), padding 0.2s var(--ease), margin 0.2s var(--ease), border-radius 0.2s var(--ease), left 0.2s var(--ease), right 0.2s var(--ease), top 0.2s var(--ease), bottom 0.2s var(--ease), filter 0.2s var(--ease), visibility 0.2s var(--ease);
   -webkit-appearance: none;
   box-shadow: inset 0 1px 1px rgba(23,23,23,0.02);
 }
@@ -1273,7 +1271,7 @@ html.dark #creation-mode-select,
   justify-content: center;
   font-size: 1rem;
   flex-shrink: 0;
-  transition: all 0.2s var(--ease);
+  transition: transform 0.2s var(--ease), opacity 0.2s var(--ease), box-shadow 0.2s var(--ease), width 0.2s var(--ease), height 0.2s var(--ease), max-height 0.2s var(--ease), padding 0.2s var(--ease), margin 0.2s var(--ease), border-radius 0.2s var(--ease), left 0.2s var(--ease), right 0.2s var(--ease), top 0.2s var(--ease), bottom 0.2s var(--ease), filter 0.2s var(--ease), visibility 0.2s var(--ease);
   touch-action: manipulation;
   box-shadow: 0 4px 12px -10px rgba(24,24,24,0.25);
 }
@@ -1602,7 +1600,7 @@ html.dark #creation-mode-select,
   cursor: pointer;
   appearance: none;
   -webkit-appearance: none;
-  transition: background 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
   touch-action: manipulation;
   flex: 0 0 34px;
 }
@@ -1652,7 +1650,7 @@ html.dark #creation-mode-select,
   font-size: 0.8rem;
   font-weight: 700;
   cursor: pointer;
-  transition: all 0.15s var(--ease);
+  transition: transform 0.15s var(--ease), opacity 0.15s var(--ease), box-shadow 0.15s var(--ease), width 0.15s var(--ease), height 0.15s var(--ease), max-height 0.15s var(--ease), padding 0.15s var(--ease), margin 0.15s var(--ease), border-radius 0.15s var(--ease), left 0.15s var(--ease), right 0.15s var(--ease), top 0.15s var(--ease), bottom 0.15s var(--ease), filter 0.15s var(--ease), visibility 0.15s var(--ease);
 }
 .at-command-section-tab:hover {
   background: var(--surface-hover);
@@ -1680,7 +1678,7 @@ html.dark #creation-mode-select,
   border-radius: var(--radius-sm);
   cursor: pointer;
   border: 1px solid transparent;
-  transition: background-color 0.12s var(--ease), border-color 0.12s var(--ease), transform 0.12s var(--ease);
+  transition: transform 0.12s var(--ease);
 }
 .at-command-item:hover,
 .at-command-item.highlighted {
@@ -1765,7 +1763,7 @@ html.dark #creation-mode-select,
   color: var(--text-primary);
   font-size: 0.85rem;
   outline: none;
-  transition: border-color 0.15s var(--ease);
+  transition: none;
 }
 .at-command-search-input:focus {
   border-color: var(--primary-color);
@@ -1797,7 +1795,7 @@ html.dark #creation-mode-select,
   border-radius: var(--radius-sm);
   padding: 5px 10px;
   cursor: pointer;
-  transition: background-color 0.12s var(--ease);
+  transition: none;
 }
 .at-recent-chip:hover { background: var(--surface-hover); }
 .at-recent-chip:disabled { opacity: 0.4; cursor: not-allowed; }
@@ -1828,7 +1826,7 @@ html.dark #creation-mode-select,
   border-radius: var(--radius-md);
   border: 1px solid var(--border-color);
   cursor: pointer;
-  transition: background-color 0.12s var(--ease), border-color 0.12s var(--ease), transform 0.12s var(--ease);
+  transition: transform 0.12s var(--ease);
 }
 .at-intent-card:hover { background: var(--surface-hover); }
 .at-intent-card.selected,
@@ -1881,7 +1879,7 @@ html.dark #creation-mode-select,
   background: var(--surface-color);
   color: var(--text-secondary);
   cursor: pointer;
-  transition: all 0.12s var(--ease);
+  transition: transform 0.12s var(--ease), opacity 0.12s var(--ease), box-shadow 0.12s var(--ease), width 0.12s var(--ease), height 0.12s var(--ease), max-height 0.12s var(--ease), padding 0.12s var(--ease), margin 0.12s var(--ease), border-radius 0.12s var(--ease), left 0.12s var(--ease), right 0.12s var(--ease), top 0.12s var(--ease), bottom 0.12s var(--ease), filter 0.12s var(--ease), visibility 0.12s var(--ease);
 }
 .at-subscope-chip:hover { background: var(--surface-hover); }
 .at-subscope-chip.selected {
@@ -1907,7 +1905,7 @@ html.dark #creation-mode-select,
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
-  transition: all 0.12s var(--ease);
+  transition: transform 0.12s var(--ease), opacity 0.12s var(--ease), box-shadow 0.12s var(--ease), width 0.12s var(--ease), height 0.12s var(--ease), max-height 0.12s var(--ease), padding 0.12s var(--ease), margin 0.12s var(--ease), border-radius 0.12s var(--ease), left 0.12s var(--ease), right 0.12s var(--ease), top 0.12s var(--ease), bottom 0.12s var(--ease), filter 0.12s var(--ease), visibility 0.12s var(--ease);
 }
 .at-modifier-chip:hover { background: var(--surface-hover); }
 .at-modifier-chip.selected {
@@ -1976,7 +1974,7 @@ html.dark #creation-mode-select,
   justify-content: center;
   cursor: pointer;
   padding: 0;
-  transition: background-color 0.12s var(--ease), color 0.12s var(--ease), transform 0.12s var(--ease);
+  transition: transform 0.12s var(--ease);
 }
 .at-cmd-remove:hover {
   background: var(--danger-color);
@@ -2000,7 +1998,7 @@ html.dark #creation-mode-select,
   cursor: col-resize;
   background: transparent;
   z-index: 20;
-  transition: background-color 0.2s;
+  transition: none;
 }
 #resize-handle:hover,
 #resize-handle:active {
@@ -2037,7 +2035,7 @@ html.dark #creation-mode-select,
   font-size: 0.85rem;
   border-radius: var(--radius-sm) var(--radius-sm) 0 0;
   border-bottom: 2px solid transparent;
-  transition: all 0.2s var(--ease);
+  transition: transform 0.2s var(--ease), opacity 0.2s var(--ease), box-shadow 0.2s var(--ease), width 0.2s var(--ease), height 0.2s var(--ease), max-height 0.2s var(--ease), padding 0.2s var(--ease), margin 0.2s var(--ease), border-radius 0.2s var(--ease), left 0.2s var(--ease), right 0.2s var(--ease), top 0.2s var(--ease), bottom 0.2s var(--ease), filter 0.2s var(--ease), visibility 0.2s var(--ease);
   touch-action: manipulation;
 }
 .tab-btn:hover {
@@ -2085,7 +2083,7 @@ html.dark #creation-mode-select,
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.15s var(--ease);
+  transition: transform 0.15s var(--ease), opacity 0.15s var(--ease), box-shadow 0.15s var(--ease), width 0.15s var(--ease), height 0.15s var(--ease), max-height 0.15s var(--ease), padding 0.15s var(--ease), margin 0.15s var(--ease), border-radius 0.15s var(--ease), left 0.15s var(--ease), right 0.15s var(--ease), top 0.15s var(--ease), bottom 0.15s var(--ease), filter 0.15s var(--ease), visibility 0.15s var(--ease);
   touch-action: manipulation;
 }
 .tool-btn:hover {
@@ -2135,7 +2133,7 @@ html.dark #creation-mode-select,
   border: 1px solid var(--border-color);
   background: var(--surface-color);
   color: var(--text-primary);
-  transition: all 0.15s var(--ease);
+  transition: transform 0.15s var(--ease), opacity 0.15s var(--ease), box-shadow 0.15s var(--ease), width 0.15s var(--ease), height 0.15s var(--ease), max-height 0.15s var(--ease), padding 0.15s var(--ease), margin 0.15s var(--ease), border-radius 0.15s var(--ease), left 0.15s var(--ease), right 0.15s var(--ease), top 0.15s var(--ease), bottom 0.15s var(--ease), filter 0.15s var(--ease), visibility 0.15s var(--ease);
 }
 .color-btn-container:hover {
   background: var(--surface-hover);
@@ -2201,47 +2199,47 @@ html.dark #creation-mode-select,
   color: #111827;
   line-height: 1.38;
 }
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) {
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)){
   background: #101829;
   border-color: rgba(155, 167, 206, 0.18);
   box-shadow: 0 18px 34px -24px rgba(0,0,0,0.65);
   color: #edf2ff;
 }
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)),
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) p,
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) li,
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) span,
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) div,
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) td,
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) th,
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) blockquote,
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) figcaption,
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) caption,
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) a {
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)),
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) p,
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) li,
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) span,
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) div,
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) td,
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) th,
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) blockquote,
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) figcaption,
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) caption,
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) a{
   color: #edf2ff !important;
 }
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) h1,
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) h2,
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) h3,
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) h4,
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) h5,
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) h6 {
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) h1,
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) h2,
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) h3,
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) h4,
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) h5,
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) h6{
   color: #e7edff;
   border-bottom-color: rgba(167, 180, 255, 0.35);
 }
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) table th {
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) table th{
   background: rgba(143, 130, 255, 0.18);
   color: #edf2ff;
   border-color: rgba(155, 167, 206, 0.25);
 }
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) table td {
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) table td{
   border-color: rgba(155, 167, 206, 0.2);
   background: rgba(255,255,255,0.02);
 }
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) table tr:nth-child(even) {
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) table tr:nth-child(even){
   background: rgba(255,255,255,0.02);
 }
-.dark .page-footer-number {
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .page-footer-number{
   color: rgba(198, 206, 236, 0.78);
 }
 #pdf-iframe {
@@ -2360,49 +2358,49 @@ html.dark #creation-mode-select,
   caret-color: #000000 !important;
   color-scheme: light !important;
 }
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) {
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)){
   caret-color: #ffffff !important;
   color-scheme: dark !important;
 }
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) {
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)){
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12), 0 2px 8px rgba(0, 0, 0, 0.55);
 }
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)),
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) p,
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) li,
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) span,
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) div,
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) td,
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) th,
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) blockquote,
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) figcaption,
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) caption,
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) a,
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) .page-footer-number {
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)),
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) p,
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) li,
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) span,
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) div,
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) td,
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) th,
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) blockquote,
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) figcaption,
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) caption,
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) a,
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) .page-footer-number{
   color: #edf2ff !important;
 }
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) h1,
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) h2,
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) h3,
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) h4,
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) h5,
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) h6 {
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) h1,
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) h2,
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) h3,
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) h4,
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) h5,
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) h6{
   color: #f5f7ff !important;
   border-bottom-color: rgba(167, 180, 255, 0.35) !important;
 }
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) table th {
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) table th{
   background: rgba(143, 130, 255, 0.18) !important;
   color: #edf2ff !important;
   border-color: rgba(155, 167, 206, 0.25) !important;
 }
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) table td {
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) table td{
   border-color: rgba(155, 167, 206, 0.2) !important;
   background: rgba(255,255,255,0.02) !important;
 }
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) table tr:nth-child(even) {
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) table tr:nth-child(even){
   background: rgba(255,255,255,0.02) !important;
 }
-.dark .page-footer-number {
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .page-footer-number{
   color: rgba(198, 206, 236, 0.82) !important;
 }
 /* Dark mode: the block callouts (.block-example, .block-warning, etc.) and
@@ -2412,41 +2410,41 @@ html.dark #creation-mode-select,
    Light text on an unchanged light pastel background is nearly invisible
    (this is the "text isn't readable inside the box in dark mode" bug) —
    so give these boxes dark-mode-appropriate tinted backgrounds instead. */
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) .block-example {
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) .block-example{
   background: rgba(16, 185, 129, 0.14) !important;
 }
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) .block-definition {
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) .block-definition{
   background: rgba(59, 130, 246, 0.14) !important;
 }
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) .block-warning {
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) .block-warning{
   background: rgba(239, 68, 68, 0.14) !important;
 }
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) .block-important {
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) .block-important{
   background: rgba(249, 115, 22, 0.14) !important;
 }
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) .block-note {
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) .block-note{
   background: rgba(236, 72, 153, 0.14) !important;
 }
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) .block-solution {
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) .block-solution{
   background: rgba(139, 92, 246, 0.14) !important;
   border-color: rgba(139, 92, 246, 0.4) !important;
 }
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) .sol-label {
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) .sol-label{
   background: rgba(139, 92, 246, 0.28) !important;
   color: #ddd6fe !important;
 }
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) .math-step-label {
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) .math-step-label{
   color: #c4b5fd !important;
 }
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) .sol-given {
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) .sol-given{
   color: #cbd5e1 !important;
 }
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) .math-final-answer {
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) .math-final-answer{
   background: rgba(16, 185, 129, 0.16) !important;
   border-color: rgba(16, 185, 129, 0.5) !important;
   color: #6ee7b7 !important;
 }
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) .math-step {
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) .math-step{
   border-left-color: rgba(196, 181, 253, 0.5) !important;
 }
 .doc-page-canvas.pdf-export-measure-page {
@@ -3410,7 +3408,7 @@ body:not(.exam-document) .omr-sheet-page {
   transform: translateY(16px) scale(0.98);
   opacity: 0;
   pointer-events: none;
-  transition: all 0.3s var(--ease);
+  transition: transform 0.3s var(--ease), opacity 0.3s var(--ease), box-shadow 0.3s var(--ease), width 0.3s var(--ease), height 0.3s var(--ease), max-height 0.3s var(--ease), padding 0.3s var(--ease), margin 0.3s var(--ease), border-radius 0.3s var(--ease), left 0.3s var(--ease), right 0.3s var(--ease), top 0.3s var(--ease), bottom 0.3s var(--ease), filter 0.3s var(--ease), visibility 0.3s var(--ease);
   z-index: 9999;
   box-shadow: var(--shadow-lg);
 }
@@ -3665,7 +3663,7 @@ body:not(.exam-document) .omr-sheet-page {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.3s ease;
+  transition: none;
 }
 .dark .progress-quote-container {
   background: rgba(var(--ink-rgb),0.10);
@@ -3723,7 +3721,7 @@ body:not(.exam-document) .omr-sheet-page {
   color: var(--text-secondary);
   font-size: 0.62rem;
   font-weight: 700;
-  transition: all 0.25s ease;
+  transition: transform 0.25s ease, opacity 0.25s ease, box-shadow 0.25s ease, width 0.25s ease, height 0.25s ease, max-height 0.25s ease, padding 0.25s ease, margin 0.25s ease, border-radius 0.25s ease, left 0.25s ease, right 0.25s ease, top 0.25s ease, bottom 0.25s ease, filter 0.25s ease, visibility 0.25s ease;
   white-space: nowrap;
 }
 .dark .progress-steps span {
@@ -3760,7 +3758,7 @@ body:not(.exam-document) .omr-sheet-page {
   height: 2px;
   background: var(--border-color);
   border-radius: 2px;
-  transition: background 0.3s ease;
+  transition: none;
   flex-shrink: 0;
 }
 .dark .progress-steps i {
@@ -3869,7 +3867,7 @@ body:not(.exam-document) .omr-sheet-page {
   font-weight: 700;
   font-size: 0.8rem;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: transform 0.2s ease, opacity 0.2s ease, box-shadow 0.2s ease, width 0.2s ease, height 0.2s ease, max-height 0.2s ease, padding 0.2s ease, margin 0.2s ease, border-radius 0.2s ease, left 0.2s ease, right 0.2s ease, top 0.2s ease, bottom 0.2s ease, filter 0.2s ease, visibility 0.2s ease;
 }
 .cancel-btn:hover {
   filter: brightness(0.92);
@@ -3965,7 +3963,7 @@ body:not(.exam-document) .omr-sheet-page {
   justify-content:center;
   cursor:pointer;
   flex:0 0 auto;
-  transition:all .18s var(--ease);
+  transition:transform .18s var(--ease), opacity .18s var(--ease), box-shadow .18s var(--ease), width .18s var(--ease), height .18s var(--ease), max-height .18s var(--ease), padding .18s var(--ease), margin .18s var(--ease), border-radius .18s var(--ease), left .18s var(--ease), right .18s var(--ease), top .18s var(--ease), bottom .18s var(--ease), filter .18s var(--ease), visibility .18s var(--ease);
 }
 .ai-model-head-btn:hover,
 .ai-model-icon-btn:hover {
@@ -4031,7 +4029,7 @@ body:not(.exam-document) .omr-sheet-page {
   border:1px solid var(--border-color);
   border-radius:14px;
   background:var(--surface-color);
-  transition:all .15s ease;
+  transition:transform .15s ease, opacity .15s ease, box-shadow .15s ease, width .15s ease, height .15s ease, max-height .15s ease, padding .15s ease, margin .15s ease, border-radius .15s ease, left .15s ease, right .15s ease, top .15s ease, bottom .15s ease, filter .15s ease, visibility .15s ease;
   position:relative;
 }
 .ai-model-card + .ai-model-card { margin-top:6px; }
@@ -4233,7 +4231,7 @@ html.dark .ai-model-card.active,
   color: var(--text-primary);
   font-size: 0.95rem;
   box-sizing: border-box;
-  transition: border 0.2s;
+  transition: none;
 }
 #edit-page-modal input:focus {
   border-color: var(--primary-color);
@@ -4346,7 +4344,7 @@ html.dark .ai-model-card.active,
   font-size: 0.7rem;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: transform 0.15s ease, opacity 0.15s ease, box-shadow 0.15s ease, width 0.15s ease, height 0.15s ease, max-height 0.15s ease, padding 0.15s ease, margin 0.15s ease, border-radius 0.15s ease, left 0.15s ease, right 0.15s ease, top 0.15s ease, bottom 0.15s ease, filter 0.15s ease, visibility 0.15s ease;
 }
 #page-range-modal .range-presets button:hover {
   background: var(--primary-light);
@@ -4548,7 +4546,7 @@ html.dark .ai-model-card.active,
   font-size: 0.85rem;
   border-radius: 12px 12px 0 0;
   border-bottom: 2px solid transparent;
-  transition: all 0.2s var(--ease);
+  transition: transform 0.2s var(--ease), opacity 0.2s var(--ease), box-shadow 0.2s var(--ease), width 0.2s var(--ease), height 0.2s var(--ease), max-height 0.2s var(--ease), padding 0.2s var(--ease), margin 0.2s var(--ease), border-radius 0.2s var(--ease), left 0.2s var(--ease), right 0.2s var(--ease), top 0.2s var(--ease), bottom 0.2s var(--ease), filter 0.2s var(--ease), visibility 0.2s var(--ease);
   touch-action: manipulation;
 }
 #preview-tabs-desktop .tab-btn:hover { color: var(--text-primary); background: var(--surface-hover); }
@@ -4825,23 +4823,23 @@ html.dark .ai-model-card.active,
    ============================================================ */
 
 .doc-page-canvas.pdf-format-aurora{--t-ink:#123b3a;--t-h1:#0b5f58;--t-h2:#0f766e;--t-h3:#0e7490;--t-h1-bg:none;--t-h2-bg:transparent;--t-acc:#14b8a6;--t-acc2:#06b6d4;--t-soft:#e3fbf6;--t-line:#8eeadb;--t-strong:#0f766e;--t-link:#0e7490;--t-th-bg:linear-gradient(90deg,#0f766e,#0891b2);--t-th-fg:#ffffff;--t-td-line:#b6efe6;--t-zebra:#f0fdfa;--t-mark:#99f6e4;--t-strip:linear-gradient(90deg,#14b8a6,#06b6d4);--t-page:linear-gradient(180deg,#ffffff,#effdfa);--c-def-bg:#ecfeff;--c-def:#0891b2;--c-ex-bg:#ecfdf5;--c-ex:#10b981;--c-warn-bg:#fff1f2;--c-warn:#f43f5e;--c-imp-bg:#fffbeb;--c-imp:#f59e0b;--c-note-bg:#f0fdfa;--c-note:#14b8a6;--blk-bw:5px;--blk-t:0;--blk-r:0 10px 10px 0;--pair-head:'Outfit','Hind Siliguri','Inter',sans-serif;--pair-head-w:700;--pair-head-ls:-.02em;--pair-body:'Inter','Hind Siliguri',system-ui,sans-serif;}
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)).pdf-format-aurora{--t-ink:#e9fffb;--t-h1:#5eead4;--t-h2:#99f6e4;--t-h3:#67e8f9;--t-h1-bg:none;--t-h2-bg:transparent;--t-acc:#2dd4bf;--t-acc2:#22d3ee;--t-soft:rgba(45,212,191,.13);--t-line:rgba(45,212,191,.5);--t-strong:#99f6e4;--t-link:#67e8f9;--t-th-bg:linear-gradient(90deg,#0f766e,#155e75);--t-th-fg:#ecfeff;--t-td-line:rgba(94,234,212,.34);--t-zebra:rgba(45,212,191,.07);--t-mark:#5eead4;--t-strip:linear-gradient(90deg,#2dd4bf,#22d3ee);--t-page:linear-gradient(180deg,#07211f,#0c1626);--c-def-bg:rgba(34,211,238,0.17);--c-def:#22d3ee;--c-ex-bg:rgba(52,211,153,0.17);--c-ex:#34d399;--c-warn-bg:rgba(251,113,133,0.17);--c-warn:#fb7185;--c-imp-bg:rgba(251,191,36,0.17);--c-imp:#fbbf24;--c-note-bg:rgba(45,212,191,0.17);--c-note:#2dd4bf;}
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)).pdf-format-aurora{--t-ink:#e9fffb;--t-h1:#5eead4;--t-h2:#99f6e4;--t-h3:#67e8f9;--t-h1-bg:none;--t-h2-bg:transparent;--t-acc:#2dd4bf;--t-acc2:#22d3ee;--t-soft:rgba(45,212,191,.13);--t-line:rgba(45,212,191,.5);--t-strong:#99f6e4;--t-link:#67e8f9;--t-th-bg:linear-gradient(90deg,#0f766e,#155e75);--t-th-fg:#ecfeff;--t-td-line:rgba(94,234,212,.34);--t-zebra:rgba(45,212,191,.07);--t-mark:#5eead4;--t-strip:linear-gradient(90deg,#2dd4bf,#22d3ee);--t-page:linear-gradient(180deg,#07211f,#0c1626);--c-def-bg:rgba(34,211,238,0.17);--c-def:#22d3ee;--c-ex-bg:rgba(52,211,153,0.17);--c-ex:#34d399;--c-warn-bg:rgba(251,113,133,0.17);--c-warn:#fb7185;--c-imp-bg:rgba(251,191,36,0.17);--c-imp:#fbbf24;--c-note-bg:rgba(45,212,191,0.17);--c-note:#2dd4bf;}
 .doc-page-canvas.pdf-format-editorial{--t-ink:#2b2118;--t-h1:#7c2d12;--t-h2:#9a3412;--t-h3:#b45309;--t-h1-bg:none;--t-h2-bg:transparent;--t-acc:#c2410c;--t-acc2:#d97706;--t-soft:#fff0dc;--t-line:#e9b98a;--t-strong:#9a3412;--t-link:#b45309;--t-th-bg:#7c2d12;--t-th-fg:#fef3c7;--t-td-line:#e3c5a2;--t-zebra:#fff6e8;--t-mark:#fde68a;--t-strip:linear-gradient(90deg,#9a3412,#d97706);--t-page:linear-gradient(180deg,#fffaf0,#fcf1df);--c-def-bg:#fff4e6;--c-def:#c2410c;--c-ex-bg:#f6fae8;--c-ex:#65a30d;--c-warn-bg:#fff1f2;--c-warn:#be123c;--c-imp-bg:#fffbeb;--c-imp:#d97706;--c-note-bg:#fdf6e3;--c-note:#a16207;--blk-bw:3px;--blk-t:0;--blk-r:0 2px 2px 0;--pair-head:'Playfair Display','Noto Serif Bengali',Georgia,serif;--pair-head-w:700;--pair-head-ls:-.01em;--pair-body:'Lora','Noto Serif Bengali',Georgia,serif;}
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)).pdf-format-editorial{--t-ink:#fff3e6;--t-h1:#fdba74;--t-h2:#fb923c;--t-h3:#fcd34d;--t-h1-bg:none;--t-h2-bg:transparent;--t-acc:#fb923c;--t-acc2:#fbbf24;--t-soft:rgba(251,146,60,.12);--t-line:rgba(251,146,60,.5);--t-strong:#fdba74;--t-link:#fcd34d;--t-th-bg:#9a4d17;--t-th-fg:#fff7ed;--t-td-line:rgba(251,146,60,.34);--t-zebra:rgba(251,146,60,.07);--t-mark:#fcd34d;--t-strip:linear-gradient(90deg,#fb923c,#fbbf24);--t-page:linear-gradient(180deg,#22150e,#16110e);--c-def-bg:rgba(251,146,60,0.17);--c-def:#fb923c;--c-ex-bg:rgba(163,230,53,0.17);--c-ex:#a3e635;--c-warn-bg:rgba(251,113,133,0.17);--c-warn:#fb7185;--c-imp-bg:rgba(251,191,36,0.17);--c-imp:#fbbf24;--c-note-bg:rgba(252,211,77,0.17);--c-note:#fcd34d;}
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)).pdf-format-editorial{--t-ink:#fff3e6;--t-h1:#fdba74;--t-h2:#fb923c;--t-h3:#fcd34d;--t-h1-bg:none;--t-h2-bg:transparent;--t-acc:#fb923c;--t-acc2:#fbbf24;--t-soft:rgba(251,146,60,.12);--t-line:rgba(251,146,60,.5);--t-strong:#fdba74;--t-link:#fcd34d;--t-th-bg:#9a4d17;--t-th-fg:#fff7ed;--t-td-line:rgba(251,146,60,.34);--t-zebra:rgba(251,146,60,.07);--t-mark:#fcd34d;--t-strip:linear-gradient(90deg,#fb923c,#fbbf24);--t-page:linear-gradient(180deg,#22150e,#16110e);--c-def-bg:rgba(251,146,60,0.17);--c-def:#fb923c;--c-ex-bg:rgba(163,230,53,0.17);--c-ex:#a3e635;--c-warn-bg:rgba(251,113,133,0.17);--c-warn:#fb7185;--c-imp-bg:rgba(251,191,36,0.17);--c-imp:#fbbf24;--c-note-bg:rgba(252,211,77,0.17);--c-note:#fcd34d;}
 .doc-page-canvas.pdf-format-midnight{--t-ink:#1e1b4b;--t-h1:#ffffff;--t-h2:#3730a3;--t-h3:#6d28d9;--t-h1-bg:linear-gradient(135deg,#312e81,#6d28d9);--t-h2-bg:transparent;--t-acc:#6366f1;--t-acc2:#a855f7;--t-soft:#ece9ff;--t-line:#c4c8ff;--t-strong:#4338ca;--t-link:#6d28d9;--t-th-bg:linear-gradient(90deg,#312e81,#6d28d9);--t-th-fg:#ffffff;--t-td-line:#d4d8ff;--t-zebra:#f3f1ff;--t-mark:#ddd6fe;--t-strip:linear-gradient(90deg,#6366f1,#a855f7);--t-page:linear-gradient(180deg,#f8f8ff,#eef0ff);--c-def-bg:#eef2ff;--c-def:#6366f1;--c-ex-bg:#ecfdf5;--c-ex:#10b981;--c-warn-bg:#fff1f2;--c-warn:#e11d48;--c-imp-bg:#fff7ed;--c-imp:#f97316;--c-note-bg:#f5f3ff;--c-note:#8b5cf6;--blk-bw:5px;--blk-t:0;--blk-r:0 12px 12px 0;--pair-head:'Sora','Hind Siliguri','Inter',sans-serif;--pair-head-w:700;--pair-head-ls:-.025em;--pair-body:'Inter','Hind Siliguri',system-ui,sans-serif;}
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)).pdf-format-midnight{--t-ink:#eef0ff;--t-h1:#ffffff;--t-h2:#c7d2fe;--t-h3:#d8b4fe;--t-h1-bg:linear-gradient(135deg,#312e81,#7c3aed);--t-h2-bg:transparent;--t-acc:#818cf8;--t-acc2:#c084fc;--t-soft:rgba(129,140,248,.14);--t-line:rgba(129,140,248,.5);--t-strong:#c7d2fe;--t-link:#d8b4fe;--t-th-bg:linear-gradient(90deg,#3730a3,#6d28d9);--t-th-fg:#ffffff;--t-td-line:rgba(165,180,252,.32);--t-zebra:rgba(129,140,248,.08);--t-mark:#c4b5fd;--t-strip:linear-gradient(90deg,#818cf8,#c084fc);--t-page:linear-gradient(180deg,#0f132b,#080b17);--c-def-bg:rgba(129,140,248,0.17);--c-def:#818cf8;--c-ex-bg:rgba(52,211,153,0.17);--c-ex:#34d399;--c-warn-bg:rgba(251,113,133,0.17);--c-warn:#fb7185;--c-imp-bg:rgba(251,146,60,0.17);--c-imp:#fb923c;--c-note-bg:rgba(192,132,252,0.17);--c-note:#c084fc;}
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)).pdf-format-midnight{--t-ink:#eef0ff;--t-h1:#ffffff;--t-h2:#c7d2fe;--t-h3:#d8b4fe;--t-h1-bg:linear-gradient(135deg,#312e81,#7c3aed);--t-h2-bg:transparent;--t-acc:#818cf8;--t-acc2:#c084fc;--t-soft:rgba(129,140,248,.14);--t-line:rgba(129,140,248,.5);--t-strong:#c7d2fe;--t-link:#d8b4fe;--t-th-bg:linear-gradient(90deg,#3730a3,#6d28d9);--t-th-fg:#ffffff;--t-td-line:rgba(165,180,252,.32);--t-zebra:rgba(129,140,248,.08);--t-mark:#c4b5fd;--t-strip:linear-gradient(90deg,#818cf8,#c084fc);--t-page:linear-gradient(180deg,#0f132b,#080b17);--c-def-bg:rgba(129,140,248,0.17);--c-def:#818cf8;--c-ex-bg:rgba(52,211,153,0.17);--c-ex:#34d399;--c-warn-bg:rgba(251,113,133,0.17);--c-warn:#fb7185;--c-imp-bg:rgba(251,146,60,0.17);--c-imp:#fb923c;--c-note-bg:rgba(192,132,252,0.17);--c-note:#c084fc;}
 .doc-page-canvas.pdf-format-blueprint{--t-ink:#0f172a;--t-h1:#0c4a6e;--t-h2:#075985;--t-h3:#0369a1;--t-h1-bg:none;--t-h2-bg:transparent;--t-acc:#0284c7;--t-acc2:#f97316;--t-soft:#e3f2fd;--t-line:#7dd3fc;--t-strong:#075985;--t-link:#0369a1;--t-th-bg:#0c4a6e;--t-th-fg:#e0f2fe;--t-td-line:#8fd3f7;--t-zebra:#eef8ff;--t-mark:#bae6fd;--t-strip:linear-gradient(90deg,#0284c7,#f97316);--t-page:linear-gradient(rgba(14,116,190,.10) 1px,transparent 1px) 0 0/24px 24px, linear-gradient(90deg,rgba(14,116,190,.10) 1px,transparent 1px) 0 0/24px 24px, #f8fbff;--c-def-bg:#e0f2fe;--c-def:#0284c7;--c-ex-bg:#ecfdf5;--c-ex:#059669;--c-warn-bg:#fff1f2;--c-warn:#e11d48;--c-imp-bg:#fff4e8;--c-imp:#f97316;--c-note-bg:#eff6ff;--c-note:#3b82f6;--blk-bw:4px;--blk-t:1px;--blk-r:0 0 0 0;--pair-head:'Space Grotesk','Hind Siliguri',sans-serif;--pair-head-w:700;--pair-head-ls:-.01em;--pair-body:'IBM Plex Sans','Hind Siliguri',system-ui,sans-serif;--pair-sub:'IBM Plex Mono','Space Grotesk','Hind Siliguri',monospace;--pair-sub-w:600;}
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)).pdf-format-blueprint{--t-ink:#e6f6ff;--t-h1:#bae6fd;--t-h2:#7dd3fc;--t-h3:#38bdf8;--t-h1-bg:none;--t-h2-bg:transparent;--t-acc:#38bdf8;--t-acc2:#fb923c;--t-soft:rgba(56,189,248,.12);--t-line:rgba(56,189,248,.55);--t-strong:#7dd3fc;--t-link:#7dd3fc;--t-th-bg:#0f4c81;--t-th-fg:#e0f2fe;--t-td-line:rgba(56,189,248,.38);--t-zebra:rgba(56,189,248,.07);--t-mark:#7dd3fc;--t-strip:linear-gradient(90deg,#38bdf8,#fb923c);--t-page:linear-gradient(rgba(125,211,252,.09) 1px,transparent 1px) 0 0/24px 24px, linear-gradient(90deg,rgba(125,211,252,.09) 1px,transparent 1px) 0 0/24px 24px, #071827;--c-def-bg:rgba(56,189,248,0.17);--c-def:#38bdf8;--c-ex-bg:rgba(52,211,153,0.17);--c-ex:#34d399;--c-warn-bg:rgba(251,113,133,0.17);--c-warn:#fb7185;--c-imp-bg:rgba(251,146,60,0.17);--c-imp:#fb923c;--c-note-bg:rgba(96,165,250,0.17);--c-note:#60a5fa;}
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)).pdf-format-blueprint{--t-ink:#e6f6ff;--t-h1:#bae6fd;--t-h2:#7dd3fc;--t-h3:#38bdf8;--t-h1-bg:none;--t-h2-bg:transparent;--t-acc:#38bdf8;--t-acc2:#fb923c;--t-soft:rgba(56,189,248,.12);--t-line:rgba(56,189,248,.55);--t-strong:#7dd3fc;--t-link:#7dd3fc;--t-th-bg:#0f4c81;--t-th-fg:#e0f2fe;--t-td-line:rgba(56,189,248,.38);--t-zebra:rgba(56,189,248,.07);--t-mark:#7dd3fc;--t-strip:linear-gradient(90deg,#38bdf8,#fb923c);--t-page:linear-gradient(rgba(125,211,252,.09) 1px,transparent 1px) 0 0/24px 24px, linear-gradient(90deg,rgba(125,211,252,.09) 1px,transparent 1px) 0 0/24px 24px, #071827;--c-def-bg:rgba(56,189,248,0.17);--c-def:#38bdf8;--c-ex-bg:rgba(52,211,153,0.17);--c-ex:#34d399;--c-warn-bg:rgba(251,113,133,0.17);--c-warn:#fb7185;--c-imp-bg:rgba(251,146,60,0.17);--c-imp:#fb923c;--c-note-bg:rgba(96,165,250,0.17);--c-note:#60a5fa;}
 .doc-page-canvas.pdf-format-sage{--t-ink:#27351b;--t-h1:#2f4a10;--t-h2:#3f6212;--t-h3:#4d7c0f;--t-h1-bg:none;--t-h2-bg:transparent;--t-acc:#65a30d;--t-acc2:#a3b18a;--t-soft:#eef7d8;--t-line:#cfe99a;--t-strong:#3f6212;--t-link:#4d7c0f;--t-th-bg:#dcedb8;--t-th-fg:#2f4a10;--t-td-line:#d9eaa8;--t-zebra:#f6fbe6;--t-mark:#d9f99d;--t-strip:linear-gradient(90deg,#65a30d,#a3b18a);--t-page:linear-gradient(180deg,#ffffff,#f5fbe8);--c-def-bg:#f1f8e4;--c-def:#65a30d;--c-ex-bg:#ecfdf5;--c-ex:#10b981;--c-warn-bg:#fef2f2;--c-warn:#dc2626;--c-imp-bg:#fffbeb;--c-imp:#d97706;--c-note-bg:#f6f7ee;--c-note:#8a9a5b;--blk-bw:5px;--blk-t:0;--blk-r:0 14px 14px 0;--pair-head:'DM Serif Display','Noto Serif Bengali',Georgia,serif;--pair-head-w:400;--pair-head-ls:0;--pair-body:'Nunito Sans','Hind Siliguri',system-ui,sans-serif;}
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)).pdf-format-sage{--t-ink:#f0fbe0;--t-h1:#d9f99d;--t-h2:#bef264;--t-h3:#a3e635;--t-h1-bg:none;--t-h2-bg:transparent;--t-acc:#a3e635;--t-acc2:#84a98c;--t-soft:rgba(163,230,53,.10);--t-line:rgba(163,230,53,.45);--t-strong:#d9f99d;--t-link:#bef264;--t-th-bg:#3f6212;--t-th-fg:#f7fee7;--t-td-line:rgba(163,230,53,.3);--t-zebra:rgba(163,230,53,.06);--t-mark:#bef264;--t-strip:linear-gradient(90deg,#a3e635,#84a98c);--t-page:linear-gradient(180deg,#121c11,#0b1220);--c-def-bg:rgba(163,230,53,0.17);--c-def:#a3e635;--c-ex-bg:rgba(52,211,153,0.17);--c-ex:#34d399;--c-warn-bg:rgba(248,113,113,0.17);--c-warn:#f87171;--c-imp-bg:rgba(251,191,36,0.17);--c-imp:#fbbf24;--c-note-bg:rgba(163,177,138,0.17);--c-note:#a3b18a;}
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)).pdf-format-sage{--t-ink:#f0fbe0;--t-h1:#d9f99d;--t-h2:#bef264;--t-h3:#a3e635;--t-h1-bg:none;--t-h2-bg:transparent;--t-acc:#a3e635;--t-acc2:#84a98c;--t-soft:rgba(163,230,53,.10);--t-line:rgba(163,230,53,.45);--t-strong:#d9f99d;--t-link:#bef264;--t-th-bg:#3f6212;--t-th-fg:#f7fee7;--t-td-line:rgba(163,230,53,.3);--t-zebra:rgba(163,230,53,.06);--t-mark:#bef264;--t-strip:linear-gradient(90deg,#a3e635,#84a98c);--t-page:linear-gradient(180deg,#121c11,#0b1220);--c-def-bg:rgba(163,230,53,0.17);--c-def:#a3e635;--c-ex-bg:rgba(52,211,153,0.17);--c-ex:#34d399;--c-warn-bg:rgba(248,113,113,0.17);--c-warn:#f87171;--c-imp-bg:rgba(251,191,36,0.17);--c-imp:#fbbf24;--c-note-bg:rgba(163,177,138,0.17);--c-note:#a3b18a;}
 .doc-page-canvas.pdf-format-minimal{--t-ink:#1f2937;--t-h1:#020617;--t-h2:#0f172a;--t-h3:#334155;--t-h1-bg:none;--t-h2-bg:transparent;--t-acc:#111827;--t-acc2:#64748b;--t-soft:#f1f5f9;--t-line:#cbd5e1;--t-strong:#0f172a;--t-link:#0f172a;--t-th-bg:transparent;--t-th-fg:#0f172a;--t-td-line:#e2e8f0;--t-zebra:transparent;--t-mark:#e5e7eb;--t-strip:linear-gradient(90deg,#111827,#475569);--t-page:linear-gradient(180deg,#ffffff,#f8fafc);--c-def-bg:#f1f5f9;--c-def:#334155;--c-ex-bg:#f8fafc;--c-ex:#64748b;--c-warn-bg:#fef2f2;--c-warn:#b91c1c;--c-imp-bg:#fffbeb;--c-imp:#b45309;--c-note-bg:#f8fafc;--c-note:#94a3b8;--blk-bw:3px;--blk-t:0;--blk-r:0 0 0 0;--pair-head:'Manrope','Hind Siliguri','Inter',sans-serif;--pair-head-w:800;--pair-head-ls:-.03em;--pair-body:'Source Serif 4','Noto Serif Bengali',Georgia,serif;}
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)).pdf-format-minimal{--t-ink:#f1f5f9;--t-h1:#f8fafc;--t-h2:#e2e8f0;--t-h3:#cbd5e1;--t-h1-bg:none;--t-h2-bg:transparent;--t-acc:#e2e8f0;--t-acc2:#94a3b8;--t-soft:rgba(226,232,240,.07);--t-line:rgba(148,163,184,.5);--t-strong:#f8fafc;--t-link:#f8fafc;--t-th-bg:transparent;--t-th-fg:#f8fafc;--t-td-line:rgba(148,163,184,.28);--t-zebra:transparent;--t-mark:#cbd5e1;--t-strip:linear-gradient(90deg,#e2e8f0,#64748b);--t-page:linear-gradient(180deg,#0d1422,#090e18);--c-def-bg:rgba(203,213,225,0.17);--c-def:#cbd5e1;--c-ex-bg:rgba(148,163,184,0.17);--c-ex:#94a3b8;--c-warn-bg:rgba(248,113,113,0.17);--c-warn:#f87171;--c-imp-bg:rgba(251,191,36,0.17);--c-imp:#fbbf24;--c-note-bg:rgba(148,163,184,0.17);--c-note:#94a3b8;}
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)).pdf-format-minimal{--t-ink:#f1f5f9;--t-h1:#f8fafc;--t-h2:#e2e8f0;--t-h3:#cbd5e1;--t-h1-bg:none;--t-h2-bg:transparent;--t-acc:#e2e8f0;--t-acc2:#94a3b8;--t-soft:rgba(226,232,240,.07);--t-line:rgba(148,163,184,.5);--t-strong:#f8fafc;--t-link:#f8fafc;--t-th-bg:transparent;--t-th-fg:#f8fafc;--t-td-line:rgba(148,163,184,.28);--t-zebra:transparent;--t-mark:#cbd5e1;--t-strip:linear-gradient(90deg,#e2e8f0,#64748b);--t-page:linear-gradient(180deg,#0d1422,#090e18);--c-def-bg:rgba(203,213,225,0.17);--c-def:#cbd5e1;--c-ex-bg:rgba(148,163,184,0.17);--c-ex:#94a3b8;--c-warn-bg:rgba(248,113,113,0.17);--c-warn:#f87171;--c-imp-bg:rgba(251,191,36,0.17);--c-imp:#fbbf24;--c-note-bg:rgba(148,163,184,0.17);--c-note:#94a3b8;}
 .doc-page-canvas.pdf-format-rose{--t-ink:#4c1d2d;--t-h1:#9f1239;--t-h2:#be185d;--t-h3:#9d174d;--t-h1-bg:none;--t-h2-bg:transparent;--t-acc:#e11d48;--t-acc2:#db2777;--t-soft:#ffe9ee;--t-line:#fda4af;--t-strong:#be123c;--t-link:#be185d;--t-th-bg:linear-gradient(90deg,#be123c,#db2777);--t-th-fg:#ffffff;--t-td-line:#fecdd3;--t-zebra:#fff3f5;--t-mark:#fbcfe8;--t-strip:linear-gradient(90deg,#e11d48,#f472b6);--t-page:linear-gradient(180deg,#fff9fb,#fff0f3);--c-def-bg:#fdf2f8;--c-def:#db2777;--c-ex-bg:#fff4ea;--c-ex:#f97316;--c-warn-bg:#fff1f2;--c-warn:#e11d48;--c-imp-bg:#fefce8;--c-imp:#ca8a04;--c-note-bg:#faf5ff;--c-note:#a855f7;--blk-bw:4px;--blk-t:0;--blk-r:0 16px 16px 0;--pair-head:'Cormorant Garamond','Noto Serif Bengali',Georgia,serif;--pair-head-w:700;--pair-head-ls:0;--pair-body:'Nunito','Hind Siliguri',system-ui,sans-serif;}
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)).pdf-format-rose{--t-ink:#fff0f5;--t-h1:#fbcfe8;--t-h2:#f9a8d4;--t-h3:#f472b6;--t-h1-bg:none;--t-h2-bg:transparent;--t-acc:#fb7185;--t-acc2:#f472b6;--t-soft:rgba(251,113,133,.12);--t-line:rgba(251,113,133,.5);--t-strong:#fbcfe8;--t-link:#f9a8d4;--t-th-bg:linear-gradient(90deg,#9f1239,#a21caf);--t-th-fg:#fff1f5;--t-td-line:rgba(251,113,133,.33);--t-zebra:rgba(251,113,133,.07);--t-mark:#f9a8d4;--t-strip:linear-gradient(90deg,#fb7185,#f0abfc);--t-page:linear-gradient(180deg,#220f27,#140c19);--c-def-bg:rgba(244,114,182,0.17);--c-def:#f472b6;--c-ex-bg:rgba(251,146,60,0.17);--c-ex:#fb923c;--c-warn-bg:rgba(251,113,133,0.17);--c-warn:#fb7185;--c-imp-bg:rgba(250,204,21,0.17);--c-imp:#facc15;--c-note-bg:rgba(192,132,252,0.17);--c-note:#c084fc;}
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)).pdf-format-rose{--t-ink:#fff0f5;--t-h1:#fbcfe8;--t-h2:#f9a8d4;--t-h3:#f472b6;--t-h1-bg:none;--t-h2-bg:transparent;--t-acc:#fb7185;--t-acc2:#f472b6;--t-soft:rgba(251,113,133,.12);--t-line:rgba(251,113,133,.5);--t-strong:#fbcfe8;--t-link:#f9a8d4;--t-th-bg:linear-gradient(90deg,#9f1239,#a21caf);--t-th-fg:#fff1f5;--t-td-line:rgba(251,113,133,.33);--t-zebra:rgba(251,113,133,.07);--t-mark:#f9a8d4;--t-strip:linear-gradient(90deg,#fb7185,#f0abfc);--t-page:linear-gradient(180deg,#220f27,#140c19);--c-def-bg:rgba(244,114,182,0.17);--c-def:#f472b6;--c-ex-bg:rgba(251,146,60,0.17);--c-ex:#fb923c;--c-warn-bg:rgba(251,113,133,0.17);--c-warn:#fb7185;--c-imp-bg:rgba(250,204,21,0.17);--c-imp:#facc15;--c-note-bg:rgba(192,132,252,0.17);--c-note:#c084fc;}
 .doc-page-canvas.pdf-format-ocean{--t-ink:#082f49;--t-h1:#0c4a6e;--t-h2:#0369a1;--t-h3:#0e7490;--t-h1-bg:none;--t-h2-bg:transparent;--t-acc:#0284c7;--t-acc2:#06b6d4;--t-soft:#e0f3ff;--t-line:#7dd3fc;--t-strong:#0369a1;--t-link:#0284c7;--t-th-bg:#0369a1;--t-th-fg:#ffffff;--t-td-line:#bfe5fb;--t-zebra:#f0f9ff;--t-mark:#bae6fd;--t-strip:linear-gradient(90deg,#0284c7,#06b6d4);--t-page:linear-gradient(180deg,#f2faff,#e8f9fb);--c-def-bg:#e0f2fe;--c-def:#0284c7;--c-ex-bg:#ecfeff;--c-ex:#06b6d4;--c-warn-bg:#fff1f2;--c-warn:#f43f5e;--c-imp-bg:#fff7ed;--c-imp:#fb923c;--c-note-bg:#eff6ff;--c-note:#3b82f6;--blk-bw:5px;--blk-t:0;--blk-r:0 8px 8px 0;--pair-head:'Montserrat','Hind Siliguri',sans-serif;--pair-head-w:700;--pair-head-ls:-.01em;--pair-body:'Open Sans','Hind Siliguri',system-ui,sans-serif;}
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)).pdf-format-ocean{--t-ink:#e8f6ff;--t-h1:#bae6fd;--t-h2:#7dd3fc;--t-h3:#67e8f9;--t-h1-bg:none;--t-h2-bg:transparent;--t-acc:#38bdf8;--t-acc2:#22d3ee;--t-soft:rgba(56,189,248,.12);--t-line:rgba(56,189,248,.5);--t-strong:#7dd3fc;--t-link:#7dd3fc;--t-th-bg:#0c5a94;--t-th-fg:#ffffff;--t-td-line:rgba(56,189,248,.34);--t-zebra:rgba(56,189,248,.07);--t-mark:#7dd3fc;--t-strip:linear-gradient(90deg,#38bdf8,#22d3ee);--t-page:linear-gradient(180deg,#071a2b,#0a1020);--c-def-bg:rgba(56,189,248,0.17);--c-def:#38bdf8;--c-ex-bg:rgba(34,211,238,0.17);--c-ex:#22d3ee;--c-warn-bg:rgba(251,113,133,0.17);--c-warn:#fb7185;--c-imp-bg:rgba(251,146,60,0.17);--c-imp:#fb923c;--c-note-bg:rgba(96,165,250,0.17);--c-note:#60a5fa;}
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)).pdf-format-ocean{--t-ink:#e8f6ff;--t-h1:#bae6fd;--t-h2:#7dd3fc;--t-h3:#67e8f9;--t-h1-bg:none;--t-h2-bg:transparent;--t-acc:#38bdf8;--t-acc2:#22d3ee;--t-soft:rgba(56,189,248,.12);--t-line:rgba(56,189,248,.5);--t-strong:#7dd3fc;--t-link:#7dd3fc;--t-th-bg:#0c5a94;--t-th-fg:#ffffff;--t-td-line:rgba(56,189,248,.34);--t-zebra:rgba(56,189,248,.07);--t-mark:#7dd3fc;--t-strip:linear-gradient(90deg,#38bdf8,#22d3ee);--t-page:linear-gradient(180deg,#071a2b,#0a1020);--c-def-bg:rgba(56,189,248,0.17);--c-def:#38bdf8;--c-ex-bg:rgba(34,211,238,0.17);--c-ex:#22d3ee;--c-warn-bg:rgba(251,113,133,0.17);--c-warn:#fb7185;--c-imp-bg:rgba(251,146,60,0.17);--c-imp:#fb923c;--c-note-bg:rgba(96,165,250,0.17);--c-note:#60a5fa;}
 .doc-page-canvas.pdf-format-highcontrast{--t-ink:#0b0b0b;--t-h1:#000000;--t-h2:#ffffff;--t-h3:#000000;--t-h1-bg:none;--t-h2-bg:#000000;--t-acc:#000000;--t-acc2:#facc15;--t-soft:#fef9c3;--t-line:#000000;--t-strong:#000000;--t-link:#1d4ed8;--t-th-bg:#000000;--t-th-fg:#ffffff;--t-td-line:#000000;--t-zebra:#f3f4f6;--t-mark:#fde047;--t-strip:linear-gradient(90deg,#000000,#facc15);--t-page:#ffffff;--c-def-bg:#eff6ff;--c-def:#1d4ed8;--c-ex-bg:#f0fdf4;--c-ex:#15803d;--c-warn-bg:#fef2f2;--c-warn:#b91c1c;--c-imp-bg:#fefce8;--c-imp:#ca8a04;--c-note-bg:#faf5ff;--c-note:#7e22ce;--blk-bw:8px;--blk-t:3px;--blk-r:0 0 0 0;--pair-head:'Archivo','Hind Siliguri',Arial,sans-serif;--pair-head-w:800;--pair-head-ls:-.02em;--pair-body:'Atkinson Hyperlegible','Hind Siliguri',Arial,sans-serif;}
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)).pdf-format-highcontrast{--t-ink:#ffffff;--t-h1:#ffffff;--t-h2:#0b0f17;--t-h3:#ffffff;--t-h1-bg:none;--t-h2-bg:#f8fafc;--t-acc:#ffffff;--t-acc2:#facc15;--t-soft:rgba(250,204,21,.12);--t-line:#ffffff;--t-strong:#ffffff;--t-link:#7dd3fc;--t-th-bg:#f8fafc;--t-th-fg:#0b0f17;--t-td-line:rgba(255,255,255,.75);--t-zebra:rgba(255,255,255,.06);--t-mark:#fde047;--t-strip:linear-gradient(90deg,#ffffff,#facc15);--t-page:#0b0f17;--c-def-bg:rgba(96,165,250,0.17);--c-def:#60a5fa;--c-ex-bg:rgba(74,222,128,0.17);--c-ex:#4ade80;--c-warn-bg:rgba(248,113,113,0.17);--c-warn:#f87171;--c-imp-bg:rgba(250,204,21,0.17);--c-imp:#facc15;--c-note-bg:rgba(192,132,252,0.17);--c-note:#c084fc;}
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)).pdf-format-highcontrast{--t-ink:#ffffff;--t-h1:#ffffff;--t-h2:#0b0f17;--t-h3:#ffffff;--t-h1-bg:none;--t-h2-bg:#f8fafc;--t-acc:#ffffff;--t-acc2:#facc15;--t-soft:rgba(250,204,21,.12);--t-line:#ffffff;--t-strong:#ffffff;--t-link:#7dd3fc;--t-th-bg:#f8fafc;--t-th-fg:#0b0f17;--t-td-line:rgba(255,255,255,.75);--t-zebra:rgba(255,255,255,.06);--t-mark:#fde047;--t-strip:linear-gradient(90deg,#ffffff,#facc15);--t-page:#0b0f17;--c-def-bg:rgba(96,165,250,0.17);--c-def:#60a5fa;--c-ex-bg:rgba(74,222,128,0.17);--c-ex:#4ade80;--c-warn-bg:rgba(248,113,113,0.17);--c-warn:#f87171;--c-imp-bg:rgba(250,204,21,0.17);--c-imp:#facc15;--c-note-bg:rgba(192,132,252,0.17);--c-note:#c084fc;}
 
 
 :root .doc-page-canvas.pdf-format-aurora {background:var(--t-strip) 0 0/100% 6px no-repeat,var(--t-page)!important;color:var(--t-ink);}
@@ -5280,7 +5278,7 @@ html.dark .ai-model-card.active,
 
 /* Default theme: table header stays blue (as before), in light and dark */
 .doc-page-canvas:not([class*="pdf-format-"]) table th{background:#2563eb;color:#fff;border-color:#1d4ed8;}
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)):not([class*="pdf-format-"]) table th{background:#1d4ed8!important;color:#ffffff!important;border-color:#3b82f6!important;}
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)):not([class*="pdf-format-"]) table th{background:#1d4ed8!important;color:#ffffff!important;border-color:#3b82f6!important;}
 
 
 /* Photocopy (monochrome) mode wins over theme colours */
@@ -5391,7 +5389,7 @@ html.dark .ai-model-card.active,
   font-weight:700;
   cursor:pointer;
   white-space:nowrap;
-  transition:all .15s var(--ease);
+  transition:transform .15s var(--ease), opacity .15s var(--ease), box-shadow .15s var(--ease), width .15s var(--ease), height .15s var(--ease), max-height .15s var(--ease), padding .15s var(--ease), margin .15s var(--ease), border-radius .15s var(--ease), left .15s var(--ease), right .15s var(--ease), top .15s var(--ease), bottom .15s var(--ease), filter .15s var(--ease), visibility .15s var(--ease);
 }
 .at-command-category:hover { background:var(--surface-hover); color:var(--text-primary); }
 .at-command-category.active {
@@ -6180,7 +6178,7 @@ html.dark .ai-model-card.active,
 .slide-canvas-16x9 {
   position: relative;
   font-family: var(--ss-font, 'Segoe UI', 'Inter', Arial, Helvetica, sans-serif);
-  transition: background 0.2s var(--ease, ease);
+  transition: none;
 }
 .slide-canvas-accent-bar {
   width: 46px;
@@ -6353,7 +6351,7 @@ html.dark .ai-model-card.active,
   color: var(--text-secondary);
   cursor: pointer;
   opacity: 0;
-  transition: opacity 0.15s var(--ease, ease), background 0.15s var(--ease, ease);
+  transition: opacity 0.15s var(--ease, ease);
 }
 .slide-thumb-pencil svg { width: 12px; height: 12px; }
 .slide-thumb-row:hover .slide-thumb-pencil,
@@ -6497,7 +6495,7 @@ html.dark .ai-model-card.active,
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.15s ease, opacity 0.15s ease;
+  transition: opacity 0.15s ease;
 }
 .slide-present-close:hover,
 .slide-present-arrow:hover { background: rgba(255,255,255,0.24); }
@@ -6789,64 +6787,64 @@ html[data-paginate-compact="3"] .doc-page-canvas p:not([style*="text-align"]), h
    or vanished on the dark page. Everything below applies only under
    .dark and never touches light mode or exports.
    ============================================================ */
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) :is(strong,b,em,i,u,s,del,ins,small,sub,sup,abbr,cite,dt,dd,label,summary,font,kbd,samp,legend) {
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) :is(strong,b,em,i,u,s,del,ins,small,sub,sup,abbr,cite,dt,dd,label,summary,font,kbd,samp,legend){
   color:#f1f5ff !important;
 }
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) :is(h4,h5,h6) { color:#f5f7ff !important; }
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) code,
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) pre,
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) pre code {
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) :is(h4,h5,h6){ color:#f5f7ff !important; }
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) code,
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) pre,
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) pre code{
   background:rgba(148,163,184,0.16) !important;
   color:#e8eeff !important;
   border-color:rgba(167,180,255,0.35) !important;
 }
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) pre code { background:transparent !important; }
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) mark { background:#fde047 !important; color:#111827 !important; }
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) li::marker { color:#c7d2fe !important; }
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) hr { border-color:rgba(167,180,255,0.4) !important; background:rgba(167,180,255,0.4) !important; }
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) blockquote { border-left-color:#a5b4fc !important; background:rgba(165,180,252,0.10) !important; }
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) ::selection { background:rgba(129,140,248,0.55); color:#fff !important; }
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) pre code{ background:transparent !important; }
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) mark{ background:#fde047 !important; color:#111827 !important; }
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) li::marker{ color:#c7d2fe !important; }
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) hr{ border-color:rgba(167,180,255,0.4) !important; background:rgba(167,180,255,0.4) !important; }
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) blockquote{ border-left-color:#a5b4fc !important; background:rgba(165,180,252,0.10) !important; }
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) ::selection{ background:rgba(129,140,248,0.55); color:#fff !important; }
 
 /* Tables: clearer borders + header contrast */
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) table,
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) table th,
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) table td { border-color:rgba(176,188,235,0.42) !important; }
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) table th { background:rgba(143,130,255,0.30) !important; color:#ffffff !important; }
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) table tr:nth-child(even) td { background:rgba(255,255,255,0.045) !important; }
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) table,
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) table th,
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) table td{ border-color:rgba(176,188,235,0.42) !important; }
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) table th{ background:rgba(143,130,255,0.30) !important; color:#ffffff !important; }
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) table tr:nth-child(even) td{ background:rgba(255,255,255,0.045) !important; }
 
 /* Callout palette: brighter accent bars + slightly stronger tints */
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) .block-example     { background:rgba(16,185,129,0.18) !important;  border-left-color:#34d399 !important; }
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) .block-definition  { background:rgba(59,130,246,0.18) !important;  border-left-color:#60a5fa !important; }
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) .block-warning     { background:rgba(239,68,68,0.18) !important;   border-left-color:#f87171 !important; }
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) .block-important   { background:rgba(249,115,22,0.18) !important;  border-left-color:#fb923c !important; }
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) .block-note        { background:rgba(236,72,153,0.18) !important;  border-left-color:#f472b6 !important; }
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) .block-solution    { background:rgba(139,92,246,0.18) !important;  border-color:rgba(167,139,250,0.55) !important; }
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) .sol-label         { background:rgba(139,92,246,0.40) !important;  color:#f3efff !important; }
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) .math-step-label   { color:#d8ccff !important; }
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) .sol-given         { color:#e2e8f0 !important; }
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) .math-final-answer { background:rgba(16,185,129,0.22) !important; color:#a7f3d0 !important; border-color:rgba(52,211,153,0.7) !important; }
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) .block-example{ background:rgba(16,185,129,0.18) !important;  border-left-color:#34d399 !important; }
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) .block-definition{ background:rgba(59,130,246,0.18) !important;  border-left-color:#60a5fa !important; }
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) .block-warning{ background:rgba(239,68,68,0.18) !important;   border-left-color:#f87171 !important; }
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) .block-important{ background:rgba(249,115,22,0.18) !important;  border-left-color:#fb923c !important; }
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) .block-note{ background:rgba(236,72,153,0.18) !important;  border-left-color:#f472b6 !important; }
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) .block-solution{ background:rgba(139,92,246,0.18) !important;  border-color:rgba(167,139,250,0.55) !important; }
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) .sol-label{ background:rgba(139,92,246,0.40) !important;  color:#f3efff !important; }
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) .math-step-label{ color:#d8ccff !important; }
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) .sol-given{ color:#e2e8f0 !important; }
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) .math-final-answer{ background:rgba(16,185,129,0.22) !important; color:#a7f3d0 !important; border-color:rgba(52,211,153,0.7) !important; }
 
 /* Exam / quiz / OMR: borders were near-black (#111) and invisible */
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) :is(.quiz-answer-key,.quiz-answer-title,.quiz-explanation,.exam-header-block,.exam-header-rule,.exam-header-metaline,.exam-header-field .blank,.exam-section-title,.exam-bottom-row,.omr-sheet-page,.omr-sheet-header,.omr-grid,.omr-row) {
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) :is(.quiz-answer-key,.quiz-answer-title,.quiz-explanation,.exam-header-block,.exam-header-rule,.exam-header-metaline,.exam-header-field .blank,.exam-section-title,.exam-bottom-row,.omr-sheet-page,.omr-sheet-header,.omr-grid,.omr-row){
   border-color:rgba(203,213,245,0.7) !important;
 }
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) .quiz-answer-key { background:transparent !important; }
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) :is(.quiz-question,.quiz-options,.quiz-option,.quiz-answer-title,.quiz-explanation,.omr-sheet-title,.exam-header-title,.exam-header-subtitle) { color:#f1f5ff !important; }
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) .quiz-answer-key{ background:transparent !important; }
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) :is(.quiz-question,.quiz-options,.quiz-option,.quiz-answer-title,.quiz-explanation,.omr-sheet-title,.exam-header-title,.exam-header-subtitle){ color:#f1f5ff !important; }
 
 /* Light-background elements inside a dark page (inline-coloured callouts,
    figure frames, highlighted cells). The small observer at the end of
    app.js tags them; they keep their pastel background but get dark ink. */
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) [data-dm-light="1"],
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) [data-dm-light="1"] * { color:#0f172a !important; border-color:rgba(15,23,42,0.35) !important; }
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) [data-dm-light="1"] a { color:#1d4ed8 !important; }
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) [data-dm-dark="1"],
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) [data-dm-dark="1"] * { color:#f1f5ff !important; }
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) [data-dm-light="1"],
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) [data-dm-light="1"] *{ color:#0f172a !important; border-color:rgba(15,23,42,0.35) !important; }
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) [data-dm-light="1"] a{ color:#1d4ed8 !important; }
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) [data-dm-dark="1"],
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) [data-dm-dark="1"] *{ color:#f1f5ff !important; }
 
 /* Dark mode: ink inside light-background boxes must beat the theme's
    strong / link / heading colours (those are light in dark mode). */
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)).doc-page-canvas [data-dm-light="1"],
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)).doc-page-canvas [data-dm-light="1"] * { color:#0f172a !important; }
-.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)).doc-page-canvas [data-dm-light="1"] a { color:#1d4ed8 !important; }
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)).doc-page-canvas [data-dm-light="1"],
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)).doc-page-canvas [data-dm-light="1"] *{ color:#0f172a !important; }
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)).doc-page-canvas [data-dm-light="1"] a{ color:#1d4ed8 !important; }
 
 /* ========================================================================
    CODE BLOCKS + PROGRAM OUTPUT — FIXED THEME (code-highlight.js)
@@ -6966,13 +6964,13 @@ html body .doc-page-canvas :not(pre) > code.code-inline {
 
 /* ---- Monochrome / dark mode / every visual format: keep the fixed theme ---- */
 html body .photocopy-mode .doc-page-canvas .code-frame,
-html body .dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) .code-frame { background: #1e1e1e !important; border: 1px solid #333842 !important; }
+html body :is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) .code-frame{ background: #1e1e1e !important; border: 1px solid #333842 !important; }
 html body .photocopy-mode .doc-page-canvas .code-frame.code-frame-output,
-html body .dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) .code-frame.code-frame-output { background: #0c0c0c !important; }
-html body .dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) .code-frame pre,
-html body .dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) .code-frame pre code { background: transparent !important; color: #d4d4d4 !important; border-color: transparent !important; }
-html body .dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) .code-frame.code-frame-output pre code { color: #cccccc !important; }
-html body .dark .doc-page-canvas:where(:not(.pdf-export-measure-page)) code.code-inline { background: #1e1e1e !important; color: #ce9178 !important; }
+html body :is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) .code-frame.code-frame-output{ background: #0c0c0c !important; }
+html body :is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) .code-frame pre,
+html body :is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) .code-frame pre code{ background: transparent !important; color: #d4d4d4 !important; border-color: transparent !important; }
+html body :is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) .code-frame.code-frame-output pre code{ color: #cccccc !important; }
+html body :is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) .doc-page-canvas:where(:not(.pdf-export-measure-page)) code.code-inline{ background: #1e1e1e !important; color: #ce9178 !important; }
 
 
 /* Print / Save-as-PDF: browsers drop background colours unless told otherwise.
@@ -7125,7 +7123,7 @@ body.omr-font-ready .doc-page-canvas .omr-bubble.omr-bubble.omr-bubble.omr-bubbl
   box-shadow: var(--float-card-shadow) !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
-  transition: box-shadow 0.25s var(--ease), border-color 0.25s var(--ease);
+  transition: box-shadow 0.25s var(--ease);
 }
 #sidebar #chat-form:focus-within {
   border-color: var(--primary-color) !important;
@@ -7637,7 +7635,7 @@ body.dark {
   transform: translate(-50%, -50%);
   border-radius: 4px;
   background: rgba(var(--ink-rgb), 0);
-  transition: background .2s var(--ease);
+  transition: none;
 }
 #resize-handle:hover::after,
 #resize-handle:active::after { background: rgba(var(--ink-rgb), 0.35); }
@@ -7731,7 +7729,7 @@ body.dark {
 :is(html, html.dark) .tool-select option { background: var(--surface-strong) !important; color: var(--text-primary) !important; }
 
 /* the default (un-themed) dark page: neutral black-grey instead of navy */
-html.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)):not([class*="pdf-format-"]) {
+html:where(:not(.editor-page-light)).dark .doc-page-canvas:where(:not(.pdf-export-measure-page)):not([class*="pdf-format-"]){
   background: #141416;
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.10), 0 10px 30px -8px rgba(0, 0, 0, 0.7);
 }
@@ -8131,7 +8129,7 @@ body.dark {
 .dark #document-view-container { background: transparent; }
 #slide-present-overlay,
 .dark #slide-present-overlay { background: #1a1b21; }
-html.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)):not([class*="pdf-format-"]) {
+html:where(:not(.editor-page-light)).dark .doc-page-canvas:where(:not(.pdf-export-measure-page)):not([class*="pdf-format-"]){
   background: #1d1e24;
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12), 0 10px 30px -8px rgba(8, 9, 14, 0.5);
 }
@@ -8390,7 +8388,7 @@ html.dark { background-color: #16171c; }
 }
 
 /* dim document chrome slightly; the page itself stays readable */
-html.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)):not([class*="pdf-format-"]) {
+html:where(:not(.editor-page-light)).dark .doc-page-canvas:where(:not(.pdf-export-measure-page)):not([class*="pdf-format-"]){
   background: #1c1d23;
   color: #dcdfe6;
   box-shadow: 0 0 0 1px rgba(var(--ink-rgb), 0.10), 0 10px 28px -10px rgba(6, 7, 11, 0.45);
@@ -8399,7 +8397,7 @@ html.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)):not([class*="pd
 /* soft cross-fade when switching theme (skipped for reduced-motion) */
 @media (prefers-reduced-motion: no-preference) {
   :is(html, body), #topbar::before, #sidebar, #preview-panel, .chat-message, #chat-form {
-    transition: background-color .25s ease, border-color .25s ease, color .2s ease;
+    transition: none;
   }
 }
 
@@ -8509,10 +8507,7 @@ html.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)):not([class*="pd
   will-change: transform, opacity;
   /* exit: ease back down, then hide */
   transition:
-    transform 0.42s cubic-bezier(0.55, 0, 0.75, 0.4),
-    opacity 0.30s ease-in 0.08s,
-    filter 0.30s ease-in,
-    visibility 0s linear 0.45s;
+    transform 0.42s cubic-bezier(0.55, 0, 0.75, 0.4), opacity 0.30s ease-in 0.08s, filter 0.30s ease-in, visibility 0s linear 0.45s;
 }
 #toast-notification.show {
   transform: translate3d(0, 0, 0) scale(1);
@@ -8521,10 +8516,7 @@ html.dark .doc-page-canvas:where(:not(.pdf-export-measure-page)):not([class*="pd
   filter: blur(0);
   /* enter: spring rise with slight overshoot */
   transition:
-    transform 0.55s cubic-bezier(0.34, 1.45, 0.64, 1),
-    opacity 0.28s ease-out,
-    filter 0.35s ease-out,
-    visibility 0s linear 0s;
+    transform 0.55s cubic-bezier(0.34, 1.45, 0.64, 1), opacity 0.28s ease-out, filter 0.35s ease-out, visibility 0s linear 0s;
 }
 
 @media (max-width: 850px) {
@@ -9191,7 +9183,7 @@ input[type="checkbox"], input[type="radio"], input[type="range"], progress { acc
   background: #050607;            /* ওয়ার্কস্পেস: প্রায় পিউর কালো */
 }
 
-.dark #document-view-container .doc-page-canvas:not(.pdf-export-measure-page):not([class*="pdf-format-"]) {
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) #document-view-container .doc-page-canvas:not(.pdf-export-measure-page):not([class*="pdf-format-"]){
   background: #0c0d10;            /* পেজ: ধুসর নয়, গভীর কালো */
   color: #dfe2ea;                 /* সাদা নয়, চোখ-নরম অফ-হোয়াইট */
   box-shadow:
@@ -9199,104 +9191,126 @@ input[type="checkbox"], input[type="radio"], input[type="range"], progress { acc
     0 14px 36px -12px rgba(0, 0, 0, 0.9);
   caret-color: #e8eaf0 !important;
 }
-.dark #document-view-container .doc-page-canvas:not(.pdf-export-measure-page):not([class*="pdf-format-"])
-  :is(p, li, span, div, td, th, blockquote, figcaption, caption, dt, dd, a, strong, b, em, i) {
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) #document-view-container .doc-page-canvas:not(.pdf-export-measure-page):not([class*="pdf-format-"])
+  :is(p, li, span, div, td, th, blockquote, figcaption, caption, dt, dd, a, strong, b, em, i){
   color: #dfe2ea !important;
 }
-.dark #document-view-container .doc-page-canvas:not(.pdf-export-measure-page):not([class*="pdf-format-"])
-  :is(h1, h2, h3, h4, h5, h6) {
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) #document-view-container .doc-page-canvas:not(.pdf-export-measure-page):not([class*="pdf-format-"])
+  :is(h1, h2, h3, h4, h5, h6){
   color: #f0f2f7 !important;
 }
-.dark #document-view-container .doc-page-canvas:not(.pdf-export-measure-page):not([class*="pdf-format-"]) table th {
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) #document-view-container .doc-page-canvas:not(.pdf-export-measure-page):not([class*="pdf-format-"]) table th{
   background: #17306b !important;
   color: #f0f4ff !important;
 }
-.dark #document-view-container .doc-page-canvas:not(.pdf-export-measure-page):not([class*="pdf-format-"]) table :is(th, td) {
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) #document-view-container .doc-page-canvas:not(.pdf-export-measure-page):not([class*="pdf-format-"]) table :is(th, td){
   border-color: rgba(255, 255, 255, 0.16) !important;
 }
-.dark #document-view-container .doc-page-canvas:not(.pdf-export-measure-page):not([class*="pdf-format-"]) table tr:nth-child(even) td {
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) #document-view-container .doc-page-canvas:not(.pdf-export-measure-page):not([class*="pdf-format-"]) table tr:nth-child(even) td{
   background: rgba(255, 255, 255, 0.03) !important;
 }
-.dark #document-view-container .doc-page-canvas:not(.pdf-export-measure-page):not([class*="pdf-format-"]) .page-footer-number {
+:is(:where(html:not(.editor-page-light)).dark, :where(html:not(.editor-page-light) .dark)) #document-view-container .doc-page-canvas:not(.pdf-export-measure-page):not([class*="pdf-format-"]) .page-footer-number{
   color: rgba(223, 226, 234, 0.55) !important;
 }
 
+
 /* ==========================================================================
-   DARK MODE — WHITE EDITOR PAGE (Settings → Preference →
-   "Black editor page in dark mode" = OFF).
-   JS puts class "editor-page-light" on <html> when the switch is off.
-   Default (switch ON) = deep-black page from the DARK MODE FIX block above.
-   Keep at the very END of the file.
+   FINAL FIXES (keep at the very END of the file)
    ========================================================================== */
-:is(html.editor-page-light.dark, html.editor-page-light .dark)
-  #document-view-container .doc-page-canvas:not(.pdf-export-measure-page):not([class*="pdf-format-"]) {
-  background: #ffffff;
-  color: #111827;
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.20);
-  caret-color: #000000 !important;
-  color-scheme: light !important;
-}
-:is(html.editor-page-light.dark, html.editor-page-light .dark)
-  #document-view-container .doc-page-canvas:not(.pdf-export-measure-page):not([class*="pdf-format-"])
-  :is(p, li, span, div, td, th, blockquote, figcaption, caption, dt, dd, a, strong, b, em, i) {
-  color: #111827 !important;
-}
-:is(html.editor-page-light.dark, html.editor-page-light .dark)
-  #document-view-container .doc-page-canvas:not(.pdf-export-measure-page):not([class*="pdf-format-"])
-  :is(h1, h2, h3, h4, h5, h6) {
-  color: #111827 !important;
-  border-bottom-color: rgba(0, 0, 0, 0.18) !important;
-}
-:is(html.editor-page-light.dark, html.editor-page-light .dark)
-  #document-view-container .doc-page-canvas:not(.pdf-export-measure-page):not([class*="pdf-format-"]) table th {
-  background: #f2f2f2 !important;
-  color: #111827 !important;
-  border-color: #8c8c8c !important;
-}
-:is(html.editor-page-light.dark, html.editor-page-light .dark)
-  #document-view-container .doc-page-canvas:not(.pdf-export-measure-page):not([class*="pdf-format-"]) table td {
-  background: transparent !important;
-  border-color: #8c8c8c !important;
-}
-:is(html.editor-page-light.dark, html.editor-page-light .dark)
-  #document-view-container .doc-page-canvas:not(.pdf-export-measure-page):not([class*="pdf-format-"]) table tr:nth-child(even) td {
-  background: transparent !important;
-}
-:is(html.editor-page-light.dark, html.editor-page-light .dark)
-  #document-view-container .doc-page-canvas:not(.pdf-export-measure-page):not([class*="pdf-format-"]) .page-footer-number {
-  color: rgba(17, 24, 39, 0.6) !important;
+
+/* ---------- A. Dark mode + white editor page = exactly the light editor ----------
+   JS puts class "editor-page-light" on <html> when "Black editor page in dark mode"
+   is OFF. Every dark-only rule that styles the page sheet (.doc-page-canvas, its
+   text, tables, callouts, code, footer number ...) is now gated with
+   :not(.editor-page-light) above, so with the class present the sheet falls back
+   to the plain light-mode rules — pixel-identical to light mode. The workspace
+   around the sheet stays dark. The only thing left is to give the sheet the LIGHT
+   values of the theme variables, because they are inherited from the dark <html>. */
+html.editor-page-light .doc-page-canvas:not(.pdf-export-measure-page) {
+  color-scheme: light;
+  --ink-rgb: 37, 99, 235;
+  --on-primary: #ffffff;
+  --bg-color: #F4F7FC;
+  --bg-accent: rgba(37, 99, 235, 0.05);
+  --surface-color: #FFFFFF;
+  --surface-strong: #FFFFFF;
+  --surface-hover: rgba(37, 99, 235, 0.06);
+  --sheet-color: #FFFFFF;
+  --text-primary: #172554;
+  --text-secondary: #64748B;
+  --border-color: #E2E8F0;
+  --primary-color: #2563EB;
+  --primary-hover: #0F3D91;
+  --primary-light: rgba(37, 99, 235, 0.10);
+  --primary-soft: rgba(37, 99, 235, 0.05);
+  --accent-color: #60A5FA;
+  --danger-color: #DC2626;
+  --shadow-sm: 0 1px 2px rgba(23, 37, 84, 0.06);
+  --shadow-md: 0 2px 6px rgba(23, 37, 84, 0.08);
+  --shadow-lg: 0 4px 14px rgba(23, 37, 84, 0.10);
+  --glass-bg: #FFFFFF;
+  --glass-bg-soft: #FFFFFF;
+  --glass-bg-strong: #FFFFFF;
+  --glass-border: #E2E8F0;
 }
 
-/* callout boxes: back to their light pastel look on the white page */
-:is(html.editor-page-light.dark, html.editor-page-light .dark)
-  #document-view-container .doc-page-canvas:not(.pdf-export-measure-page) .block-example { background: #f0fdf4 !important; }
-:is(html.editor-page-light.dark, html.editor-page-light .dark)
-  #document-view-container .doc-page-canvas:not(.pdf-export-measure-page) .block-definition { background: #eff6ff !important; }
-:is(html.editor-page-light.dark, html.editor-page-light .dark)
-  #document-view-container .doc-page-canvas:not(.pdf-export-measure-page) .block-warning { background: #fef2f2 !important; }
-:is(html.editor-page-light.dark, html.editor-page-light .dark)
-  #document-view-container .doc-page-canvas:not(.pdf-export-measure-page) .block-important { background: #fff7ed !important; }
-:is(html.editor-page-light.dark, html.editor-page-light .dark)
-  #document-view-container .doc-page-canvas:not(.pdf-export-measure-page) .block-note { background: #fdf2f8 !important; }
-:is(html.editor-page-light.dark, html.editor-page-light .dark)
-  #document-view-container .doc-page-canvas:not(.pdf-export-measure-page) .block-solution {
-  background: #f5f3ff !important;
-  border-color: #ddd6fe !important;
+/* ---------- B. Theme switch: everything changes colour at the same instant ----------
+   The staggered look came from colour transitions (transition: all / background /
+   border-color ...) with different durations on different elements. All colour
+   transitions were removed from the rules above (layout/transform ones are kept),
+   so nothing fades slowly while something else already switched. */
+
+/* ---------- C. Mobile: smooth scrolling ---------- */
+@media (max-width: 850px), (hover: none) and (pointer: coarse) {
+  /* backdrop-filter re-blurs everything behind an element on every scroll frame —
+     the main cause of lag on phones. */
+  *, *::before, *::after {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+  /* keep bars readable now that they are no longer frosted */
+  #topbar, #tab-bar, #mobile-nav-bar, #chat-form, #sidebar #chat-form,
+  #editor-toolbar, #preview-tabs, #at-command-menu, #toast-notification {
+    background-color: var(--surface-strong) !important;
+  }
+  /* cheap flat background instead of 3 stacked gradients repainting on scroll */
+  html, body, .dark body { background-image: none !important; background-color: var(--bg-color); }
+  /* soft blurred shadows are expensive to repaint on every message */
+  .chat-message, .chat-message-action, .chat-suggestion-chip, .at-chip, .file-tag,
+  .clarify-option-btn, .topbar-btn, .topbar-fab-btn {
+    box-shadow: none !important;
+  }
+  #toast-notification { filter: none !important; }
+  /* scroll containers: native momentum, no scroll chaining */
+  #chat-history, #document-view-container, #pdf-view-container, #sidebar {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
 }
-:is(html.editor-page-light.dark, html.editor-page-light .dark)
-  #document-view-container .doc-page-canvas:not(.pdf-export-measure-page) .sol-label {
-  background: #ede9fe !important;
-  color: #6d28d9 !important;
+
+/* ---------- D. Mobile: Settings sheet opens ONCE, no bounce / double open ----------
+   Before, the overlay (modalBlurIn: background + backdrop-filter animation) and the
+   bottom sheet (atSheetSlideUp) animated together, and the sheet also carried its own
+   backdrop-filter inside an animating, blurred parent — the browser re-composited it
+   mid-animation, which looked like the modal opening twice with a bounce.
+   Now: the scrim appears instantly (no animation, no blur) and only the sheet slides
+   up — one single, non-repeating motion. */
+@media (max-width: 850px) {
+  #ai-models-modal,
+  #edit-page-modal,
+  #page-range-modal,
+  #global-progress-overlay,
+  #pdf-preview-loading {
+    animation: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+  .ai-models-modal-card,
+  #edit-page-modal .modal-card,
+  #page-range-modal .modal-card {
+    animation: atSheetSlideUp 0.24s var(--ease) 1 both !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    will-change: transform;
+  }
 }
-:is(html.editor-page-light.dark, html.editor-page-light .dark)
-  #document-view-container .doc-page-canvas:not(.pdf-export-measure-page) .math-step-label { color: #6d28d9 !important; }
-:is(html.editor-page-light.dark, html.editor-page-light .dark)
-  #document-view-container .doc-page-canvas:not(.pdf-export-measure-page) .sol-given { color: #334155 !important; }
-:is(html.editor-page-light.dark, html.editor-page-light .dark)
-  #document-view-container .doc-page-canvas:not(.pdf-export-measure-page) .math-final-answer {
-  background: #ecfdf5 !important;
-  border-color: #10b981 !important;
-  color: #047857 !important;
-}
-:is(html.editor-page-light.dark, html.editor-page-light .dark)
-  #document-view-container .doc-page-canvas:not(.pdf-export-measure-page) .math-step { border-left-color: #c4b5fd !important; }
