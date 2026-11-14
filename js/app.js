@@ -150,8 +150,48 @@ function _longPdfMinPages() { return _scaleForExtra(APP_CONFIG.LONG_PDF_MIN_PAGE
 function _longExpansionMaxRounds() { return _scaleForExtra(APP_CONFIG.LONG_EXPANSION_MAX_ROUNDS, 1.5); }
 function _extraDetailRule(p) {
   if (!_extraDetailOn(p)) return '';
-  return ` EXTRA DETAILED MODE (the user chose "Extra Detailed", which goes FAR beyond normal Detailed/Long — aim for roughly two to three times the usual depth): for every concept give a precise definition, the intuition and why it matters, full step-by-step derivations/proofs, several worked examples of increasing difficulty (easy, medium, hard) each with a complete solution, special and edge cases, common mistakes and misconceptions with how to avoid them, real-world applications, comparison/contrast tables, links to related topics, memory aids, a quick-revision box and practice exercises with answers. Split broad topics into finer sub-topics and develop each one fully; cover every relevant sub-topic and nuance inside the requested scope. The extra length must come only from genuine extra depth and coverage — never pad, repeat or add irrelevant material.`;
+  return ` ★★★ EXTRA DETAILED MODE — MANDATORY, STRICT, NON-NEGOTIABLE ★★★
+The user deliberately chose "Extra Detailed" in the command menu. This is the MOST detailed level the app has. It goes FAR beyond normal Detailed/Long: the output must be roughly THREE TIMES (3x) as deep and as long as a normal Detailed/Long document. A document that looks like an ordinary detailed document is a FAILURE of this instruction. These rules override every "standard length", "right-sized", "do not extend" or "keep it short" wording anywhere else in this prompt (including the standing Instruction).
+1. NEVER summarize, compress, skip, shorten or hurry. NEVER write a topic in one or two paragraphs. Every main topic must be broken into many fine sub-topics, and EVERY sub-topic must be written out in FULL (normally several paragraphs, not one).
+2. FOR EVERY CONCEPT / SUB-TOPIC you MUST include ALL of the following that apply: (a) a precise formal definition; (b) the intuition in plain words and why it matters; (c) the underlying reasoning — the "why", "how" and "when"; (d) complete step-by-step derivations/proofs with NO skipped steps; (e) AT LEAST 3 worked examples of increasing difficulty (easy → medium → hard), each fully solved line by line; (f) special cases, edge cases, limitations and exceptions; (g) common mistakes and misconceptions, with how to avoid them; (h) real-world applications and mini case studies; (i) comparison / contrast tables with similar or related concepts; (j) links to prerequisite and related topics; (k) memory aids / tricks; (l) a short "Quick Revision" box at the end of each major section; (m) practice exercises with complete answers.
+3. COVERAGE: cover every relevant sub-topic, variation, type, classification, law, property, formula, exception and nuance inside the requested scope — leave NOTHING out. When unsure whether to include something relevant, INCLUDE it.
+4. DEPTH OVER BREVITY: prefer longer, fuller explanations, multi-paragraph treatment and more examples. Do not stop early, do not end with "and so on", do not say "similarly", do not refer the reader elsewhere — write it all out.
+5. The extra length must come ONLY from genuine extra depth and coverage — never from padding, repeating the same point, filler sentences or irrelevant material.
+6. Before finishing, self-check: is every sub-topic fully developed, with definition + intuition + derivation + 3 graded solved examples + mistakes + applications + practice? If any is thin, expand it now.`;
 }
+
+
+// Final, last-in-prompt reminders (models follow the END of a long prompt most strongly).
+function _bnOrderFinalReminder() {
+  try {
+    const f = (typeof _syncPDFLanguageFormatPreference === 'function') ? _syncPDFLanguageFormatPreference() : 'default';
+    if (f !== 'english_bengali_translate_explain') return '';
+    return `\n=== FINAL ORDER CHECK (MANDATORY) ===\nLanguage format EN/BN+বা: in EVERY chunk the order is exactly (1) English content, (2) its Bengali translation, (3) the বাংলা ব্যাখ্যা block(s). Never start with Bengali. Never put a বাংলা ব্যাখ্যা before the English or before the translation. This is true even though the user's message may be in Bengali.\n`;
+  } catch (_) { return ''; }
+}
+// Title / numbering rule for every document that is generated.
+const _TITLE_AND_NUMBERING_RULE = `
+    === DOCUMENT TITLE & HEADING NUMBERING (MANDATORY) ===
+    1. DOCUMENT TITLE: the whole document must begin with ONE title that names the subject of the notes, written as <h1 style="text-align:center;">Title</h1> — ALWAYS horizontally centered in the middle of the page. Never skip it, never left-align it.
+    2. MAIN TOPICS / MAJOR SECTIONS (<h2>): NO serial numbers. Never write "1.", "2.", "১.", "Section 1", "Chapter 2", "Part I" etc. in front of a main heading — write only the plain topic name.
+    3. SUB-TOPICS (<h3> and below): serial numbers ARE allowed (for example 1.1, 1.2 or 1, 2, 3) when it helps the reader; they may also be left unnumbered.
+    4. If an outline given to you is numbered, those numbers are only for ordering — never copy them into main headings.
+  `;
+function _stripMainHeadingNumbers(html) {
+  try {
+    const numRe = /^(\s*(?:<[^>]+>\s*)*)(?:(?:section|chapter|part|unit|topic|অধ্যায়|পর্ব|অংশ)\s*)?(?:[0-9\u09E6-\u09EF]{1,3}|[IVXLivxl]{1,5})\s*[\.\)\-–—:]\s+/i;
+    return String(html || '').replace(/<(h[12])\b([^>]*)>([\s\S]*?)<\/\1>/gi, (m, tag, attrs, inner) => {
+      let out = inner.replace(numRe, '$1');
+      let a = attrs;
+      if (tag.toLowerCase() === 'h1') {
+        if (/style\s*=/i.test(a)) { if (!/text-align\s*:\s*center/i.test(a)) a = a.replace(/style\s*=\s*(["'])/i, 'style=$1text-align:center;'); }
+        else a += ' style="text-align:center;"';
+      }
+      return `<${tag}${a}>${out}</${tag}>`;
+    });
+  } catch (_) { return html; }
+}
+window._stripMainHeadingNumbers = _stripMainHeadingNumbers;
 
 function _languageCodeToPDFFormat(value) {
   const n = String(value == null ? '' : value).trim().toLowerCase();
@@ -1514,9 +1554,10 @@ ${_bnExplainCoreRules('placed right after the English concept it explains')}
   ` : languageFormat === 'english_bengali_translate_explain' ? `
     === LANGUAGE FORMAT (MANDATORY — OVERRIDES EVERYTHING ELSE ABOUT LANGUAGE) ===
     The user has explicitly selected "English + Translation + Bengali Explained" (EN/BN+বা) from the format menu. This applies no matter what language the user's own message/prompt is written in. For every part of the document use THIS ORDER, repeated chunk by chunk:
-      (1) the English content (the normal, full content);
-      (2) right after it, the Bengali TRANSLATION of that same chunk;
-      (3) right after the translation, the Bengali EXPLANATION block(s) (বাংলা ব্যাখ্যা) for the hard or new concepts that appeared in that chunk.
+      (1) FIRST — the English content (the normal, full content);
+      (2) SECOND — right after it, the Bengali TRANSLATION of that same chunk;
+      (3) THIRD (LAST) — right after the translation, the Bengali EXPLANATION block(s) (বাংলা ব্যাখ্যা) for the hard or new concepts that appeared in that chunk.
+    STRICT ORDER (NEVER BREAK): English → Bengali translation → বাংলা ব্যাখ্যা. The বাংলা ব্যাখ্যা block must NEVER come first and must NEVER come before the English or before the translation; Bengali text must never be the first thing in a chunk or a section. Every section and sub-topic starts with English. This is the same for a NEW document, a long/sectioned document, an expansion or a continuation — the order is identical everywhere, whatever language the user's own message is written in, and even if the 'Language' line or the callout labels are in Bengali.
     The translation (step 2) and the explanation (step 3) are DIFFERENT things: the translation renders the English faithfully in Bengali; the explanation is NOT a translation — it re-teaches the concept in simple spoken-style Bengali.
 ${_BN_TRANSLATION_GROUPING_RULE}
     The explanation blocks follow these rules (where they say "placed right after the English concept it explains", place them right after the Bengali translation of the chunk that contains the concept instead, and keep them separate from the translation):
@@ -1556,7 +1597,7 @@ function buildSharedRules(isMonochromeMode, outputLanguage, options) {
   ` : `
     === MODERN COLORFUL STYLE GUIDE ===
     Make the document look like a premium, professionally-designed study note.
-    1. HEADING HIERARCHY: <h1>once for the document title (centered), <h2>for each major section, <h3>for sub-topics.
+    1. HEADING HIERARCHY: <h1>once for the document title (ALWAYS centered, in the middle), <h2>for each major section (NO serial number), <h3>for sub-topics (serial number allowed).
     2. CALLOUT BOXES — use these liberally to create visual rhythm:
       - <div class="block-definition"><b>${labels.definition}</b> ...</div> — definitions / key terms
       - <div class="block-example"><b>${labels.example}</b> ...</div> — worked examples
@@ -1842,6 +1883,7 @@ function buildSharedRules(isMonochromeMode, outputLanguage, options) {
 
     ${sourceInterpretationRules}
     ${languageFormatInstruction}
+    ${_TITLE_AND_NUMBERING_RULE}
     ${styleGuide}
     ${conceptMapRules}
     ${superFigureRules}
@@ -2214,10 +2256,10 @@ function normalizeGeneratedSectionHTML(html, sectionTitle) {
   if (firstHeading) {
     const headingText = firstHeading[2].replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim();
     if (headingText.toLowerCase() === String(sectionTitle || '').trim().toLowerCase()) {
-      return value;
+      return _stripMainHeadingNumbers(value);
     }
   }
-  return `<h2>${safeTitle}</h2>${value}`;
+  return _stripMainHeadingNumbers(`<h2>${safeTitle}</h2>${value}`);
 }
 
 async function generateHtmlContentWithAutoContinue(promptText, htmlSoFar, finishReason, modelsUsedSet, maxLoops = APP_CONFIG.CONTINUATION_MAX_LOOPS, lockedModelConfig = null) {
@@ -2402,7 +2444,7 @@ async function generateTopicPlan(promptText, fileContextString, isMonochromeMode
 
   const outputLang = intentPayload && intentPayload.language ? intentPayload.language : detectOutputLanguage(promptText);
   const atCommandInstruction = typeof buildAtCommandInstructionText === 'function' ? buildAtCommandInstructionText(intentPayload) : '';
-  _originalSystemPrompt = `You are an AI Document Assistant. MODE: ${isMonochromeMode ? 'MONOCHROME' : 'COLORFUL'}.\n${buildSharedRules(isMonochromeMode, outputLang)}\n${atCommandInstruction}`;
+  _originalSystemPrompt = `You are an AI Document Assistant. MODE: ${isMonochromeMode ? 'MONOCHROME' : 'COLORFUL'}.\n${buildSharedRules(isMonochromeMode, outputLang)}\n${atCommandInstruction}${_bnOrderFinalReminder()}`;
   _originalUserMessages = [{ role: 'system', content: _originalSystemPrompt }, { role: 'user', content: await buildAIUserContent(promptText, fileContextString) }];
 
   return { docTitle, depth, estimatedPages, estimatedTokens, sections: useSections ? sections.map(s => s.title) : [], sectionDetails: useSections ? sections : [], useSections, reason: planJson.reason || '' };
@@ -2427,7 +2469,7 @@ async function generateNextSection(sectionIndex, sectionTitle, modelsUsedSet) {
   const originalUser = _originalUserMessages.find(m => m.role === 'user')?.content || '';
   const systemContent = _originalSystemPrompt +
     `\n\nSECTION GENERATION RULES: Generate ONLY the current section "${sectionTitle}". Do not generate any other section. ` +
-    `The section title must appear as the first heading. Do not include chat_summary, commentary, metadata, or explanations outside the document content.` +
+    `The section title must appear as the first heading, as a plain <h2> with NO serial number (the numbers in the outline are only for ordering; never write them in the heading). Sub-topic headings (<h3>) may be numbered. Do not include chat_summary, commentary, metadata, or explanations outside the document content.` +
     (deepSeekMode ? `\n\nDEEPSEEK COMPATIBILITY MODE: Output ONLY the raw HTML fragment for this single section. Do NOT wrap it in JSON. Do NOT use markdown fences. Keep all HTML valid and complete.` : `\n\nReturn JSON exactly in this shape: {"html_content":"<full HTML fragment for this section>"}. Do not add any other keys or prose.`);
 
   const messages = [{ role: 'system', content: systemContent }, { role: 'user', content: `Original request:\n${originalUser}\n\nAPPROVED DOCUMENT OUTLINE:\n${outlineContext}\n\nCURRENT SECTION:\n${sectionTitle}\n\n${sectionPrompt}` },
@@ -2813,7 +2855,7 @@ async function generateDefaultPDFDirectMode(promptText, fileContextString, isMon
     }
     value = String(value || '').replace(/^```(?:html)?\s*/i, '').replace(/```\s*$/i, '').trim();
     if (!/<[a-z][\s\S]*>/i.test(value) && value.length > 300) value = convertTextToDocumentHTML(value);
-    return value;
+    return _stripMainHeadingNumbers(value);
   };
   const usableTextLength = (html) => {
     const tmp = document.createElement('div');
@@ -2895,7 +2937,7 @@ async function generateDefaultPDFDirectMode(promptText, fileContextString, isMon
       `${buildSharedRules(isMonochromeMode, outputLanguage)}\n` +
       `${typeof buildAtCommandInstructionText === 'function' ? buildAtCommandInstructionText({ intent: 'create_pdf', length: null, language: outputLanguage, sectionMode: false, visual: (intentPayload && intentPayload.visual) || null }) : ''}\n` +      (pdfOutlineApproved ? `APPROVED PDF OUTLINE — follow this structure exactly and cover EVERY section and point in the final document:\n${_formatPDFOutlineForPrompt(intentPayload.pdfOutline)}\n` : '') +
       `DEFAULT DIRECT RULES: create the complete requested document in one continuous generation flow at a STANDARD length — follow the DOCUMENT LENGTH AND DEPTH rule and the standing Instruction's length rule. Do not extend it with extra topics, repetition or filler, and do not shorten it by dropping what the request needs. Go long only if the user explicitly asked for a detailed, comprehensive or long document. Use natural headings, definitions, explanations, formulas, worked examples, tables and useful visuals where they materially improve the document.\n` +
-      `OUTPUT SAFETY: the result must contain substantial visible explanatory content, not just a title or outline. Use semantic HTML suitable for the existing A4 pagination engine.`;
+      `OUTPUT SAFETY: the result must contain substantial visible explanatory content, not just a title or outline. Use semantic HTML suitable for the existing A4 pagination engine.` + _bnOrderFinalReminder();
 
     let result = await callAIAPI([{ role: 'system', content: writingSystemPrompt }, { role: 'user', content: userPrompt }], {
       forceJson: false,
@@ -3042,7 +3084,7 @@ async function generateExplicitLengthPDFDirectMode(promptText, fileContextString
     }
     value = String(value || '').replace(/^```(?:html)?\s*/i, '').replace(/```\s*$/i, '').trim();
     if (!/<[a-z][\s\S]*>/i.test(value) && value.length > 300) value = convertTextToDocumentHTML(value);
-    return value;
+    return _stripMainHeadingNumbers(value);
   };
   const textLength = (html) => {
     const tmp = document.createElement('div');
@@ -3105,7 +3147,7 @@ async function generateExplicitLengthPDFDirectMode(promptText, fileContextString
       `${buildSharedRules(isMonochromeMode, outputLanguage)}\n` +
       `${typeof buildAtCommandInstructionText === 'function' ? buildAtCommandInstructionText({ intent: 'create_pdf', length: isLong ? 'long_pdf' : 'short_pdf', extraDetail: !!(isLong && _extraDetailOn(intentPayload)), language: outputLanguage, sectionMode: false, visual: (intentPayload && intentPayload.visual) || null }) : ''}\n` +      (pdfOutlineApproved ? `APPROVED PDF OUTLINE — follow this structure exactly and cover EVERY section and point in the final document:\n${_formatPDFOutlineForPrompt(intentPayload.pdfOutline)}\n` : '') +
       (isLong ? `LONG DIRECT RULES: write a genuinely comprehensive document. There is NO fixed page target — cover the full requested scope with definitions, concepts, formulas, properties, derivations, multiple worked/solved math examples per concept, applications, comparisons, common mistakes, summaries and useful tables/diagrams where appropriate. Let the true length be however many A4 pages this topic's real depth requires. Never pad with repetition, and never cut a topic short just to save space.${_extraDetailRule(intentPayload)}\n` : `SHORT DIRECT RULES: produce a compact but complete document, normally about 2–5 A4 pages. Preserve the essential concepts, key formulas/facts, representative examples and a concise summary. Do not return only a title or outline.\n`) +
-      `OUTPUT SAFETY: the result must contain substantial visible explanatory content. Use semantic HTML suitable for the existing A4 pagination engine.`;
+      `OUTPUT SAFETY: the result must contain substantial visible explanatory content. Use semantic HTML suitable for the existing A4 pagination engine.` + _bnOrderFinalReminder();
 
     let result = await callAIAPI([{ role: 'system', content: writingSystemPrompt }, { role: 'user', content: userPrompt }], { forceJson: false, modelsUsedSet, maxTokens: undefined });
     if (typeof ProgressUI !== 'undefined' && ProgressUI.setStage) ProgressUI.setStage('Processing AI response…', 72, 84);
@@ -3247,7 +3289,7 @@ async function generateLongPDFDirectMode(promptText, fileContextString, isMonoch
     value = String(value || '').trim();
     if (value.startsWith('```')) value = value.replace(/^```(?:html)?\s*/i, '').replace(/```\s*$/i, '').trim();
     if (!/<[a-z][\s\S]*>/i.test(value) && value.length > 300) value = convertTextToDocumentHTML(value);
-    return value;
+    return _stripMainHeadingNumbers(value);
   };
 
   const usableTextLength = (html) => {
