@@ -188,6 +188,26 @@ function _extraExpansionFocus(round) {
   return `\\n★ EXTRA DETAILED EXPANSION — round ${round}: you are NOT allowed to answer "complete" or [[DOCUMENT_COMPLETE]] while rounds remain. Add at least ~1500 words of NEW material focused on: ${foci[(round - 1) % foci.length]}. Never repeat what already exists. Keep every calculation broken into small steps.`;
 }
 
+
+// Detailed (long_pdf) / Short (short_pdf) chips must not be flattened by the generic "standard length / 4-8 pages" rule.
+function _lengthModeNow(p) {
+  try {
+    if (p && p.length) return p.length;
+    return (typeof APP_STATE !== 'undefined' && APP_STATE && APP_STATE.lengthModeActive) || null;
+  } catch (_) { return null; }
+}
+function _lengthModeDetailBlock() {
+  if (_extraDetailOn()) return '';
+  const m = _lengthModeNow();
+  if (m === 'long_pdf') return `
+    === DOCUMENT LENGTH AND DEPTH: DETAILED / LONG (the user picked this chip — OVERRIDES "standard length", "right-sized" and the standing Instruction's "4-8 pages") ===
+    The user explicitly chose a DETAILED/LONG document. It must be clearly longer and deeper than a standard note — roughly double a standard one, with NO page cap. Cover every concept thoroughly: definition, intuition, step-by-step derivation, AT LEAST 2-3 fully worked math examples per important concept with calculations shown step by step, applications, common mistakes, comparison tables, and a short practice set with answers near the end. Do not summarize or rush, and do not stop early. Never pad or repeat; the length must come from real depth.`;
+  if (m === 'short_pdf') return `
+    === DOCUMENT LENGTH AND DEPTH: SHORT (the user picked this chip — OVERRIDES "standard length" and the standing Instruction's "4-8 pages") ===
+    The user explicitly chose a SHORT document: compact and focused, about 2-5 A4 pages at most. Keep only the essential definitions, key formulas/facts, one or two representative examples and a brief summary. No long derivations, no extra examples, no practice section, no filler — but do not drop anything essential.`;
+  return '';
+}
+
 // Final, last-in-prompt reminders (models follow the END of a long prompt most strongly).
 function _bnOrderFinalReminder() {
   try {
@@ -1899,8 +1919,8 @@ function buildSharedRules(isMonochromeMode, outputLanguage, options) {
     NOTE ON THE STANDING INSTRUCTION: its length wording (standard length, 4-8 pages, keep it short) is OVERRIDDEN by EXTRA DETAILED mode. Its simple-language style still applies, but never at the cost of depth, number of examples or calculation detail.
   ` : '';
   return `
-    ${detailInstruction}
-    ${simpleByDefaultInstruction}${_extraStandingOverride}
+    ${detailInstruction}${_lengthModeDetailBlock()}
+    ${simpleByDefaultInstruction}${_extraStandingOverride}${_lengthModeNow() === 'long_pdf' || _lengthModeNow() === 'short_pdf' ? (_extraDetailOn() ? '' : '\n    NOTE ON THE STANDING INSTRUCTION: its length wording (standard length / 4-8 pages) is OVERRIDDEN by the chosen length chip above; only its simple-language style still applies.\n') : ''}
     === CORE PHILOSOPHY: RIGHT-SIZED COMPLETENESS ===
     Accuracy > Padding | Completeness of what is needed > Extra length | Clarity > Compression.
     Default behavior: UNDERSTAND → EXTRACT → PRESERVE → ORGANIZE → EXPLAIN.
@@ -3180,7 +3200,7 @@ async function generateExplicitLengthPDFDirectMode(promptText, fileContextString
       `${_languageLine(outputLanguage)}\n` +
       `${buildSharedRules(isMonochromeMode, outputLanguage)}\n` +
       `${typeof buildAtCommandInstructionText === 'function' ? buildAtCommandInstructionText({ intent: 'create_pdf', length: isLong ? 'long_pdf' : 'short_pdf', extraDetail: !!(isLong && _extraDetailOn(intentPayload)), language: outputLanguage, sectionMode: false, visual: (intentPayload && intentPayload.visual) || null }) : ''}\n` +      (pdfOutlineApproved ? `APPROVED PDF OUTLINE — follow this structure exactly and cover EVERY section and point in the final document:\n${_formatPDFOutlineForPrompt(intentPayload.pdfOutline)}\n` : '') +
-      (isLong ? `LONG DIRECT RULES: write a genuinely comprehensive document. There is NO fixed page target — cover the full requested scope with definitions, concepts, formulas, properties, derivations, multiple worked/solved math examples per concept, applications, comparisons, common mistakes, summaries and useful tables/diagrams where appropriate. Let the true length be however many A4 pages this topic's real depth requires. Never pad with repetition, and never cut a topic short just to save space.${_extraDetailRule(intentPayload)}\n` : `SHORT DIRECT RULES: produce a compact but complete document, normally about 2–5 A4 pages. Preserve the essential concepts, key formulas/facts, representative examples and a concise summary. Do not return only a title or outline.\n`) +
+      (isLong ? `LONG DIRECT RULES: write a genuinely comprehensive, clearly-longer-than-standard document (about double a standard note, at least 2-3 worked math examples per key concept with step-by-step calculations, and a practice set with answers near the end). There is NO fixed page target — cover the full requested scope with definitions, concepts, formulas, properties, derivations, multiple worked/solved math examples per concept, applications, comparisons, common mistakes, summaries and useful tables/diagrams where appropriate. Let the true length be however many A4 pages this topic's real depth requires. Never pad with repetition, and never cut a topic short just to save space.${_extraDetailRule(intentPayload)}\n` : `SHORT DIRECT RULES: produce a compact but complete document, normally about 2–5 A4 pages. Preserve the essential concepts, key formulas/facts, representative examples and a concise summary. Do not return only a title or outline.\n`) +
       `OUTPUT SAFETY: the result must contain substantial visible explanatory content. Use semantic HTML suitable for the existing A4 pagination engine.` + _bnOrderFinalReminder();
 
     let result = await callAIAPI([{ role: 'system', content: writingSystemPrompt }, { role: 'user', content: userPrompt }], { forceJson: false, modelsUsedSet, maxTokens: undefined });
@@ -5374,6 +5394,7 @@ async function sendChatPromptToAI() {
     const requestSessionId = APP_STATE.activeSessionId;
     // Mirror "Extra Detailed" so flows without a payload in scope (direct long writer, expansion loop) can see it.
     APP_STATE.extraDetailActive = !!(intentPayload && intentPayload.extraDetail);
+    APP_STATE.lengthModeActive = (intentPayload && intentPayload.intent === 'create_pdf' && ['long_pdf', 'short_pdf'].includes(intentPayload.length)) ? intentPayload.length : null;
     // Canvas chip = illustrations ON for PDF/Word. Slides keep their own behaviour.
     if (['create_slides', 'edit_slide', 'custom_background'].includes(intentPayload.intent)) {
       APP_STATE.canvasIllustrationsEnabled = undefined;
