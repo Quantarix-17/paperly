@@ -1854,7 +1854,7 @@ function buildAtCommandInstructionText(intentPayload) {
   }
 
   if (intentPayload.length === 'long_pdf' && intentPayload.extraDetail) {
-    parts.push('LENGTH: EXTRA DETAILED — go FAR beyond a normal Detailed/Long document (roughly two to three times the depth). For every concept give: a precise definition, the intuition and why it matters, full step-by-step derivations/proofs, several worked examples of increasing difficulty (easy, medium, hard) with complete solutions, special/edge cases, common mistakes and misconceptions, real-world applications, comparison tables, links to related topics, quick-revision boxes and practice exercises with answers. Break broad topics into finer sub-topics and develop each fully. Never pad, repeat or add irrelevant material: the extra length must come from genuine extra depth and coverage.');
+    parts.push('LENGTH: EXTRA DETAILED — MANDATORY and STRICT. This is the deepest level: the document must be clearly MUCH longer and deeper (at least 2-3x) than a normal Detailed/Long one; ignore any "standard length / short / right-sized / 4-8 pages" wording elsewhere. THEORY: explain every concept in depth, in several full paragraphs (definition, intuition, why it is true, how it connects, special cases). MATH: give many worked examples — at least 4 per important concept, easy to hard — and break every calculation into small separate steps (one operation per line, with the reason), never skipping an intermediate step. ALSO per concept: derivations/proofs, edge cases, common mistakes, applications, comparison tables, quick-revision box. END the document with a "Practice Problems" section of at least 10 graded problems with complete step-by-step answers. Break broad topics into fine sub-topics and develop each fully. Never summarize, never say "and so on", never pad or repeat: the extra length must come from genuine depth.');
   } else if (intentPayload.length === 'long_pdf') {
     parts.push('LENGTH: LONG — produce a genuinely long, comprehensive document with full depth, detail and examples. Do not shorten or summarize.');
   } else if (intentPayload.length === 'short_pdf') {
@@ -1869,7 +1869,10 @@ function buildAtCommandInstructionText(intentPayload) {
     parts.push(`TARGET PAGES: Apply this action only to pages ${intentPayload.pageNumbers.join(', ')}. Preserve all other pages exactly as-is.`);
   }
 
-  if (intentPayload.language) {
+  // A selected Format (EN/BN, EN/BN+বা ...) owns the language rules; a single-language line here would contradict it (e.g. drop the translation).
+  let _fmtOwnsLanguage = false;
+  try { const _f = typeof _getCurrentLanguageFormatId === 'function' ? _getCurrentLanguageFormatId() : 'default'; _fmtOwnsLanguage = !!(_f && _f !== 'default'); } catch (_) {}
+  if (intentPayload.language && !_fmtOwnsLanguage) {
     parts.push(`LANGUAGE: Write the entire output in "${intentPayload.language}". Do not mix in other languages unless technical terms require it.`);
   }
 
