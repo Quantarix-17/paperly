@@ -31,6 +31,26 @@ try {
   AT_COMMANDS.forEach(c => { if (c && AT_LABEL_OVERRIDES[c.id]) c.label = AT_LABEL_OVERRIDES[c.id]; });
 } catch (_) { /* label stays as defined in constants.js */ }
 
+// ===== EXTRA DETAILED (PDF mode) =====
+// A new length option that goes far beyond "Detailed". It is a clone of the
+// long_pdf command (same category / mode / icon) with its own id, so the
+// "choose only one length" rule keeps working. buildIntentPayload() maps it to
+// length:'long_pdf' + extraDetail:true, so every existing long-PDF flow in
+// app.js keeps working and only adds the extra-depth rules on top.
+const EXTRA_DETAILED_CMD_ID = 'extra_long_pdf';
+try {
+  if (!AT_COMMANDS.some(c => c && c.id === EXTRA_DETAILED_CMD_ID)) {
+    const _baseLong = AT_COMMANDS.find(c => c && c.id === 'long_pdf');
+    const _extraCmd = Object.assign(
+      { category: 'length', icon: 'document', modes: ['pdf'] },
+      _baseLong || {},
+      { id: EXTRA_DETAILED_CMD_ID, label: 'Extra Detailed', desc: 'Far more depth than Detailed: every concept, derivation, example and exercise' }
+    );
+    const _baseIdx = _baseLong ? AT_COMMANDS.indexOf(_baseLong) : -1;
+    if (_baseIdx > -1) AT_COMMANDS.splice(_baseIdx + 1, 0, _extraCmd); else AT_COMMANDS.push(_extraCmd);
+  }
+} catch (_) { /* constants.js not loaded yet */ }
+
 // ===== COPY (typed text) COMMAND =====
 // @Copy treats typed/pasted text as source material and requires a minimum
 // length. @Copy & Refine can instead use attached files as its source.
@@ -126,7 +146,7 @@ window._syncCopyReadyState = _syncCopyReadyState;
 // getOrderedAtCommands() lives in constants.js; make sure it never drops Copy.
 function _orderedAtCommands(list) {
   let out = getOrderedAtCommands(list);
-  _COPY_CMD_IDS.forEach(id => {
+  [..._COPY_CMD_IDS, EXTRA_DETAILED_CMD_ID].forEach(id => {
     const cmd = list.find(c => c.id === id);
     if (cmd && !out.some(c => c.id === id)) out = out.concat(cmd);
   });
@@ -934,14 +954,19 @@ function _makeAtSelectedX(id, label) {
 const AT_FORMAT_CHIP_INFO = {
   english: { short: 'EN', label: 'English only' },
   bengali: { short: 'BN', label: 'Bengali only' },
-  english_bengali: { short: 'EN/BN', label: 'English then Bengali' },
-  bengali_english: { short: 'BN/EN', label: 'Bengali then English' },
-  english_bengali_explain: { short: 'EN+বা', label: 'English + Bengali Explained' }
+  english_bengali: { short: 'EN/BN', label: 'অনুবাদ' },
+  bengali_english: { short: 'BN/EN', label: 'English' },
+  english_bengali_explain: { short: 'EN+বা', label: 'English + Bengali Explained' },
+  english_bengali_translate_explain: { short: 'EN/BN+বা', label: 'English + Translation + Bengali Explained' }
 };
+// Format ids whose value the older getActivePDFLanguageFormat() may not know: app.js keeps the real value.
+const _EXT_LANG_FORMAT_IDS = ['english_bengali_explain', 'english_bengali_translate_explain'];
 function _getCurrentLanguageFormatId() {
   // getActivePDFLanguageFormat() may not know the newest format id, so when it reports
   // 'default' fall back to app.js's durable preference (which does).
   let cur = typeof getActivePDFLanguageFormat === 'function' ? getActivePDFLanguageFormat() : 'default';
+  const _stateFmt = window.APP_STATE && window.APP_STATE.pdfLanguageFormat;
+  if (_EXT_LANG_FORMAT_IDS.includes(_stateFmt)) return _stateFmt;
   if ((!cur || cur === 'default') && typeof window._syncPDFLanguageFormatPreference === 'function') {
     try { cur = window._syncPDFLanguageFormatPreference() || 'default'; } catch (_) { /* keep */ }
   }
@@ -1475,16 +1500,17 @@ function renderAtCommandMenuList() {
     { id: 'default', label: 'Default', desc: 'Follow the language of your request' },
     { id: 'english', label: 'English only', desc: 'Write everything in English' },
     { id: 'bengali', label: 'Bengali only', desc: 'Write everything in Bengali' },
-    { id: 'english_bengali', label: 'English then Bengali', desc: 'English first, Bengali translation second' },
-    { id: 'bengali_english', label: 'Bengali then English', desc: 'Bengali first, English translation second' },
-    { id: 'english_bengali_explain', label: 'English + Bengali Explained', desc: 'English notes, plus detailed simple Bengali explanations only for hard or new concepts (not a translation)', swatchClass: 'english_bengali' }
+    { id: 'english_bengali', label: 'অনুবাদ', desc: 'English first, then its Bengali translation (in larger, comfortable blocks)' },
+    { id: 'bengali_english', label: 'English', desc: 'Bengali first, then its English translation (in larger, comfortable blocks)' },
+    { id: 'english_bengali_explain', label: 'English + Bengali Explained', desc: 'English notes, plus detailed simple Bengali explanations only for hard or new concepts (not a translation)', swatchClass: 'english_bengali' },
+    { id: 'english_bengali_translate_explain', label: 'English + Translation + Bengali Explained', desc: 'English first, then its Bengali translation (in larger blocks), then a detailed simple Bengali explanation for hard or new concepts', swatchClass: 'english_bengali' }
   ].forEach(f => {
     const row = document.createElement('div');
     row.className = 'at-format-item' + (currentLanguageFormat === f.id ? ' active' : '');
     row.onclick = () => { _applyLanguageFormatChoice(f.id); };
     const sw = document.createElement('span');
-    sw.className = 'at-language-swatch ' + (f.swatchClass || f.id);
-    sw.textContent = f.id === 'default' ? 'Aa' : f.id === 'english' ? 'EN' : f.id === 'bengali' ? 'BN' : f.id === 'english_bengali' ? 'EN/BN' : f.id === 'english_bengali_explain' ? 'EN+বা' : 'BN/EN';
+    sw.className = 'at-language-swatch ' + (f.swatchClass || f.id) + (f.id === 'english_bengali_translate_explain' ? ' at-sw-wide' : '');
+    sw.textContent = f.id === 'default' ? 'Aa' : f.id === 'english' ? 'EN' : f.id === 'bengali' ? 'BN' : f.id === 'english_bengali' ? 'EN/BN' : f.id === 'english_bengali_explain' ? 'EN+বা' : f.id === 'english_bengali_translate_explain' ? 'EN/BN+বা' : 'BN/EN';
     const info = document.createElement('span');
     info.className = 'at-cmd-text';
     const label = document.createElement('span');
@@ -1494,9 +1520,10 @@ function renderAtCommandMenuList() {
     desc.className = 'at-cmd-desc';
     desc.textContent = f.desc;
     info.append(label, desc);
-    if (f.id === 'english_bengali_explain') _applyBnDescSeeMore(info, desc);
+    const _hasBnExplain = _EXT_LANG_FORMAT_IDS.includes(f.id);
+    if (_hasBnExplain) _applyBnDescSeeMore(info, desc, f.id);
     row.append(sw, info);
-    if (f.id === 'english_bengali_explain') row.appendChild(_buildBnDensityButton());
+    if (_hasBnExplain) row.appendChild(_buildBnDensityButton());
     languageWrap.appendChild(row);
   });
   menu.appendChild(languageWrap);
@@ -1564,22 +1591,25 @@ function _ensureBnDensityStyle() {
     '.at-cmd-text.at-bn-info{flex:1 1 auto;min-width:0}' +
     '.at-cmd-desc.at-clamp{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:1;overflow:hidden}' +
     '.at-see-more{display:inline-block;margin-top:2px;padding:0;border:0;background:transparent;color:#4f7df3;font:inherit;font-size:11px;font-weight:700;cursor:pointer;-webkit-tap-highlight-color:transparent}' +
-    'html.dark .at-see-more{color:#93b4ff}';
+    'html.dark .at-see-more{color:#93b4ff}' +
+    '.at-language-swatch.at-sw-wide{font-size:9px;letter-spacing:0;white-space:nowrap}';
   document.head.appendChild(st);
 }
 
 // Long description of the "English + Bengali Explained" row: one line by default, "See more" opens it.
-let _bnDescOpen = false;
-function _applyBnDescSeeMore(info, desc) {
+const _bnDescOpenMap = {};
+function _applyBnDescSeeMore(info, desc, key) {
+  key = key || 'english_bengali_explain';
   _ensureBnDensityStyle();
   info.classList.add('at-bn-info');
   const more = document.createElement('button');
   more.type = 'button';
   more.className = 'at-see-more';
   const paint = () => {
-    desc.classList.toggle('at-clamp', !_bnDescOpen);
-    more.textContent = _bnDescOpen ? 'See less' : 'See more';
-    more.setAttribute('aria-expanded', _bnDescOpen ? 'true' : 'false');
+    const open = !!_bnDescOpenMap[key];
+    desc.classList.toggle('at-clamp', !open);
+    more.textContent = open ? 'See less' : 'See more';
+    more.setAttribute('aria-expanded', open ? 'true' : 'false');
   };
   const stop = e => { e.stopPropagation(); };
   more.addEventListener('mousedown', stop);
@@ -1587,7 +1617,7 @@ function _applyBnDescSeeMore(info, desc) {
   more.addEventListener('click', e => {
     e.stopPropagation();
     e.preventDefault();
-    _bnDescOpen = !_bnDescOpen;
+    _bnDescOpenMap[key] = !_bnDescOpenMap[key];
     paint();
   });
   paint();
@@ -1736,7 +1766,9 @@ function buildIntentPayload() {
 
   return {
     intent: resolvedIntent,
-    length: lengthCmd ? lengthCmd.id : null,
+    // "Extra Detailed" runs through the normal long-PDF flow (length:'long_pdf') with extraDetail:true on top.
+    length: lengthCmd ? (lengthCmd.id === EXTRA_DETAILED_CMD_ID ? 'long_pdf' : lengthCmd.id) : null,
+    extraDetail: !!(lengthCmd && lengthCmd.id === EXTRA_DETAILED_CMD_ID),
     pageTarget: pageTarget,
     language: (languageCmd && languageCmd.param) ? languageCmd.param : null,
     visual: visualCmd ? visualCmd.id : null,
@@ -1821,7 +1853,9 @@ function buildAtCommandInstructionText(intentPayload) {
     parts.push('REDESIGN SAFETY: Create a genuinely new visual design and replace the old figure with the new complete figure. Do not return a partial patch or preserve the old layout unchanged.');
   }
 
-  if (intentPayload.length === 'long_pdf') {
+  if (intentPayload.length === 'long_pdf' && intentPayload.extraDetail) {
+    parts.push('LENGTH: EXTRA DETAILED — go FAR beyond a normal Detailed/Long document (roughly two to three times the depth). For every concept give: a precise definition, the intuition and why it matters, full step-by-step derivations/proofs, several worked examples of increasing difficulty (easy, medium, hard) with complete solutions, special/edge cases, common mistakes and misconceptions, real-world applications, comparison tables, links to related topics, quick-revision boxes and practice exercises with answers. Break broad topics into finer sub-topics and develop each fully. Never pad, repeat or add irrelevant material: the extra length must come from genuine extra depth and coverage.');
+  } else if (intentPayload.length === 'long_pdf') {
     parts.push('LENGTH: LONG — produce a genuinely long, comprehensive document with full depth, detail and examples. Do not shorten or summarize.');
   } else if (intentPayload.length === 'short_pdf') {
     parts.push('LENGTH: SHORT — produce a compact document covering only essential concepts and examples. Avoid unnecessary elaboration.');
