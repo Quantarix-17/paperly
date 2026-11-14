@@ -152,8 +152,10 @@ function _extraDetailRule(p) {
   if (!_extraDetailOn(p)) return '';
   return ` ★★★ EXTRA DETAILED MODE — MANDATORY, STRICT, NON-NEGOTIABLE ★★★
 The user deliberately chose "Extra Detailed" in the command menu. This is the MOST detailed level the app has. It goes FAR beyond normal Detailed/Long: the output must be roughly THREE TIMES (3x) as deep and as long as a normal Detailed/Long document. A document that looks like an ordinary detailed document is a FAILURE of this instruction. These rules override every "standard length", "right-sized", "do not extend" or "keep it short" wording anywhere else in this prompt (including the standing Instruction).
+0. TARGET SIZE: this document must be clearly, visibly MUCH LONGER and deeper than a normal Detailed/Long one (at least double, ideally triple). Do NOT stop at a typical "detailed notes" length. The standing Instruction's "standard length / 4-8 pages" line and the "right-sized" rule do NOT apply in this mode.
 1. NEVER summarize, compress, skip, shorten or hurry. NEVER write a topic in one or two paragraphs. Every main topic must be broken into many fine sub-topics, and EVERY sub-topic must be written out in FULL (normally several paragraphs, not one).
-2. FOR EVERY CONCEPT / SUB-TOPIC you MUST include ALL of the following that apply: (a) a precise formal definition; (b) the intuition in plain words and why it matters; (c) the underlying reasoning — the "why", "how" and "when"; (d) complete step-by-step derivations/proofs with NO skipped steps; (e) AT LEAST 3 worked examples of increasing difficulty (easy → medium → hard), each fully solved line by line; (f) special cases, edge cases, limitations and exceptions; (g) common mistakes and misconceptions, with how to avoid them; (h) real-world applications and mini case studies; (i) comparison / contrast tables with similar or related concepts; (j) links to prerequisite and related topics; (k) memory aids / tricks; (l) a short "Quick Revision" box at the end of each major section; (m) practice exercises with complete answers.
+2. THEORY MUST BE DEEP: explain each theory part in several full paragraphs — what it is, why it is true, how it connects to earlier ideas, geometric/intuitive meaning, and what happens in special cases — never just a definition and a one-line comment. CALCULATIONS MUST BE BROKEN DOWN: never jump over an algebraic or numeric step; show every intermediate line.
+   FOR EVERY CONCEPT / SUB-TOPIC you MUST include ALL of the following that apply: (a) a precise formal definition; (b) the intuition in plain words and why it matters; (c) the underlying reasoning — the "why", "how" and "when"; (d) complete step-by-step derivations/proofs with NO skipped steps; (e) AT LEAST 4 worked MATH examples of increasing difficulty (easy → medium → hard → challenging) for each important concept, each fully solved line by line, and for every example state the given data, the plan, then every calculation broken into small separate steps (one operation per line, with the reason for the step) before the final answer and a quick check; (f) special cases, edge cases, limitations and exceptions; (g) common mistakes and misconceptions, with how to avoid them; (h) real-world applications and mini case studies; (i) comparison / contrast tables with similar or related concepts; (j) links to prerequisite and related topics; (k) memory aids / tricks; (l) a short "Quick Revision" box at the end of each major section; (m) a practice set with complete answers. In addition, END the whole document with a final section "Practice Problems" containing at least 10 graded problems (easy → hard) covering all main topics, followed by full step-by-step solutions/answers.
 3. COVERAGE: cover every relevant sub-topic, variation, type, classification, law, property, formula, exception and nuance inside the requested scope — leave NOTHING out. When unsure whether to include something relevant, INCLUDE it.
 4. DEPTH OVER BREVITY: prefer longer, fuller explanations, multi-paragraph treatment and more examples. Do not stop early, do not end with "and so on", do not say "similarly", do not refer the reader elsewhere — write it all out.
 5. The extra length must come ONLY from genuine extra depth and coverage — never from padding, repeating the same point, filler sentences or irrelevant material.
@@ -161,12 +163,37 @@ The user deliberately chose "Extra Detailed" in the command menu. This is the MO
 }
 
 
+
+// "Language: xx." must NOT contradict a selected Format (EN/BN, EN/BN+বা ...): with a format the LANGUAGE FORMAT section is the only language rule.
+function _languageLine(outputLanguage) {
+  try {
+    const f = (typeof _syncPDFLanguageFormatPreference === 'function') ? _syncPDFLanguageFormatPreference() : 'default';
+    if (f && f !== 'default') return 'Language: follow the LANGUAGE FORMAT section exactly (the user picked a bilingual/format option; ignore any other single-language instruction).';
+  } catch (_) {}
+  return 'Language: ' + outputLanguage + '.';
+}
+window._languageLine = _languageLine;
+
+
+// In Extra Detailed mode the model may NOT answer "complete" early: every round must add a specific kind of depth.
+function _extraExpansionFocus(round) {
+  if (!_extraDetailOn()) return '';
+  const foci = [
+    'deeper THEORY: more intuition, reasoning, proofs and special cases for every concept already introduced',
+    'MORE WORKED MATH EXAMPLES (easy → hard) with every calculation broken into small separate steps',
+    'sub-topics, variations, theorems, properties and edge cases that are still missing',
+    'common mistakes, comparisons, applications and a Quick Revision box per major section',
+    'a final "Practice Problems" section: at least 10 graded problems followed by complete step-by-step solutions'
+  ];
+  return `\\n★ EXTRA DETAILED EXPANSION — round ${round}: you are NOT allowed to answer "complete" or [[DOCUMENT_COMPLETE]] while rounds remain. Add at least ~1500 words of NEW material focused on: ${foci[(round - 1) % foci.length]}. Never repeat what already exists. Keep every calculation broken into small steps.`;
+}
+
 // Final, last-in-prompt reminders (models follow the END of a long prompt most strongly).
 function _bnOrderFinalReminder() {
   try {
     const f = (typeof _syncPDFLanguageFormatPreference === 'function') ? _syncPDFLanguageFormatPreference() : 'default';
     if (f !== 'english_bengali_translate_explain') return '';
-    return `\n=== FINAL ORDER CHECK (MANDATORY) ===\nLanguage format EN/BN+বা: in EVERY chunk the order is exactly (1) English content, (2) its Bengali translation, (3) the বাংলা ব্যাখ্যা block(s). Never start with Bengali. Never put a বাংলা ব্যাখ্যা before the English or before the translation. This is true even though the user's message may be in Bengali.\n`;
+    return `\n=== FINAL ORDER CHECK (MANDATORY) ===\nLanguage format EN/BN+বা: in EVERY chunk the order is exactly (1) English content, (2) its full Bengali translation starting with <b>বাংলা অনুবাদ:</b> (NEVER skip it), (3) the বাংলা ব্যাখ্যা block(s). Never start with Bengali. Never put a বাংলা ব্যাখ্যা before the English or before the translation, and never replace the translation by an explanation. True even if the user's message is in Bengali.\n`;
   } catch (_) { return ''; }
 }
 // Title / numbering rule for every document that is generated.
@@ -1557,7 +1584,8 @@ ${_bnExplainCoreRules('placed right after the English concept it explains')}
       (1) FIRST — the English content (the normal, full content);
       (2) SECOND — right after it, the Bengali TRANSLATION of that same chunk;
       (3) THIRD (LAST) — right after the translation, the Bengali EXPLANATION block(s) (বাংলা ব্যাখ্যা) for the hard or new concepts that appeared in that chunk.
-    STRICT ORDER (NEVER BREAK): English → Bengali translation → বাংলা ব্যাখ্যা. The বাংলা ব্যাখ্যা block must NEVER come first and must NEVER come before the English or before the translation; Bengali text must never be the first thing in a chunk or a section. Every section and sub-topic starts with English. This is the same for a NEW document, a long/sectioned document, an expansion or a continuation — the order is identical everywhere, whatever language the user's own message is written in, and even if the 'Language' line or the callout labels are in Bengali.
+    THE BENGALI TRANSLATION IS MANDATORY. The বাংলা ব্যাখ্যা does NOT replace it. Every English chunk MUST be followed by its own complete Bengali translation, written as ordinary Bengali paragraphs whose first paragraph starts with <b>বাংলা অনুবাদ:</b> — a document where English is followed directly by a বাংলা ব্যাখ্যা without the translation in between is WRONG. The translation renders ALL ordinary text of the chunk faithfully (definitions, explanations, list items, table content, example statements); only calculations/equations stay untranslated, exactly once, in the English part. The explanation is a separate, additional step after the translation.
+    STRICT ORDER (NEVER BREAK): English → Bengali translation (বাংলা অনুবাদ) → বাংলা ব্যাখ্যা. The বাংলা ব্যাখ্যা block must NEVER come first and must NEVER come before the English or before the translation; Bengali text must never be the first thing in a chunk or a section. Every section and sub-topic starts with English. This is the same for a NEW document, a long/sectioned document, an expansion or a continuation — the order is identical everywhere, whatever language the user's own message is written in, and even if the 'Language' line or the callout labels are in Bengali.
     The translation (step 2) and the explanation (step 3) are DIFFERENT things: the translation renders the English faithfully in Bengali; the explanation is NOT a translation — it re-teaches the concept in simple spoken-style Bengali.
 ${_BN_TRANSLATION_GROUPING_RULE}
     The explanation blocks follow these rules (where they say "placed right after the English concept it explains", place them right after the Bengali translation of the chunk that contains the concept instead, and keep them separate from the translation):
@@ -1829,7 +1857,10 @@ function buildSharedRules(isMonochromeMode, outputLanguage, options) {
     Every backslash inside a JSON string value must be doubled (\\\\) so it stays valid JSON — this applies to EVERY LaTeX command without exception: \\frac → \\\\frac, \\left → \\\\left, \\right → \\\\right, \\times → \\\\times, \\text → \\\\text, etc. Before finalizing your JSON output, mentally re-verify that no single unescaped backslash remains inside any string value.
   `;
 
-  const detailInstruction = `
+  const detailInstruction = _extraDetailOn() ? `
+    === DOCUMENT LENGTH AND DEPTH: EXTRA DETAILED (OVERRIDES ANY "STANDARD LENGTH" / "RIGHT-SIZED" / "4-8 PAGES" RULE, INCLUDING THE STANDING INSTRUCTION) ===
+    The user chose Extra Detailed. Ignore every instruction that asks for a standard, short, compact or right-sized length. Write a very long, very deep document as defined in the EXTRA DETAILED MODE rules. Never stop early.${_extraDetailRule()}
+  ` : `
     === DOCUMENT LENGTH AND DEPTH: RIGHT-SIZED, COMPLETE, NEVER TRUNCATED ===
     Make the document exactly as long as the request needs: NO extending and NO shortening. Aim for a STANDARD level of length.
     - Cover every part, concept, formula, example, table and useful visual (charts and illustrations only — never diagrams) that the request, and any attached source, genuinely needs, explained clearly and completely. Never leave out something the request needs, and never stop before the document is finished.
@@ -1864,9 +1895,12 @@ function buildSharedRules(isMonochromeMode, outputLanguage, options) {
 
   const simpleByDefaultInstruction = (_standingInstruction && !_skipStandingInstruction) ? buildStandingInstructionBlock(_standingInstruction) : '';
 
+  const _extraStandingOverride = _extraDetailOn() ? `
+    NOTE ON THE STANDING INSTRUCTION: its length wording (standard length, 4-8 pages, keep it short) is OVERRIDDEN by EXTRA DETAILED mode. Its simple-language style still applies, but never at the cost of depth, number of examples or calculation detail.
+  ` : '';
   return `
     ${detailInstruction}
-    ${simpleByDefaultInstruction}
+    ${simpleByDefaultInstruction}${_extraStandingOverride}
     === CORE PHILOSOPHY: RIGHT-SIZED COMPLETENESS ===
     Accuracy > Padding | Completeness of what is needed > Extra length | Clarity > Compression.
     Default behavior: UNDERSTAND → EXTRACT → PRESERVE → ORGANIZE → EXPLAIN.
@@ -2342,7 +2376,7 @@ async function generateTopicPlan(promptText, fileContextString, isMonochromeMode
     `{"doc_title":"title","depth":"compact|standard|detailed|very_detailed","use_sections":true|false,"estimated_pages":number,"estimated_output_tokens":number,"sections":[{"title":"...","needed":true,"estimated_pages":number,"target_depth":"normal|deep|very_deep","visual":"diagram|table|example|formula|none"}],"reason":"very short reason"}\n` +
     `For sectioned DEFAULT documents use roughly ${APP_CONFIG.STEP_MODE_STANDARD_MIN_SECTIONS}-${APP_CONFIG.STEP_MODE_STANDARD_MAX_SECTIONS} meaningful sections. For LONG use at least ${_longPdfMinSections()} meaningful sections whenever the subject supports them, and more if the subject genuinely has more distinct sub-areas — do not collapse a broad/comprehensive request into a handful of generic sections. Each long section's estimated_pages should reflect how much real depth (derivations, multiple worked math examples, applications) that specific section needs — do not default every section to the same small number. For single-shot documents, sections must be [].\n` +
     `CLARIFYING QUESTION — DEFAULT TO ASKING: asking is your default action, not planning. Before you plan, ask ONE short clarifying question with tick-style options whenever audience/level, depth or length, tone, scope, or which angle/sub-topics to cover could reasonably go more than one way — this is true for almost every request, including short or single-line topics. Only plan directly on the rare request that already pins ALL of these down explicitly enough that no other reasonable document could result; treat that as a high bar, not a low one. When genuinely unsure whether to ask, ask. Return ONLY this JSON object instead of the plan shape above: {\"action\":\"clarify\",\"question\":\"one short specific question\",\"options\":[\"short option A\",\"short option B\",\"short option C\"]} (\"options\" is 2 to 5 short concrete phrases, not full sentences; do not add a \"write my own\"/\"other\" option, the app adds one automatically). Never ask more than one question per turn. If the message already resolves the ambiguity (including a prior clarifying question's answer folded into it), plan the document directly instead.\n` +
-    `Language: ${outputLanguage}.`;
+    `${_languageLine(outputLanguage)}`;
 
   const _planAnswered = !!(intentPayload && intentPayload._clarificationAlreadyAnswered);
   const _planSystemPrompt = _planAnswered
@@ -2612,7 +2646,7 @@ async function expandLongDocumentUntilMinimumPages(promptText, modelsUsedSet, mi
   // document is complete, when growth stalls for a couple of rounds in a row
   // (a sign the topic is exhausted), or when the safety ceiling is hit.
   if (!intentPayloadForGeneration || intentPayloadForGeneration.length !== 'long_pdf') return true;
-  const maxLowGrowthRounds = APP_CONFIG.LONG_EXPANSION_MAX_LOW_GROWTH_ROUNDS || 2;
+  const maxLowGrowthRounds = (APP_CONFIG.LONG_EXPANSION_MAX_LOW_GROWTH_ROUNDS || 2) + (_extraDetailOn() ? 2 : 0);
   let lowGrowthStreak = 0;
 
   for (let round = 1; round <= maxRounds; round++) {
@@ -2630,7 +2664,7 @@ async function expandLongDocumentUntilMinimumPages(promptText, modelsUsedSet, mi
       `\n\nLONG-PDF DEPTH EXPANSION MODE: There is NO fixed page target and NO page ceiling to chase. Carefully judge, purely on merit, whether this exact topic still has real, non-repetitive depth worth adding: missing subtopics, deeper derivations, additional worked/solved math examples, applications, comparisons, common mistakes, useful tables/diagrams, or exercises. ` +
       `If genuine depth remains, add it now — do not hold back or artificially cap length. If the document already covers the topic thoroughly and anything more would just be padding or repetition, do NOT invent filler; instead return an empty html_content and set complete to true. ` +
       `Return ONLY JSON: {"html_content":"<HTML to append, or an empty string if the document is already complete>","complete":true|false}`;
-    const messages = [{ role: 'system', content: system }, { role: 'user', content: `Original request:\n${promptText}\n\nAPPROVED OUTLINE:\n${outlineContext}\n\nCURRENT DOCUMENT (append only; do not repeat it):\n${currentHTML.slice(-12000)}` }];
+    const messages = [{ role: 'system', content: system + _extraExpansionFocus(round) + _bnOrderFinalReminder() }, { role: 'user', content: `Original request:\n${promptText}\n\nAPPROVED OUTLINE:\n${outlineContext}\n\nCURRENT DOCUMENT (append only; do not repeat it):\n${currentHTML.slice(-12000)}` }];
     try {
       const result = await callAIAPI(messages, { forceJson: true, modelsUsedSet, maxTokens: undefined });
       let parsed = safeParseAIJson(result.content, null);
@@ -2641,7 +2675,7 @@ async function expandLongDocumentUntilMinimumPages(promptText, modelsUsedSet, mi
       if (!html || html.length < 300) {
         // Nothing substantive came back — either the model explicitly says the
         // document is done, or this round just under-delivered.
-        if (modelSaysComplete) return true;
+        if (modelSaysComplete && !_extraDetailOn()) return true;
         lowGrowthStreak++;
         if (lowGrowthStreak >= maxLowGrowthRounds) return true;
         continue;
@@ -2880,7 +2914,7 @@ async function generateDefaultPDFDirectMode(promptText, fileContextString, isMon
       if (!pdfOutlineApproved && !intentPayload?._clarificationAlreadyAnswered) {
         const decisionSystemPrompt =
           `You are the dedicated DEFAULT PDF document generator for AI PDF Studio, currently deciding ONLY whether to ask a clarifying question before writing anything. Do NOT write any document content in this response.\\n` +
-          `Language: ${outputLanguage}.\\n` +
+          `${_languageLine(outputLanguage)}\\n` +
           `CLARIFYING QUESTION — DEFAULT TO ASKING: asking is your default action, not writing. Ask ONE short clarifying question with tick-style options whenever audience/level, depth or length, tone, scope, or which angle/sub-topics to cover could reasonably go more than one way — this is true for almost every request, including short or single-line topics. Only skip the question on the rare request that already pins ALL of these down explicitly enough that no other reasonable document could result; treat that as a high bar, not a low one. When genuinely unsure whether to ask, ask.\\n` +
           `Respond with ONLY one of these two JSON objects, nothing else:\\n` +
           `1. {"action":"clarify","question":"one short specific question","options":["short option A","short option B","short option C"]} ("options" is 2 to 5 short concrete phrases, not full sentences; do not add a "write my own"/"other" option, the app adds one automatically).\\n` +
@@ -2933,7 +2967,7 @@ async function generateDefaultPDFDirectMode(promptText, fileContextString, isMon
     const writingSystemPrompt =
       `You are the dedicated DEFAULT PDF document generator for AI PDF Studio.\n` +
       `Return ONLY the complete document content as raw HTML. Do NOT return JSON, markdown fences, chat commentary, an outline-only response, or an action wrapper. Do not ask any clarifying question — that decision has already been made; write the complete document now.\n` +
-      `Language: ${outputLanguage}.\n` +
+      `${_languageLine(outputLanguage)}\n` +
       `${buildSharedRules(isMonochromeMode, outputLanguage)}\n` +
       `${typeof buildAtCommandInstructionText === 'function' ? buildAtCommandInstructionText({ intent: 'create_pdf', length: null, language: outputLanguage, sectionMode: false, visual: (intentPayload && intentPayload.visual) || null }) : ''}\n` +      (pdfOutlineApproved ? `APPROVED PDF OUTLINE — follow this structure exactly and cover EVERY section and point in the final document:\n${_formatPDFOutlineForPrompt(intentPayload.pdfOutline)}\n` : '') +
       `DEFAULT DIRECT RULES: create the complete requested document in one continuous generation flow at a STANDARD length — follow the DOCUMENT LENGTH AND DEPTH rule and the standing Instruction's length rule. Do not extend it with extra topics, repetition or filler, and do not shorten it by dropping what the request needs. Go long only if the user explicitly asked for a detailed, comprehensive or long document. Use natural headings, definitions, explanations, formulas, worked examples, tables and useful visuals where they materially improve the document.\n` +
@@ -3058,8 +3092,8 @@ async function generateExplicitLengthPDFDirectMode(promptText, fileContextString
   // No fixed page floor for LONG anymore — depth decides length. Kept only for SHORT
   // (which is intentionally meant to be compact) and for progress-UI text/labels below.
   const minPages = isLong ? _longPdfMinPages() : 2;
-  const maxExpansionRounds = Math.max(3, _longExpansionMaxRounds() || 0);
-  const maxLowGrowthRounds = APP_CONFIG.LONG_EXPANSION_MAX_LOW_GROWTH_ROUNDS || 2;
+  const maxExpansionRounds = Math.max(_extraDetailOn(intentPayload) ? 5 : 3, _longExpansionMaxRounds() || 0);
+  const maxLowGrowthRounds = (APP_CONFIG.LONG_EXPANSION_MAX_LOW_GROWTH_ROUNDS || 2) + (_extraDetailOn() ? 2 : 0);
   const outputLanguage = intentPayload?.language || intentPayload?.conversationLanguage || detectOutputLanguage(promptText);
   const modeLabel = isLong ? 'LONG' : 'SHORT';
 
@@ -3104,7 +3138,7 @@ async function generateExplicitLengthPDFDirectMode(promptText, fileContextString
     if (!pdfOutlineApproved && !intentPayload?._clarificationAlreadyAnswered) {
       const decisionSystemPrompt =
     `You are the dedicated ${modeLabel} PDF document generator for AI PDF Studio, currently deciding ONLY whether to ask a clarifying question before writing anything. Do NOT write any document content in this response.\n` +
-    `Language: ${outputLanguage}.\n` +
+    `${_languageLine(outputLanguage)}\n` +
     `CLARIFYING QUESTION — DEFAULT TO ASKING: asking is your default action, not writing. Ask ONE short clarifying question with tick-style options whenever audience/level, depth or length, tone, scope, or which angle/sub-topics to cover could reasonably go more than one way — this is true for almost every request, including short or single-line topics. Only skip the question on the rare request that already pins ALL of these down explicitly enough that no other reasonable document could result; treat that as a high bar, not a low one. When genuinely unsure whether to ask, ask.\n` +
     `Respond with ONLY one of these two JSON objects, nothing else:\n` +
     `1. {"action":"clarify","question":"one short specific question","options":["short option A","short option B","short option C"]} ("options" is 2 to 5 short concrete phrases, not full sentences; do not add a "write my own"/"other" option, the app adds one automatically).\n` +
@@ -3143,7 +3177,7 @@ async function generateExplicitLengthPDFDirectMode(promptText, fileContextString
     const writingSystemPrompt =
       `You are the dedicated ${modeLabel} PDF document generator for AI PDF Studio.\n` +
       `Return ONLY the complete document content as raw HTML. Do NOT return JSON, markdown fences, chat commentary, an outline-only response, or an action wrapper. Do not ask any clarifying question — that decision has already been made; write the complete document now.\n` +
-      `Language: ${outputLanguage}.\n` +
+      `${_languageLine(outputLanguage)}\n` +
       `${buildSharedRules(isMonochromeMode, outputLanguage)}\n` +
       `${typeof buildAtCommandInstructionText === 'function' ? buildAtCommandInstructionText({ intent: 'create_pdf', length: isLong ? 'long_pdf' : 'short_pdf', extraDetail: !!(isLong && _extraDetailOn(intentPayload)), language: outputLanguage, sectionMode: false, visual: (intentPayload && intentPayload.visual) || null }) : ''}\n` +      (pdfOutlineApproved ? `APPROVED PDF OUTLINE — follow this structure exactly and cover EVERY section and point in the final document:\n${_formatPDFOutlineForPrompt(intentPayload.pdfOutline)}\n` : '') +
       (isLong ? `LONG DIRECT RULES: write a genuinely comprehensive document. There is NO fixed page target — cover the full requested scope with definitions, concepts, formulas, properties, derivations, multiple worked/solved math examples per concept, applications, comparisons, common mistakes, summaries and useful tables/diagrams where appropriate. Let the true length be however many A4 pages this topic's real depth requires. Never pad with repetition, and never cut a topic short just to save space.${_extraDetailRule(intentPayload)}\n` : `SHORT DIRECT RULES: produce a compact but complete document, normally about 2–5 A4 pages. Preserve the essential concepts, key formulas/facts, representative examples and a concise summary. Do not return only a title or outline.\n`) +
@@ -3191,7 +3225,7 @@ async function generateExplicitLengthPDFDirectMode(promptText, fileContextString
         }
         try {
           const expansion = await callAIAPI([
-            { role: 'system', content: writingSystemPrompt + `\nDEPTH EXPANSION MODE: There is NO fixed page target and NO ceiling to chase. Judge purely on merit whether this exact topic still has real, non-repetitive depth left to add — missing subtopics, deeper derivations, more worked/solved math examples, applications, comparisons, exercises or useful visuals. If genuine depth remains, return ONLY that additional HTML content (nothing else). If the document is already thorough and anything more would be padding or repetition, return exactly the text [[DOCUMENT_COMPLETE]] and nothing else. Do not repeat existing material.` },
+            { role: 'system', content: writingSystemPrompt + `\nDEPTH EXPANSION MODE: There is NO fixed page target and NO ceiling to chase. Judge purely on merit whether this exact topic still has real, non-repetitive depth left to add — missing subtopics, deeper derivations, more worked/solved math examples, applications, comparisons, exercises or useful visuals. If genuine depth remains, return ONLY that additional HTML content (nothing else). If the document is already thorough and anything more would be padding or repetition, return exactly the text [[DOCUMENT_COMPLETE]] and nothing else. Do not repeat existing material.${_extraExpansionFocus(round)}${_bnOrderFinalReminder()}` },
             { role: 'user', content: `Original request: ${promptText}\n\nCurrent document tail:\n${typeof getAllCanvasHTML === 'function' ? getAllCanvasHTML().slice(-10000) : ''}\n\nAdd substantive new content only if the topic genuinely supports more, otherwise reply [[DOCUMENT_COMPLETE]].` }
           ], {
             forceJson: false,
@@ -3245,8 +3279,8 @@ async function generateLongPDFDirectMode(promptText, fileContextString, isMonoch
   // Kept only as a legacy/progress-label reference — expansion below is no longer
   // gated on reaching this number; it keeps going while genuine depth remains.
   const minPages = _longPdfMinPages();
-  const maxRounds = Math.max(3, _longExpansionMaxRounds() || 0);
-  const maxLowGrowthRounds = APP_CONFIG.LONG_EXPANSION_MAX_LOW_GROWTH_ROUNDS || 2;
+  const maxRounds = Math.max(_extraDetailOn() ? 5 : 3, _longExpansionMaxRounds() || 0);
+  const maxLowGrowthRounds = (APP_CONFIG.LONG_EXPANSION_MAX_LOW_GROWTH_ROUNDS || 2) + (_extraDetailOn() ? 2 : 0);
   const activeCfg = getActiveAIModel();
   const outputLanguage = detectOutputLanguage(promptText);
   const keepExisting = !isEmptyCanvas && !isReplaceIntent;
@@ -3346,7 +3380,7 @@ async function generateLongPDFDirectMode(promptText, fileContextString, isMonoch
         `Do not repeat existing content. Add missing explanations, derivations, more worked/solved math examples, applications, comparisons, exercises, tables and useful visuals that naturally complete the user's request, ONLY if genuinely warranted.\n` +
         `If the document is already thorough and anything more would be padding or repetition, respond with EXACTLY the text [[DOCUMENT_COMPLETE]] and nothing else.\n` +
         `Otherwise return ONLY the HTML fragment to append. No JSON, no markdown fences, no commentary.\n` +
-        `USER REQUEST:\n${promptText}`;
+        `USER REQUEST:\n${promptText}` + _extraExpansionFocus(round) + _bnOrderFinalReminder();
       const continuationUser = `CURRENT DOCUMENT TAIL:\n${currentHTML.slice(-18000)}\n\nAPPEND NEW CONTENT ONLY if the topic genuinely supports more; otherwise reply [[DOCUMENT_COMPLETE]]. Do not restart the document or write a title again.`;
       let continuationResult;
       try {
