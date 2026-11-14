@@ -42,7 +42,7 @@ window.APP_STATE = APP_STATE;
 // intentionally independent from the user's chat text: typed clarification
 // answers must never switch the document language by accident.
 const PDF_LANGUAGE_FORMAT_STORAGE_KEY = 'aiPdfStudio.languageFormat.v1';
-const PDF_LANGUAGE_FORMAT_VALUES = ['default', 'english', 'bengali', 'english_bengali', 'bengali_english', 'english_bengali_explain'];
+const PDF_LANGUAGE_FORMAT_VALUES = ['default', 'english', 'bengali', 'english_bengali', 'bengali_english', 'english_bengali_explain', 'english_bengali_translate_explain'];
 
 function _normalizePDFLanguageFormat(value) {
   const v = String(value == null ? '' : value).trim().toLowerCase()
@@ -52,6 +52,7 @@ function _normalizePDFLanguageFormat(value) {
   if (['en', 'eng', 'english', 'english_only'].includes(v)) return 'english';
   if (['en_bn', 'english_bn', 'english_bengali', 'english_then_bengali', 'english_first_bengali', 'en_bengali'].includes(v)) return 'english_bengali';
   if (['bn_en', 'bengali_english', 'bengali_then_english', 'bengali_first_english', 'bn_english'].includes(v)) return 'bengali_english';
+  if (['en_bn_translate_explain', 'english_translation_explain', 'english_translate_explain', 'english_bengali_translation_explain', 'en_bn_plus_explain'].includes(v)) return 'english_bengali_translate_explain';
   if (['en_bn_explain', 'english_bengali_explained', 'english_bengali_overview', 'bilingual_explain', 'bilingual_explained', 'bengali_explained', 'bengali_overview'].includes(v)) return 'english_bengali_explain';
   return PDF_LANGUAGE_FORMAT_VALUES.includes(v) ? v : 'default';
 }
@@ -125,6 +126,31 @@ function _bnExplainDensityInstruction(level) {
        Add the MAXIMUM amount of Bengali explanation. Give a Bengali explanation for nearly every concept-bearing part of the document: each definition, each new or technical term, each principle/law/theory/model, each mechanism or process, each classification or comparison, each subtle difference, and the meaning of each formula, table or figure. Treat every sub-topic that introduces an idea as needing one. Explanations may be shorter per item so that coverage is broad, but they must still add real understanding (what it means, why it matters, a tiny example when useful).
        The exclusions in rule 2 still apply fully (math problems, numericals, worked solutions, exercises, MCQs, Q&A, plain lists of facts, headings, intro/transition lines, and terms already explained earlier). Never repeat a term, never translate sentence by sentence, never pad with filler.`;
   return '';
+}
+
+
+// ===== "EXTRA DETAILED" (PDF) =====
+// The menu maps @Extra Detailed to length:'long_pdf' + extraDetail:true, so every long-PDF flow keeps working.
+// The flag is mirrored into APP_STATE.extraDetailActive on every send so flows that have no payload in scope
+// (the direct long writer, the expansion loop) can still see it. Extra Detailed simply gets bigger limits
+// and stronger depth rules; the real length is still decided by how much genuine depth the topic supports.
+function _extraDetailOn(p) {
+  try { return !!((p && p.extraDetail) || (typeof APP_STATE !== 'undefined' && APP_STATE && APP_STATE.extraDetailActive)); }
+  catch (_) { return false; }
+}
+function _scaleForExtra(base, factor) {
+  const n = Number(base);
+  if (!isFinite(n)) return base;
+  return _extraDetailOn() ? Math.ceil(n * factor) : n;
+}
+function _longPdfMaxPagesHard() { return _scaleForExtra(APP_CONFIG.LONG_PDF_MAX_PAGES_HARD, 1.6); }
+function _longPdfMaxSections() { return _scaleForExtra(APP_CONFIG.LONG_PDF_MAX_SECTIONS, 1.5); }
+function _longPdfMinSections() { return _scaleForExtra(APP_CONFIG.LONG_PDF_MIN_SECTIONS, 1.5); }
+function _longPdfMinPages() { return _scaleForExtra(APP_CONFIG.LONG_PDF_MIN_PAGES, 1.5); }
+function _longExpansionMaxRounds() { return _scaleForExtra(APP_CONFIG.LONG_EXPANSION_MAX_ROUNDS, 1.5); }
+function _extraDetailRule(p) {
+  if (!_extraDetailOn(p)) return '';
+  return ` EXTRA DETAILED MODE (the user chose "Extra Detailed", which goes FAR beyond normal Detailed/Long — aim for roughly two to three times the usual depth): for every concept give a precise definition, the intuition and why it matters, full step-by-step derivations/proofs, several worked examples of increasing difficulty (easy, medium, hard) each with a complete solution, special and edge cases, common mistakes and misconceptions with how to avoid them, real-world applications, comparison/contrast tables, links to related topics, memory aids, a quick-revision box and practice exercises with answers. Split broad topics into finer sub-topics and develop each one fully; cover every relevant sub-topic and nuance inside the requested scope. The extra length must come only from genuine extra depth and coverage — never pad, repeat or add irrelevant material.`;
 }
 
 function _languageCodeToPDFFormat(value) {
@@ -1435,20 +1461,10 @@ function getActiveStandingInstructionBlock() {
 }
 window.getActiveStandingInstructionBlock = getActiveStandingInstructionBlock;
 
-function _buildLanguageFormatInstruction(languageFormat) {
-  return languageFormat === 'english' ? `
-    === LANGUAGE FORMAT (MANDATORY — OVERRIDES EVERYTHING ELSE ABOUT LANGUAGE) ===
-    The user has explicitly selected "English only" from the format menu. Write the ENTIRE document in English only, no matter what language the user's own message/prompt is written in. Do not add Bengali translations or any Bengali text.
-  ` : languageFormat === 'bengali' ? `
-    === LANGUAGE FORMAT (MANDATORY — OVERRIDES EVERYTHING ELSE ABOUT LANGUAGE) ===
-    The user has explicitly selected "Bengali only" from the format menu. Write the ENTIRE document in Bengali (বাংলা) only, no matter what language the user's own message/prompt is written in. Do not add English translations or any English text (keep standard mathematical/scientific notation, symbols and proper nouns as-is).
-  ` : languageFormat === 'english_bengali' ? `
-    === LANGUAGE FORMAT (MANDATORY — OVERRIDES EVERYTHING ELSE ABOUT LANGUAGE) ===
-    The user has explicitly selected "English then Bengali" from the format menu. This applies no matter what language the user's own message/prompt is written in. Present the document bilingually: write each section in English first, followed immediately by its Bengali translation. Keep the same structure and meaning in both languages.
-  ` : languageFormat === 'english_bengali_explain' ? `
-    === LANGUAGE FORMAT (MANDATORY — OVERRIDES EVERYTHING ELSE ABOUT LANGUAGE) ===
-    The user has explicitly selected "English + Bengali Explained" from the format menu. This applies no matter what language the user's own message/prompt is written in. The document itself is written in English (the normal, full content). On top of that, you add SELECTIVE Bengali concept explanations — the Bengali part is NOT a translation and NOT a summary of every section.
 
+// Shared Bengali-explanation rules (used by "English + Bengali Explained" and "English + Translation + Bengali Explained").
+function _bnExplainCoreRules(placement) {
+  return `
     1. WHERE TO ADD A BENGALI EXPLANATION — for CONCEPT parts that a learner would find hard, new or even slightly tricky, judged from the notes/source material (a beginner reading these notes should not be left puzzled by any key idea):
        - new or technical terms, definitions and key concepts that are central to the topic (include moderately difficult ones too, not only the hardest);
        - abstract ideas, theories, principles, laws, models, mechanisms, processes and "how/why it works" parts;
@@ -1461,7 +1477,7 @@ function _buildLanguageFormatInstruction(languageFormat) {
        - math problems, numericals, worked solutions, step-by-step calculations, exercises, MCQs, Q&A and any similar problem-solving content — never attach a Bengali explanation to these;
        - a term that was already explained in Bengali earlier in this document (never repeat).
        When a part is clearly easy, leave it out. When it is borderline (a beginner might or might not follow it), lean towards adding a short explanation. Still, the explanations must stay selective and meaningful: never put one under every section, and never explain something just to fill space. Aim for a gentle, steady presence of explanations across the document wherever a real concept appears, rather than just a few isolated ones.
-    3. HOW TO WRITE EACH EXPLANATION — use <div class="block-accent block-accent-blue"><b>বাংলা ব্যাখ্যা:</b> ...</div>, placed right after the English concept it explains. Make it detailed and genuinely clear (not a thin 1–2 line gloss), in simple spoken-style Bengali, as if teaching a beginner, covering as needed:
+    3. HOW TO WRITE EACH EXPLANATION — use <div class="block-accent block-accent-blue"><b>বাংলা ব্যাখ্যা:</b> ...</div>, ${placement}. Make it detailed and genuinely clear (not a thin 1–2 line gloss), in simple spoken-style Bengali, as if teaching a beginner, covering as needed:
        - what the concept actually means, in plain words;
        - why it exists / why it matters / how it works, step by step if it is a process;
        - one small everyday example or analogy that makes the idea click;
@@ -1469,9 +1485,41 @@ function _buildLanguageFormatInstruction(languageFormat) {
        Length follows difficulty: a moderately hard term needs a short paragraph; a core, tricky concept can take a longer one (use a short <ul> if it has steps/parts). Never pad with filler, repetition of the English, or obvious statements just to make it longer.
     4. NEVER translate the English sentence by sentence or word by word. Re-explain the idea in your own simple words and add understanding the English alone does not give.
     5. Keep technical terms, symbols, formulas and proper nouns in English (or write them in brackets after the Bengali word) so the learner connects both languages. Avoid heavy/literary Bengali — prefer everyday spoken-style words.${_bnExplainDensityInstruction(getBnExplainDensity())}
+  `;
+}
+
+// Translation blocks must be BIG and calm: one translation per larger chunk, never after every sentence.
+const _BN_TRANSLATION_GROUPING_RULE = `
+    TRANSLATION GROUPING (important for a professional, comfortable-to-read page): do NOT translate after every sentence, bullet or short paragraph — that makes the page cramped and choppy. First write a LARGER run of the original-language content (a complete sub-topic, or a group of several related paragraphs: the definition, its explanation and its example together). Only then give ONE continuous translation of that whole run. As a guide: one translation block per sub-heading or per roughly page-worth of text, and never more than one translation block within a few consecutive paragraphs. A list or table is translated once, after the whole list/table, not item by item. Formulas, equations, worked calculations, code and diagrams are NOT repeated in the translation (write them once; refer to them in words if needed). Keep clear, uncluttered separation between the original block and its translation so the page looks professional and is easy on the eyes.`;
+
+function _buildLanguageFormatInstruction(languageFormat) {
+  return languageFormat === 'english' ? `
+    === LANGUAGE FORMAT (MANDATORY — OVERRIDES EVERYTHING ELSE ABOUT LANGUAGE) ===
+    The user has explicitly selected "English only" from the format menu. Write the ENTIRE document in English only, no matter what language the user's own message/prompt is written in. Do not add Bengali translations or any Bengali text.
+  ` : languageFormat === 'bengali' ? `
+    === LANGUAGE FORMAT (MANDATORY — OVERRIDES EVERYTHING ELSE ABOUT LANGUAGE) ===
+    The user has explicitly selected "Bengali only" from the format menu. Write the ENTIRE document in Bengali (বাংলা) only, no matter what language the user's own message/prompt is written in. Do not add English translations or any English text (keep standard mathematical/scientific notation, symbols and proper nouns as-is).
+  ` : languageFormat === 'english_bengali' ? `
+    === LANGUAGE FORMAT (MANDATORY — OVERRIDES EVERYTHING ELSE ABOUT LANGUAGE) ===
+    The user has explicitly selected "English then Bengali" from the format menu. This applies no matter what language the user's own message/prompt is written in. Present the document bilingually: write the content in English first, followed by its Bengali translation. Keep the same structure and meaning in both languages.${_BN_TRANSLATION_GROUPING_RULE}
+  ` : languageFormat === 'english_bengali_explain' ? `
+    === LANGUAGE FORMAT (MANDATORY — OVERRIDES EVERYTHING ELSE ABOUT LANGUAGE) ===
+    The user has explicitly selected "English + Bengali Explained" from the format menu. This applies no matter what language the user's own message/prompt is written in. The document itself is written in English (the normal, full content). On top of that, you add SELECTIVE Bengali concept explanations — the Bengali part is NOT a translation and NOT a summary of every section.
+
+${_bnExplainCoreRules('placed right after the English concept it explains')}
+  ` : languageFormat === 'english_bengali_translate_explain' ? `
+    === LANGUAGE FORMAT (MANDATORY — OVERRIDES EVERYTHING ELSE ABOUT LANGUAGE) ===
+    The user has explicitly selected "English + Translation + Bengali Explained" (EN/BN+বা) from the format menu. This applies no matter what language the user's own message/prompt is written in. For every part of the document use THIS ORDER, repeated chunk by chunk:
+      (1) the English content (the normal, full content);
+      (2) right after it, the Bengali TRANSLATION of that same chunk;
+      (3) right after the translation, the Bengali EXPLANATION block(s) (বাংলা ব্যাখ্যা) for the hard or new concepts that appeared in that chunk.
+    The translation (step 2) and the explanation (step 3) are DIFFERENT things: the translation renders the English faithfully in Bengali; the explanation is NOT a translation — it re-teaches the concept in simple spoken-style Bengali.
+${_BN_TRANSLATION_GROUPING_RULE}
+    The explanation blocks follow these rules (where they say "placed right after the English concept it explains", place them right after the Bengali translation of the chunk that contains the concept instead, and keep them separate from the translation):
+${_bnExplainCoreRules('placed right after the Bengali translation of the chunk that contains the concept')}
   ` : languageFormat === 'bengali_english' ? `
     === LANGUAGE FORMAT (MANDATORY — OVERRIDES EVERYTHING ELSE ABOUT LANGUAGE) ===
-    The user has explicitly selected "Bengali then English" from the format menu. This applies no matter what language the user's own message/prompt is written in. Present the document bilingually: write each section in Bengali first, followed immediately by its English translation. Keep the same structure and meaning in both languages.
+    The user has explicitly selected "Bengali then English" from the format menu. This applies no matter what language the user's own message/prompt is written in. Present the document bilingually: write the content in Bengali first, followed by its English translation. Keep the same structure and meaning in both languages.${_BN_TRANSLATION_GROUPING_RULE}
   ` : '';
 }
 
@@ -2233,20 +2281,20 @@ async function generateTopicPlan(promptText, fileContextString, isMonochromeMode
   const explicitLong = intentPayload && intentPayload.length === 'long_pdf';
   const explicitShort = intentPayload && intentPayload.length === 'short_pdf';
   const outputLanguage = intentPayload && intentPayload.language ? intentPayload.language : detectOutputLanguage(promptText);
-  const maxSections = explicitLong ? APP_CONFIG.LONG_PDF_MAX_SECTIONS : (explicitShort ? APP_CONFIG.STEP_MODE_SHORT_MAX_SECTIONS : APP_CONFIG.STEP_MODE_STANDARD_MAX_SECTIONS);
+  const maxSections = explicitLong ? _longPdfMaxSections() : (explicitShort ? APP_CONFIG.STEP_MODE_SHORT_MAX_SECTIONS : APP_CONFIG.STEP_MODE_STANDARD_MAX_SECTIONS);
 
   const systemPromptForPlan =
     `You are the document-generation architecture decision-maker. Analyze the user's request BEFORE writing document text.\n` +
     `Decide how deep the final document genuinely needs to be and choose the least expensive strategy that still gives a complete, high-quality study document.\n` +
     `Do not confuse a single coherent topic with a small document. Detailed/comprehensive notes may need many pages even when they cover one coherent subject.\n` +
     `Consider requested depth words, number of concepts, formulas/theorems, examples, comparisons, exercises, attached-source coverage, and natural topic complexity.\n` +
-    `${explicitLong ? `LONG PDF is explicit: use sections. There is NO fixed page target and NO page ceiling to aim for — decide the true length purely from how much genuine depth this exact subject supports: thorough explanations, derivations, multiple worked/solved math examples per concept, applications, comparisons, common mistakes, and exercises. A topic with real depth may need far more than a "typical" long document; a narrower topic should not be padded just to look long. Never pad or repeat to inflate length.` : ''}\n` +
+    `${explicitLong ? `LONG PDF is explicit: use sections. There is NO fixed page target and NO page ceiling to aim for — decide the true length purely from how much genuine depth this exact subject supports: thorough explanations, derivations, multiple worked/solved math examples per concept, applications, comparisons, common mistakes, and exercises. A topic with real depth may need far more than a "typical" long document; a narrower topic should not be padded just to look long. Never pad or repeat to inflate length.${_extraDetailRule(intentPayload)}${_extraDetailOn(intentPayload) ? ' For this mode use more and finer sections, each with a larger estimated_pages, than a normal LONG document.' : ''}` : ''}\n` +
     `${explicitShort ? 'SHORT PDF is explicit: keep it compact and complete, normally about 2–5 A4 pages.' : ''}\n` +
     `${!explicitLong && !explicitShort ? 'DEFAULT mode: use_sections=false only when the complete requested note can safely fit in one generation response. Otherwise use_sections=true and provide a useful outline.' : ''}\n` +
     `Never create sections merely to increase length. Each section must cover a distinct useful part of the request.\n` +
     `Return ONLY valid JSON:\n` +
     `{"doc_title":"title","depth":"compact|standard|detailed|very_detailed","use_sections":true|false,"estimated_pages":number,"estimated_output_tokens":number,"sections":[{"title":"...","needed":true,"estimated_pages":number,"target_depth":"normal|deep|very_deep","visual":"diagram|table|example|formula|none"}],"reason":"very short reason"}\n` +
-    `For sectioned DEFAULT documents use roughly ${APP_CONFIG.STEP_MODE_STANDARD_MIN_SECTIONS}-${APP_CONFIG.STEP_MODE_STANDARD_MAX_SECTIONS} meaningful sections. For LONG use at least ${APP_CONFIG.LONG_PDF_MIN_SECTIONS} meaningful sections whenever the subject supports them, and more if the subject genuinely has more distinct sub-areas — do not collapse a broad/comprehensive request into a handful of generic sections. Each long section's estimated_pages should reflect how much real depth (derivations, multiple worked math examples, applications) that specific section needs — do not default every section to the same small number. For single-shot documents, sections must be [].\n` +
+    `For sectioned DEFAULT documents use roughly ${APP_CONFIG.STEP_MODE_STANDARD_MIN_SECTIONS}-${APP_CONFIG.STEP_MODE_STANDARD_MAX_SECTIONS} meaningful sections. For LONG use at least ${_longPdfMinSections()} meaningful sections whenever the subject supports them, and more if the subject genuinely has more distinct sub-areas — do not collapse a broad/comprehensive request into a handful of generic sections. Each long section's estimated_pages should reflect how much real depth (derivations, multiple worked math examples, applications) that specific section needs — do not default every section to the same small number. For single-shot documents, sections must be [].\n` +
     `CLARIFYING QUESTION — DEFAULT TO ASKING: asking is your default action, not planning. Before you plan, ask ONE short clarifying question with tick-style options whenever audience/level, depth or length, tone, scope, or which angle/sub-topics to cover could reasonably go more than one way — this is true for almost every request, including short or single-line topics. Only plan directly on the rare request that already pins ALL of these down explicitly enough that no other reasonable document could result; treat that as a high bar, not a low one. When genuinely unsure whether to ask, ask. Return ONLY this JSON object instead of the plan shape above: {\"action\":\"clarify\",\"question\":\"one short specific question\",\"options\":[\"short option A\",\"short option B\",\"short option C\"]} (\"options\" is 2 to 5 short concrete phrases, not full sentences; do not add a \"write my own\"/\"other\" option, the app adds one automatically). Never ask more than one question per turn. If the message already resolves the ambiguity (including a prior clarifying question's answer folded into it), plan the document directly instead.\n` +
     `Language: ${outputLanguage}.`;
 
@@ -2289,16 +2337,16 @@ async function generateTopicPlan(promptText, fileContextString, isMonochromeMode
       doc_title: promptText.slice(0, 80) || 'Document',
       depth: explicitLong ? 'very_detailed' : (explicitShort ? 'compact' : 'detailed'),
       use_sections: fallbackUseSections,
-      estimated_pages: explicitLong ? APP_CONFIG.LONG_PDF_MIN_PAGES : 4,
+      estimated_pages: explicitLong ? _longPdfMinPages() : 4,
       estimated_output_tokens: explicitLong ? (fallbackUseSections ? APP_CONFIG.PDF_TOKEN_BUDGETS.LONG_BATCH : APP_CONFIG.PDF_TOKEN_BUDGETS.LONG_DIRECT) : APP_CONFIG.PDF_TOKEN_BUDGETS.DEFAULT_SINGLE,
-      sections: explicitLong ? [{ title: promptText.slice(0, 80) || 'Document', needed: true, estimated_pages: APP_CONFIG.LONG_PDF_MIN_PAGES, target_depth: 'very_deep', visual: 'none' }] : [],
+      sections: explicitLong ? [{ title: promptText.slice(0, 80) || 'Document', needed: true, estimated_pages: _longPdfMinPages(), target_depth: 'very_deep', visual: 'none' }] : [],
       reason: 'Planner recovery'
     };
   }
 
   const docTitle = planJson.doc_title || promptText.slice(0, 80) || 'Document';
   const depth = ['compact', 'standard', 'detailed', 'very_detailed'].includes(planJson.depth) ? planJson.depth : (explicitShort ? 'compact' : (explicitLong ? 'very_detailed' : 'detailed'));
-  let estimatedPages = Number(planJson.estimated_pages) || (explicitLong ? APP_CONFIG.LONG_PDF_MIN_PAGES : 4);
+  let estimatedPages = Number(planJson.estimated_pages) || (explicitLong ? _longPdfMinPages() : 4);
   // No artificial floor here: the planner's own depth-based estimate stands as-is
   // (only guarded against a degenerate near-zero value from a parsing glitch).
   // Real length is ultimately driven by expandLongDocumentUntilMinimumPages(), which
@@ -2320,7 +2368,7 @@ async function generateTopicPlan(promptText, fileContextString, isMonochromeMode
   }).filter(Boolean).slice(0, maxSections);
 
   if (explicitLong) {
-    const desiredSections = Math.min(APP_CONFIG.LONG_PDF_MAX_SECTIONS, Math.max(APP_CONFIG.LONG_PDF_MIN_SECTIONS, sections.length));
+    const desiredSections = Math.min(_longPdfMaxSections(), Math.max(_longPdfMinSections(), sections.length));
     const perSectionTarget = Math.max(2, estimatedPages / Math.max(1, desiredSections));
     sections = sections.map((sec) => ({
       ...sec,
@@ -2328,7 +2376,7 @@ async function generateTopicPlan(promptText, fileContextString, isMonochromeMode
       targetDepth: sec.targetDepth === 'normal' ? 'very_deep' : sec.targetDepth
     }));
     if (!sections.length) {
-      sections = [{ title: docTitle, estimatedPages: Math.max(2, APP_CONFIG.LONG_PDF_MIN_PAGES), targetDepth: 'very_deep', visual: 'none' }];
+      sections = [{ title: docTitle, estimatedPages: Math.max(2, _longPdfMinPages()), targetDepth: 'very_deep', visual: 'none' }];
     }
   }
 
@@ -2369,7 +2417,7 @@ async function generateNextSection(sectionIndex, sectionTitle, modelsUsedSet) {
     `Target depth=${plannedDepth}; roughly ${plannedPages} A4 page(s) of substantive material where appropriate. ` +
     `Cover all necessary subtopics, definitions, explanations, formulas/rules, examples/applications and important points relevant to this section. ` +
     `Do not compress merely to save tokens. ` +
-    (intentPayloadForGeneration && intentPayloadForGeneration.length === 'long_pdf' ? `This is LONG PDF mode. There is no fixed page target for this section — develop it as deeply as the sub-topic genuinely supports, including derivations, multiple worked/solved math examples, applications, and common mistakes. Go beyond ${plannedPages} page(s) if the material truly warrants it; do not artificially stop at a round number, and do not pad if the topic is naturally short. ` : 'Keep this section complete and properly developed; do not reduce it to a short summary. ');
+    (intentPayloadForGeneration && intentPayloadForGeneration.length === 'long_pdf' ? `This is LONG PDF mode. There is no fixed page target for this section — develop it as deeply as the sub-topic genuinely supports, including derivations, multiple worked/solved math examples, applications, and common mistakes. Go beyond ${plannedPages} page(s) if the material truly warrants it; do not artificially stop at a round number, and do not pad if the topic is naturally short.${_extraDetailRule(intentPayloadForGeneration)} ` : 'Keep this section complete and properly developed; do not reduce it to a short summary. ');
 
   const outlineContext = (_topicPlan || []).map((title, i) => `${i + 1}. ${title}${i === sectionIndex ? ' ← CURRENT SECTION' : i < sectionIndex ? ' completed' : ''}`).join('\n');
   const originalUser = _originalUserMessages.find(m => m.role === 'user')?.content || '';
@@ -2430,7 +2478,7 @@ async function generateSectionBatch(startIndex, batchTitles, modelsUsedSet) {
     return `${startIndex + k + 1}. ${t} | target depth: ${detail.targetDepth || 'normal'} | target pages: ${Number(detail.estimatedPages) || 1}`;
   }).join('\n');
 
-  const longPageTargetRule = intentPayloadForGeneration && intentPayloadForGeneration.length === 'long_pdf' ? `\nLONG MODE: there is no fixed page target. Develop every requested section as deeply as it genuinely supports — derivations, multiple worked math examples, applications, common mistakes. Do not compress, summarize, pad, or repeat merely to hit a length.` : '';
+  const longPageTargetRule = intentPayloadForGeneration && intentPayloadForGeneration.length === 'long_pdf' ? `\nLONG MODE: there is no fixed page target. Develop every requested section as deeply as it genuinely supports — derivations, multiple worked math examples, applications, common mistakes. Do not compress, summarize, pad, or repeat merely to hit a length.${_extraDetailRule(intentPayloadForGeneration)}` : '';
   const shortPageTargetRule = intentPayloadForGeneration && intentPayloadForGeneration.length === 'short_pdf' ? `\nSHORT MODE: keep the document focused and complete; do not pad or underwrite.` : '';
   const standardPageTargetRule = !intentPayloadForGeneration || !['short_pdf', 'long_pdf'].includes(intentPayloadForGeneration.length) ? `\nDEFAULT SECTIONED MODE: planner target is about ${Math.max(1, _topicPlanMeta.estimatedPages || 1)} A4 pages. Follow the planned depth for each section and do not turn sections into brief summaries.` : '';
   const batchSystemPrompt = _originalSystemPrompt +
@@ -2508,7 +2556,7 @@ async function generateSectionBatch(startIndex, batchTitles, modelsUsedSet) {
   return sectionsOut;
 }
 
-async function expandLongDocumentUntilMinimumPages(promptText, modelsUsedSet, minPages = APP_CONFIG.LONG_PDF_MIN_PAGES, maxRounds = APP_CONFIG.LONG_EXPANSION_MAX_ROUNDS) {
+async function expandLongDocumentUntilMinimumPages(promptText, modelsUsedSet, minPages = _longPdfMinPages(), maxRounds = _longExpansionMaxRounds()) {
   // NOTE: `minPages` is kept only for the progress-label text and as a legacy
   // parameter; it is NOT used to stop expansion early anymore. Expansion keeps
   // going — regardless of how many pages already exist — for as long as the AI
@@ -2523,7 +2571,7 @@ async function expandLongDocumentUntilMinimumPages(promptText, modelsUsedSet, mi
 
   for (let round = 1; round <= maxRounds; round++) {
     const currentPages = document.getElementById('document-view-container')?.querySelectorAll('.doc-page-canvas').length || 0;
-    if (currentPages >= APP_CONFIG.LONG_PDF_MAX_PAGES_HARD) return true;
+    if (currentPages >= _longPdfMaxPagesHard()) return true;
     await waitWhilePaused();
     if (isCancellationRequested) return false;
 
@@ -2559,12 +2607,12 @@ async function expandLongDocumentUntilMinimumPages(promptText, modelsUsedSet, mi
       if (typeof paginateDocumentCanvasAsync === 'function') await paginateDocumentCanvasAsync(_accumulatedHTML, false);
       _updateLivePageNumberFromCurrentDocument();
       const afterPages = document.getElementById('document-view-container')?.querySelectorAll('.doc-page-canvas').length || 0;
-      if (afterPages > APP_CONFIG.LONG_PDF_MAX_PAGES_HARD) {
+      if (afterPages > _longPdfMaxPagesHard()) {
         _accumulatedHTML = previousHTML;
         if (typeof paginateDocumentCanvasAsync === 'function') await paginateDocumentCanvasAsync(_accumulatedHTML, false);
         if (typeof HISTORY !== 'undefined' && HISTORY.saveState) HISTORY.saveState();
         if (typeof displayToastNotification === 'function') {
-          displayToastNotification(`Long PDF reached the safe page ceiling (${APP_CONFIG.LONG_PDF_MAX_PAGES_HARD} pages); stopping expansion.`);
+          displayToastNotification(`Long PDF reached the safe page ceiling (${_longPdfMaxPagesHard()} pages); stopping expansion.`);
         }
         return true;
       }
@@ -2667,11 +2715,11 @@ async function generateComprehensiveDocumentStepByStep(promptText, fileContextSt
 
         if (intentPayload && intentPayload.length === 'long_pdf') {
           const currentPages = document.getElementById('document-view-container')?.querySelectorAll('.doc-page-canvas').length || 0;
-          if (currentPages > APP_CONFIG.LONG_PDF_MAX_PAGES_HARD) {
+          if (currentPages > _longPdfMaxPagesHard()) {
             _accumulatedHTML = previousHTML;
             if (typeof paginateDocumentCanvasAsync === 'function') await paginateDocumentCanvasAsync(_accumulatedHTML, false);
             if (typeof displayToastNotification === 'function') {
-              displayToastNotification(`Long PDF reached the safe page ceiling (${APP_CONFIG.LONG_PDF_MAX_PAGES_HARD} pages); the last section was not added.`);
+              displayToastNotification(`Long PDF reached the safe page ceiling (${_longPdfMaxPagesHard()} pages); the last section was not added.`);
             }
             allSectionsSuccess = false;
             break;
@@ -2697,7 +2745,7 @@ async function generateComprehensiveDocumentStepByStep(promptText, fileContextSt
     await waitWhilePaused();
     if (isCancellationRequested) { intentPayloadForGeneration = null; return false; }
     if (allSectionsSuccess && intentPayload && intentPayload.length === 'long_pdf') {
-      await expandLongDocumentUntilMinimumPages(promptText, modelsUsedSet, APP_CONFIG.LONG_PDF_MIN_PAGES, APP_CONFIG.LONG_EXPANSION_MAX_ROUNDS);
+      await expandLongDocumentUntilMinimumPages(promptText, modelsUsedSet, _longPdfMinPages(), _longExpansionMaxRounds());
       const finalPages = document.getElementById('document-view-container')?.querySelectorAll('.doc-page-canvas').length || 0;
       if (typeof displayToastNotification === 'function') {
         displayToastNotification(`Long PDF finished at ${finalPages} pages — length was decided by how much genuine depth the topic supported.`);
@@ -2963,8 +3011,8 @@ async function generateExplicitLengthPDFDirectMode(promptText, fileContextString
   const isLong = mode === 'long';
   // No fixed page floor for LONG anymore — depth decides length. Kept only for SHORT
   // (which is intentionally meant to be compact) and for progress-UI text/labels below.
-  const minPages = isLong ? APP_CONFIG.LONG_PDF_MIN_PAGES : 2;
-  const maxExpansionRounds = Math.max(3, APP_CONFIG.LONG_EXPANSION_MAX_ROUNDS || 0);
+  const minPages = isLong ? _longPdfMinPages() : 2;
+  const maxExpansionRounds = Math.max(3, _longExpansionMaxRounds() || 0);
   const maxLowGrowthRounds = APP_CONFIG.LONG_EXPANSION_MAX_LOW_GROWTH_ROUNDS || 2;
   const outputLanguage = intentPayload?.language || intentPayload?.conversationLanguage || detectOutputLanguage(promptText);
   const modeLabel = isLong ? 'LONG' : 'SHORT';
@@ -3051,8 +3099,8 @@ async function generateExplicitLengthPDFDirectMode(promptText, fileContextString
       `Return ONLY the complete document content as raw HTML. Do NOT return JSON, markdown fences, chat commentary, an outline-only response, or an action wrapper. Do not ask any clarifying question — that decision has already been made; write the complete document now.\n` +
       `Language: ${outputLanguage}.\n` +
       `${buildSharedRules(isMonochromeMode, outputLanguage)}\n` +
-      `${typeof buildAtCommandInstructionText === 'function' ? buildAtCommandInstructionText({ intent: 'create_pdf', length: isLong ? 'long_pdf' : 'short_pdf', language: outputLanguage, sectionMode: false, visual: (intentPayload && intentPayload.visual) || null }) : ''}\n` +      (pdfOutlineApproved ? `APPROVED PDF OUTLINE — follow this structure exactly and cover EVERY section and point in the final document:\n${_formatPDFOutlineForPrompt(intentPayload.pdfOutline)}\n` : '') +
-      (isLong ? `LONG DIRECT RULES: write a genuinely comprehensive document. There is NO fixed page target — cover the full requested scope with definitions, concepts, formulas, properties, derivations, multiple worked/solved math examples per concept, applications, comparisons, common mistakes, summaries and useful tables/diagrams where appropriate. Let the true length be however many A4 pages this topic's real depth requires. Never pad with repetition, and never cut a topic short just to save space.\n` : `SHORT DIRECT RULES: produce a compact but complete document, normally about 2–5 A4 pages. Preserve the essential concepts, key formulas/facts, representative examples and a concise summary. Do not return only a title or outline.\n`) +
+      `${typeof buildAtCommandInstructionText === 'function' ? buildAtCommandInstructionText({ intent: 'create_pdf', length: isLong ? 'long_pdf' : 'short_pdf', extraDetail: !!(isLong && _extraDetailOn(intentPayload)), language: outputLanguage, sectionMode: false, visual: (intentPayload && intentPayload.visual) || null }) : ''}\n` +      (pdfOutlineApproved ? `APPROVED PDF OUTLINE — follow this structure exactly and cover EVERY section and point in the final document:\n${_formatPDFOutlineForPrompt(intentPayload.pdfOutline)}\n` : '') +
+      (isLong ? `LONG DIRECT RULES: write a genuinely comprehensive document. There is NO fixed page target — cover the full requested scope with definitions, concepts, formulas, properties, derivations, multiple worked/solved math examples per concept, applications, comparisons, common mistakes, summaries and useful tables/diagrams where appropriate. Let the true length be however many A4 pages this topic's real depth requires. Never pad with repetition, and never cut a topic short just to save space.${_extraDetailRule(intentPayload)}\n` : `SHORT DIRECT RULES: produce a compact but complete document, normally about 2–5 A4 pages. Preserve the essential concepts, key formulas/facts, representative examples and a concise summary. Do not return only a title or outline.\n`) +
       `OUTPUT SAFETY: the result must contain substantial visible explanatory content. Use semantic HTML suitable for the existing A4 pagination engine.`;
 
     let result = await callAIAPI([{ role: 'system', content: writingSystemPrompt }, { role: 'user', content: userPrompt }], { forceJson: false, modelsUsedSet, maxTokens: undefined });
@@ -3090,7 +3138,7 @@ async function generateExplicitLengthPDFDirectMode(promptText, fileContextString
       let lowGrowthStreak = 0;
       for (let round = 1; round <= maxExpansionRounds; round++) {
         const beforePages = document.getElementById('document-view-container')?.querySelectorAll('.doc-page-canvas').length || 0;
-        if (beforePages >= APP_CONFIG.LONG_PDF_MAX_PAGES_HARD) break;
+        if (beforePages >= _longPdfMaxPagesHard()) break;
         if (isCancellationRequested) break;
         if (typeof ProgressUI !== 'undefined' && ProgressUI.setLabel) {
           ProgressUI.setLabel(`Checking for more genuine depth to add (round ${round}/${maxExpansionRounds}, currently ${beforePages} pages)...`);
@@ -3117,9 +3165,9 @@ async function generateExplicitLengthPDFDirectMode(promptText, fileContextString
           _updateLivePageNumberFromCurrentDocument();
           if (typeof HISTORY !== 'undefined' && HISTORY.saveState) HISTORY.saveState();
           const afterPages = document.getElementById('document-view-container')?.querySelectorAll('.doc-page-canvas').length || 0;
-          if (afterPages > APP_CONFIG.LONG_PDF_MAX_PAGES_HARD) {
+          if (afterPages > _longPdfMaxPagesHard()) {
             if (typeof displayToastNotification === 'function') {
-              displayToastNotification(`Long PDF reached the safe page ceiling (${APP_CONFIG.LONG_PDF_MAX_PAGES_HARD} pages); stopping expansion.`);
+              displayToastNotification(`Long PDF reached the safe page ceiling (${_longPdfMaxPagesHard()} pages); stopping expansion.`);
             }
             break;
           }
@@ -3150,8 +3198,8 @@ async function generateLongPDFDirectMode(promptText, fileContextString, isMonoch
   const requestSessionId = APP_STATE.activeSessionId;
   // Kept only as a legacy/progress-label reference — expansion below is no longer
   // gated on reaching this number; it keeps going while genuine depth remains.
-  const minPages = APP_CONFIG.LONG_PDF_MIN_PAGES;
-  const maxRounds = Math.max(3, APP_CONFIG.LONG_EXPANSION_MAX_ROUNDS || 0);
+  const minPages = _longPdfMinPages();
+  const maxRounds = Math.max(3, _longExpansionMaxRounds() || 0);
   const maxLowGrowthRounds = APP_CONFIG.LONG_EXPANSION_MAX_LOW_GROWTH_ROUNDS || 2;
   const activeCfg = getActiveAIModel();
   const outputLanguage = detectOutputLanguage(promptText);
@@ -3163,10 +3211,10 @@ async function generateLongPDFDirectMode(promptText, fileContextString, isMonoch
     `SECTION MODE IS OFF. Do not use an application-generated section planner, section objects, or separate section requests.\n` +
     `Write one continuous, coherent, comprehensive document for the user's request. Natural headings and subheadings are allowed and encouraged, but they must be part of the same document, not a section-management protocol.\n` +
     `LONG PDF REQUIREMENT: produce genuinely substantial study material. There is NO fixed page target — let the true length be however many A4 pages this specific topic's real depth requires. Never pad, repeat, or invent irrelevant material, and never cut a topic short just to save space.\n` +
-    `Include necessary definitions, explanations, derivations, formulas, multiple worked/solved math examples per concept, applications, comparisons, common mistakes, tables, exercises and useful visuals where relevant.\n` +
+    `Include necessary definitions, explanations, derivations, formulas, multiple worked/solved math examples per concept, applications, comparisons, common mistakes, tables, exercises and useful visuals where relevant.${_extraDetailRule()}\n` +
     `Do not answer with only a title, outline, plan, summary, or table of contents. The response itself must contain the substantive document content.\n` +
     `${buildSharedRules(isMonochromeMode, outputLanguage)}\n` +
-    `${typeof buildAtCommandInstructionText === 'function' ? buildAtCommandInstructionText({ intent: 'create_pdf', length: 'long_pdf', language: outputLanguage, visual: APP_STATE.canvasIllustrationsEnabled === true ? 'canvas' : null }) : ''}\n` +
+    `${typeof buildAtCommandInstructionText === 'function' ? buildAtCommandInstructionText({ intent: 'create_pdf', length: 'long_pdf', extraDetail: _extraDetailOn(), language: outputLanguage, visual: APP_STATE.canvasIllustrationsEnabled === true ? 'canvas' : null }) : ''}\n` +
     `OUTPUT FORMAT: return ONLY the document HTML fragment. Do NOT return JSON. Do NOT wrap it in markdown fences. Do NOT include chat_summary or commentary outside the HTML.`;
 
   const userContent = await buildAIUserContent(promptText, fileContextString || '(none)', keepExisting ? `\nCURRENT DOCUMENT (preserve useful existing content; add/expand only as requested):\n${existingHTML.slice(-18000)}` : '\nCURRENT DOCUMENT: empty — create the complete document from scratch.');
@@ -3174,7 +3222,7 @@ async function generateLongPDFDirectMode(promptText, fileContextString, isMonoch
   _originalSystemPrompt = directSystem;
   _originalUserMessages = [{ role: 'system', content: directSystem }, { role: 'user', content: userContent }];
   _generationLockedModelConfig = activeCfg || null;
-  intentPayloadForGeneration = { intent: 'create_pdf', length: 'long_pdf', language: outputLanguage, sectionMode: false, visual: APP_STATE.canvasIllustrationsEnabled === true ? 'canvas' : null };
+  intentPayloadForGeneration = { intent: 'create_pdf', length: 'long_pdf', extraDetail: _extraDetailOn(), language: outputLanguage, sectionMode: false, visual: APP_STATE.canvasIllustrationsEnabled === true ? 'canvas' : null };
 
   if (typeof ProgressUI !== 'undefined' && ProgressUI.show) {
     ProgressUI.show('Generating Long PDF directly...', `Sections are OFF. Writing one continuous document — length is decided by the topic's real depth.`);
@@ -3239,7 +3287,7 @@ async function generateLongPDFDirectMode(promptText, fileContextString, isMonoch
       if (requestSessionId !== APP_STATE.activeSessionId) return false;
       if (isCancellationRequested) return false;
       const currentPages = document.getElementById('document-view-container')?.querySelectorAll('.doc-page-canvas').length || 0;
-      if (currentPages >= APP_CONFIG.LONG_PDF_MAX_PAGES_HARD) break;
+      if (currentPages >= _longPdfMaxPagesHard()) break;
 
       if (typeof ProgressUI !== 'undefined' && ProgressUI.setLabel) {
         ProgressUI.setLabel(`Checking for more genuine depth (round ${round}/${maxRounds}, currently ${currentPages} pages)...`);
@@ -3293,9 +3341,9 @@ async function generateLongPDFDirectMode(promptText, fileContextString, isMonoch
       } else {
         lowGrowthStreak = 0;
       }
-      if (afterPages > APP_CONFIG.LONG_PDF_MAX_PAGES_HARD) {
+      if (afterPages > _longPdfMaxPagesHard()) {
         if (typeof displayToastNotification === 'function') {
-          displayToastNotification(`Long PDF reached the safe page ceiling (${APP_CONFIG.LONG_PDF_MAX_PAGES_HARD} pages); stopping expansion.`);
+          displayToastNotification(`Long PDF reached the safe page ceiling (${_longPdfMaxPagesHard()} pages); stopping expansion.`);
         }
         if (typeof HISTORY !== 'undefined' && HISTORY.saveState) HISTORY.saveState();
         break;
@@ -3915,7 +3963,8 @@ const _COPY_LANGUAGE_FORMAT_LABELS = {
   bengali: 'Bengali only',
   english_bengali: 'English then Bengali',
   bengali_english: 'Bengali then English',
-  english_bengali_explain: 'English + Bengali Explained'
+  english_bengali_explain: 'English + Bengali Explained',
+  english_bengali_translate_explain: 'English + Translation + Bengali Explained'
 };
 
 function _getCopyLanguageFormat() {
@@ -3930,9 +3979,10 @@ function _buildCopyLanguageConversionText(fmt) {
   const how = {
     english: 'Output the whole content in English only. Translate any Bengali parts into English; leave parts that are already English unchanged.',
     bengali: 'Output the whole content in Bengali (বাংলা) only. Translate any English parts into Bengali; leave parts that are already Bengali unchanged. Keep standard math/science notation, symbols, code and proper nouns as they are.',
-    english_bengali: 'For every section/paragraph block write the English version first, immediately followed by its Bengali translation. If a block exists in only one language, add the missing language right after it.',
-    bengali_english: 'For every section/paragraph block write the Bengali version first, immediately followed by its English translation. If a block exists in only one language, add the missing language right after it.',
-    english_bengali_explain: 'The document itself is the full content in English (translate any Bengali parts into English). Then add the selective Bengali concept explanations exactly as described in the LANGUAGE FORMAT section above.'
+    english_bengali: 'Write the English version first, followed by its Bengali translation. Translate in LARGER blocks (a whole sub-topic or several related paragraphs at a time), not after every sentence or short paragraph, so the page stays uncluttered and easy to read. If a part exists in only one language, add the missing language after it.',
+    bengali_english: 'Write the Bengali version first, followed by its English translation. Translate in LARGER blocks (a whole sub-topic or several related paragraphs at a time), not after every sentence or short paragraph, so the page stays uncluttered and easy to read. If a part exists in only one language, add the missing language after it.',
+    english_bengali_explain: 'The document itself is the full content in English (translate any Bengali parts into English). Then add the selective Bengali concept explanations exactly as described in the LANGUAGE FORMAT section above.',
+    english_bengali_translate_explain: 'Write the content in English (translate any Bengali parts into English), then its Bengali translation in LARGER blocks (a whole sub-topic or several related paragraphs at a time, never after every sentence), then the selective Bengali concept explanations exactly as described in the LANGUAGE FORMAT section above.'
   }[fmt];
   return `The user selected "${label}" in the Format menu. ${how} ` +
     `If the source is already exactly in this format, copy it as it is. Translation changes ONLY the language: every fact, number, formula, name, code line, table row and list item must still be present.`;
@@ -4993,7 +5043,7 @@ async function generatePDFOutlineDirectMode(
         fileContextString ? `ATTACHED SOURCE CONTEXT:\n${fileContextString}` : ''
       ].filter(Boolean).join('\n\n');
 
-  const sectionRange = isLong ? '8 to 12' : isShort ? '4 to 7' : '6 to 10';
+  const sectionRange = isLong ? (_extraDetailOn(intentPayload) ? '12 to 18' : '8 to 12') : isShort ? '4 to 7' : '6 to 10';
   const pointsRule = 'Each section must have 0 to 3 tiny hint points (2 to 6 words each, keywords only — never sentences).';
   const sourceRule = fileContextString
     ? 'Use the attached source as the primary basis for the outline. Do not invent unsupported source-specific details.'
@@ -5242,6 +5292,8 @@ async function sendChatPromptToAI() {
 
     try { console.info('[PDF Outline] send — intentPayload:', JSON.stringify(intentPayload), '| pendingPDFOutline:', !!APP_STATE.pendingPDFOutline); } catch (_) {}
     const requestSessionId = APP_STATE.activeSessionId;
+    // Mirror "Extra Detailed" so flows without a payload in scope (direct long writer, expansion loop) can see it.
+    APP_STATE.extraDetailActive = !!(intentPayload && intentPayload.extraDetail);
     // Canvas chip = illustrations ON for PDF/Word. Slides keep their own behaviour.
     if (['create_slides', 'edit_slide', 'custom_background'].includes(intentPayload.intent)) {
       APP_STATE.canvasIllustrationsEnabled = undefined;
@@ -6376,8 +6428,8 @@ async function sendChatPromptToAI() {
         if (directSuccess === true) {
           APP_STATE.pendingClarify = null;
           if (typeof isMobileDeviceLayout === 'function' && isMobileDeviceLayout() && typeof setMobileView === 'function') setMobileView('editor');
-          if (typeof displayToastNotification === 'function') displayToastNotification(`${intentPayload.length === 'long_pdf' ? 'Long' : 'Short'} PDF generated.`);
-          if (typeof appendChatMessageToUI === 'function') appendChatMessageToUI('ai', `${intentPayload.length === 'long_pdf' ? 'Long' : 'Short'} PDF generated successfully.`);
+          if (typeof displayToastNotification === 'function') displayToastNotification(`${intentPayload.length === 'long_pdf' ? (intentPayload.extraDetail ? 'Extra Detailed' : 'Long') : 'Short'} PDF generated.`);
+          if (typeof appendChatMessageToUI === 'function') appendChatMessageToUI('ai', `${intentPayload.length === 'long_pdf' ? (intentPayload.extraDetail ? 'Extra Detailed' : 'Long') : 'Short'} PDF generated successfully.`);
           _updateLivePageNumberFromCurrentDocument();
           try {
             const analytics = (_isPdfSummaryEnabled() && typeof computeDocumentAnalytics === 'function') ? await computeDocumentAnalytics(analyticsStart, modelsUsed) : null;
@@ -6386,7 +6438,7 @@ async function sendChatPromptToAI() {
             }
           } catch (analyticsErr) { console.warn('Analytics failed:', analyticsErr); }
         } else {
-          if (typeof appendChatMessageToUI === 'function') appendChatMessageToUI('error', `${intentPayload.length === 'long_pdf' ? 'Long' : 'Short'} PDF generation failed before substantive content could be committed.`);
+          if (typeof appendChatMessageToUI === 'function') appendChatMessageToUI('error', `${intentPayload.length === 'long_pdf' ? (intentPayload.extraDetail ? 'Extra Detailed' : 'Long') : 'Short'} PDF generation failed before substantive content could be committed.`);
         }
         APP_STATE.suppressDocumentAIChat = false;
         APP_STATE.isAIGenerating = false;
