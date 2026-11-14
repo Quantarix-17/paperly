@@ -1,21 +1,32 @@
 // ai-quotes.js — প্রতিবার নতুন করে AI দিয়ে ইংরেজি উক্তি তৈরি করে।
+// উক্তির ধরন: নানা বিষয়ের মিশ্রণ — কোনো বিষয় নিষিদ্ধ নয়, আবার কোনো একটা বিষয়ে আটকেও থাকে না।
 // কিছুই সেভ/ক্যাশ করা হয় না (localStorage, array, ইতিহাস — কিছুই নেই)।
 // ব্যবহার: modal খোলার সময় AIQuote.mount(document.getElementById('your-quote-element'));
 const AIQuote = (() => {
-  // ওজন (w): যত বেশি, তত ঘন ঘন আসবে। ক্রম: love > separation > philosophy > question > life।
+  // ওজন (w): প্রায় সমান, তাই সব বিষয় ঘুরেফিরে আসে — কোনো একটা বিষয় আলাদা করে প্রাধান্য পায় না।
   const THEMES = [
-    { id: 'love',       w: 10, tones: ['gentle', 'warm', 'calm', 'deep'],
-      brief: 'A simple but deep line about love: care, waiting, being close, or the feeling of someone touching your heart.' },
-    { id: 'separation', w: 7,  tones: ['bittersweet', 'calm', 'deep', 'gentle'],
-      brief: 'A simple but deep line about separation: distance, losing someone, words left unsaid, or the quiet after someone leaves.' },
-    { id: 'philosophy', w: 5,  tones: ['calm', 'deep', 'firm'],
-      brief: 'A philosophical line about time, existence, truth, or a thought that makes people stop and think, in plain words.' },
-    { id: 'question',   w: 4,  tones: ['deep', 'calm', 'gentle'],
-      brief: 'One question thrown to the reader (about love, losing someone, or the self inside) that does not answer itself and makes the mind wonder.' },
-    { id: 'life',       w: 3,  tones: ['calm', 'hopeful', 'firm', 'deep'],
-      brief: 'A simple but deep line about life: being alive, growing, or an unexpected truth about time.' }
+    { id: 'life',      w: 5, tones: ['calm', 'deep', 'warm', 'firm'],
+      brief: 'A simple but wise line about life: being alive, everyday moments, or an unexpected truth about living.' },
+    { id: 'time',      w: 5, tones: ['calm', 'deep', 'firm'],
+      brief: 'A thoughtful line about time: today, waiting, starting now, or how small moments add up.' },
+    { id: 'growth',    w: 5, tones: ['hopeful', 'calm', 'firm', 'warm'],
+      brief: 'A simple line about learning and growing: small steps, mistakes that teach, or getting a little better each day.' },
+    { id: 'effort',    w: 4, tones: ['firm', 'calm', 'hopeful'],
+      brief: 'A simple line about effort, patience, discipline, or finishing what you start.' },
+    { id: 'people',    w: 4, tones: ['warm', 'gentle', 'deep', 'bittersweet'],
+      brief: 'A simple line about people and the human side of life: kindness, trust, friendship, family, feelings, or how we treat each other.' },
+    { id: 'mind',      w: 4, tones: ['deep', 'calm', 'firm'],
+      brief: 'A philosophical line about the mind, thoughts, truth, or the self, in plain words that make people stop and think.' },
+    { id: 'change',    w: 4, tones: ['calm', 'hopeful', 'deep', 'bittersweet'],
+      brief: 'A simple line about change, endings, new beginnings, or letting go of what no longer fits.' },
+    { id: 'courage',   w: 3, tones: ['firm', 'hopeful', 'calm'],
+      brief: 'A simple line about courage, fear, risk, or taking the first step.' },
+    { id: 'peace',     w: 3, tones: ['calm', 'gentle', 'warm'],
+      brief: 'A simple line about peace, gratitude, happiness, silence, or enjoying the present moment.' },
+    { id: 'question',  w: 4, tones: ['deep', 'calm', 'gentle'],
+      brief: 'One short question thrown to the reader (about life, time, people, or the self) that does not answer itself and makes the mind wonder.' }
   ];
-  const IMAGERY = ['sky', 'river', 'rain', 'light', 'road', 'sleep', 'season', 'evening', 'wave', 'seed', 'mirror', 'wind', 'clock', 'letter', 'window', 'bird', 'sea', 'mountain', 'lamp', 'silence', 'morning', 'moonlight'];
+  const IMAGERY = ['sky', 'river', 'rain', 'light', 'road', 'sleep', 'season', 'evening', 'wave', 'seed', 'mirror', 'wind', 'clock', 'letter', 'window', 'bird', 'sea', 'mountain', 'lamp', 'silence', 'morning', 'moonlight', 'tree', 'bridge', 'path', 'door'];
   // লিঙ্গ নির্দেশ করে এমন ইংরেজি শব্দ ধরার নিরাপত্তা-জাল (শব্দ আলাদা করে মেলানো হয়, তাই "human" বাদ পড়ে না)।
   const GENDERED_WORDS = new Set(['boy','boys','girl','girls','man','men','woman','women','lady','ladies','guy','gentleman','he','him','his','she','her','hers','himself','herself','husband','wife','boyfriend','girlfriend','brother','sister','father','mother','dad','mom','mum','son','daughter','king','queen']);
   const MAX_WORDS = 22;       // প্রম্পটে সর্বোচ্চ ১৫; এর বেশি এলে বাতিল করে আবার চেষ্টা
@@ -39,14 +50,16 @@ const AIQuote = (() => {
     const nonce = Math.random().toString(36).slice(2, 10);
     const isQuestion = theme.id === 'question';
     const system =
-      `You are a skilled writer and thinker. For every request, write one completely original short quote in English.\n` +
+      `You are a skilled writer and thinker. For every request, write one completely original short quote in English that works for any reader.\n` +
       `Rules:\n` +
       `- Length: short. ${isQuestion ? 'Exactly one short question' : 'Exactly one short sentence'}, at most 15 words.\n` +
       `- Language: English only, using simple everyday words a 12-year-old would understand. No rare, fancy, poetic or old-fashioned words. No long metaphors or heavy imagery.\n` +
-      `- Depth: say a true thing or a feeling in very few words, so the reader pauses for a moment.\n` +
-      `- Gender-neutral: never point to a gender. Do not write boy, girl, man, woman, he, she, him, her, husband, wife, boyfriend, girlfriend, brother, sister, mother, father and similar words. Use neutral words like "people", "heart", "we", "you", "someone".\n` +
+      `- Topic: open. Follow the Type below, and do not drift into the same subject every time. No subject is off limits, but never write about love or sadness unless the Type asks for it.
+` +
+      `- Depth: say one true, useful thing in very few words, so the reader pauses for a moment.\n` +
+      `- Gender-neutral: never point to a gender. Do not write boy, girl, man, woman, he, she, him, her, husband, wife, boyfriend, girlfriend, brother, sister, mother, father and similar words. Use neutral words like "people", "heart", "we", "you", "someone", "anyone".\n` +
       `- Do not copy a famous quote, a line from any author, or a proverb. Never credit it to anyone.\n` +
-      `- Avoid cliches (for example "life is a journey", "time heals all wounds").\n` +
+      `- Avoid cliches (for example "life is a journey", "time heals all wounds", "believe in yourself").\n` +
       `Return JSON only: {"quote":"..."}`;
     const user =
       `Type: ${theme.brief}\nTone: ${pick(theme.tones)}\nYou may take inspiration from this word if it fits (do not force it): ${img}\nUnique token: ${nonce}`;
