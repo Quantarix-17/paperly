@@ -1,7 +1,8 @@
 // ========================================================================
 // LAYOUT ENGINE UPDATE (this round)
 //   1. Load once      : identical content is never re-loaded; typing never triggers
-//                       a full reload; the document is revealed once, when final.
+//                       a full reload; the document is revealed once, when final
+//                       (a skeleton page + loading bar is shown meanwhile, never a blank).
 //   2. Margin safety  : _flowAll / _fitSplit split text, list items, table rows and
 //                       box children recursively - nothing stays below the margin.
 //                       A heading (topic / sub-topic) whose text starts on the next
@@ -10,6 +11,7 @@
 //   4/5. Equations    : _normalizeEquationLayoutHTML - large equations on their own
 //                       centred line; variable equations max 2 "=" per line,
 //                       numeric ones may chain freely.
+//   7. Margins        : one margin (PDF_LAYOUT) forced on every page surface.
 //   6. Paginate button: first fills the gaps in place, compacts only if nothing to fill.
 // ========================================================================
 // ========================================================================
@@ -87,6 +89,24 @@ const pageSnapshot = document.createElement('div');
 pageSnapshot.className = 'doc-page-canvas pdf-export-measure-page';
 pageSnapshot.style.cssText = measurePage.style.cssText;
 if (document.body) document.body.appendChild(pageSnapshot);
+
+// ===== ONE MARGIN FOR EVERYTHING (editor side) =====
+// PDF_LAYOUT is the single source of truth. The visible editor pages, the measuring pages used by pagination and the
+// export pages all get the very same paddings (!important), so what is measured is exactly what is shown and exported.
+function _syncPageMarginCSS() {
+  try {
+    const L = PDF_LAYOUT;
+    const pad = `${L.padTop}px ${L.padRight}px ${L.padBottom}px ${L.padLeft}px`;
+    let css = `.doc-page-canvas, .pdf-page { box-sizing:border-box !important; padding:${pad} !important; }`;
+    if (Number.isFinite(Number(L.footerBottom))) css += ` .page-footer-number, .pdf-footer { bottom:${Number(L.footerBottom)}px !important; }`;
+    let st = document.getElementById('unified-page-margin-css');
+    if (!st) { st = document.createElement('style'); st.id = 'unified-page-margin-css'; (document.head || document.documentElement).appendChild(st); }
+    if (st.textContent !== css) st.textContent = css;
+    // keep the off-screen measuring pages in step (they carry inline styles)
+    [measurePage, pageSnapshot].forEach(el => { if (el) { el.style.padding = pad; el.style.boxSizing = 'border-box'; } });
+  } catch (e) { console.warn('[page margins]', e); }
+}
+_syncPageMarginCSS();
 
 function _mirrorPageFormatClasses(snapEl, pageEl) {
   const extra = Array.from(pageEl.classList).filter(c => /^(pdf-format-|text-format-)/.test(c));
@@ -1346,11 +1366,49 @@ function _markLoaded(rawHtml) {
   _loadState.sig = _loadSig();
   _loadState.dirty = false;
 }
+// Skeleton shown in place of the (hidden) document while it is being laid out.
+let _skeletonEl = null;
+function _showSkeleton() {
+  if (!docContainer || _skeletonEl) return;
+  if (!document.getElementById('doc-skeleton-styles')) {
+    const st = document.createElement('style');
+    st.id = 'doc-skeleton-styles';
+    st.textContent = `
+      .doc-skeleton{position:absolute;z-index:6;pointer-events:none;display:flex;flex-direction:column;align-items:center;gap:14px;padding-top:20px;box-sizing:border-box}
+      .doc-skeleton .sk-bar{width:min(794px,92%);height:5px;border-radius:99px;background:rgba(120,130,150,.22);overflow:hidden}
+      .doc-skeleton .sk-bar::after{content:'';display:block;height:100%;width:38%;border-radius:99px;background:#3b82f6;animation:sk-run 1.1s ease-in-out infinite}
+      .doc-skeleton .sk-label{font-size:13px;color:#4b5563;font-family:inherit}
+      .doc-skeleton .sk-page{width:min(794px,92%);aspect-ratio:794/1123;max-height:80vh;background:#fff;border-radius:3px;box-shadow:0 1px 6px rgba(0,0,0,.18);padding:9% 8% 0;box-sizing:border-box;display:flex;flex-direction:column;gap:13px;overflow:hidden}
+      .doc-skeleton .sk-line{height:11px;border-radius:6px;background:linear-gradient(90deg,#e8eaee 25%,#f5f6f8 50%,#e8eaee 75%);background-size:200% 100%;animation:sk-shimmer 1.4s linear infinite}
+      .doc-skeleton .sk-title{height:20px;width:46%;margin-bottom:8px}
+      .doc-skeleton .sk-gap{height:10px}
+      @keyframes sk-run{0%{transform:translateX(-110%)}100%{transform:translateX(290%)}}
+      @keyframes sk-shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}`;
+    document.head.appendChild(st);
+  }
+  const host = docContainer.offsetParent || document.body;
+  const el = document.createElement('div');
+  el.className = 'doc-skeleton';
+  el.setAttribute('aria-hidden', 'true');
+  const widths = [100, 96, 100, 88, 100, 94, 60, 'g', 42, 100, 97, 100, 91, 100, 70, 'g', 100, 95, 100, 83];
+  el.innerHTML = '<div class="sk-bar"></div><div class="sk-label">ডকুমেন্ট লোড হচ্ছে…</div>' +
+    '<div class="sk-page"><div class="sk-line sk-title"></div>' +
+    widths.map(w => w === 'g' ? '<div class="sk-gap"></div>' : `<div class="sk-line" style="width:${w}%"></div>`).join('') + '</div>';
+  el.style.top = docContainer.offsetTop + 'px';
+  el.style.left = docContainer.offsetLeft + 'px';
+  el.style.width = docContainer.offsetWidth + 'px';
+  host.appendChild(el);
+  _skeletonEl = el;
+}
+function _removeSkeleton() {
+  if (_skeletonEl) { _skeletonEl.remove(); _skeletonEl = null; }
+}
 function _hideDoc() {
-  if (docContainer && _hideDepth++ === 0) docContainer.style.visibility = 'hidden';
+  _syncPageMarginCSS();
+  if (docContainer && _hideDepth++ === 0) { docContainer.style.visibility = 'hidden'; _showSkeleton(); }
 }
 function _unhideDoc() {
-  if (_hideDepth > 0 && --_hideDepth === 0 && docContainer) docContainer.style.visibility = '';
+  if (_hideDepth > 0 && --_hideDepth === 0 && docContainer) { docContainer.style.visibility = ''; _removeSkeleton(); }
 }
 
 // Everything that happens after the pages have been filled — ONE pass.
@@ -1551,6 +1609,7 @@ function _renderDocumentHTMLPlainFallback(rawHtml, triggerSave) {
   if (!docContainer) return;
   docContainer.innerHTML = '';
   docContainer.style.visibility = '';
+  _removeSkeleton();
   _loadState.dirty = true;
   const page = document.createElement('div');
   page.className = 'doc-page-canvas';
@@ -2073,6 +2132,7 @@ function _flowProcessPage(page, ctx) {
 // Whole document (after load / style change / explicit Paginate).
 function _flowAll() {
   if (!docContainer) return 0;
+  _syncPageMarginCSS();
   document.documentElement.classList.remove('perf-cv-on');
   _flowTouched.clear();
   const pages = Array.from(docContainer.querySelectorAll('.doc-page-canvas'));
