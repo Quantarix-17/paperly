@@ -3564,6 +3564,17 @@ function _pdfFontFaceCSS() {
       .photocopy-mode, .photocopy-mode *{text-shadow:none !important;-webkit-text-stroke:0 !important;}`;
 }
 
+// ===== ONE MARGIN FOR EVERYTHING =====
+// PDF_LAYOUT is the single source of truth for the page margins. Every page surface (editor page, measuring page,
+// preview, print / PDF page) gets exactly these paddings with !important so no theme, format class or stylesheet
+// can give one of them a different margin.
+function _pdfMarginCSS() {
+  const L = PDF_LAYOUT;
+  let css = `.pdf-page, .doc-page-canvas { box-sizing:border-box !important; padding:${L.padTop}px ${L.padRight}px ${L.padBottom}px ${L.padLeft}px !important; }`;
+  if (Number.isFinite(Number(L.footerBottom))) css += ` .pdf-footer, .page-footer-number { bottom:${Number(L.footerBottom)}px !important; }`;
+  return css;
+}
+
 function _buildFallbackPreviewHTML(pageChunks, isMonochromeMode, isDark) {
   const pageClasses = _getActivePDFFormatClasses(isMonochromeMode, isDark);
   const pageClassAttr = pageClasses ? ` ${pageClasses}` : '';
@@ -3589,9 +3600,10 @@ function _buildFallbackPreviewHTML(pageChunks, isMonochromeMode, isDark) {
     <style>
       * { box-sizing: border-box; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
       html, body { margin:0; padding:0; background:${bgColor}; font-family:${PDF_DOC_FONT_STACK}; line-height:1.38; font-size:12pt; display:flex; flex-direction:column; align-items:center; padding:20px; }
-      .pdf-page-wrap { width:794px; height:1123px; margin:0 auto 18px; overflow:hidden; flex:0 0 auto; contain:layout style paint; content-visibility:auto; contain-intrinsic-size:1123px; }
-      .pdf-page { background:${pageBg}; color:${textColor}; width:794px; height:1123px; padding:62px 58px 58px 58px; box-sizing:border-box; position:relative; overflow:hidden; text-align:left; line-height:1.38; font-size:12pt; }
+      .pdf-page-wrap { width:${PDF_LAYOUT.width}px; height:${PDF_LAYOUT.height}px; margin:0 auto 18px; overflow:hidden; flex:0 0 auto; contain:layout style paint; content-visibility:auto; contain-intrinsic-size:${PDF_LAYOUT.height}px; }
+      .pdf-page { background:${pageBg}; color:${textColor}; width:${PDF_LAYOUT.width}px; height:${PDF_LAYOUT.height}px; padding:${PDF_LAYOUT.padTop}px ${PDF_LAYOUT.padRight}px ${PDF_LAYOUT.padBottom}px ${PDF_LAYOUT.padLeft}px; box-sizing:border-box; position:relative; overflow:hidden; text-align:left; line-height:1.38; font-size:12pt; }
       ${PDF_FORMAT_THEME_CSS}
+      ${_pdfMarginCSS()}
       ${PDF_FIGURE_LAYOUT_CSS}
       ${_pdfFontFaceCSS()}
       .pdf-page p, .pdf-page li, .pdf-page td, .pdf-page th, .pdf-page blockquote, .pdf-page figcaption { line-height:1.38; }
@@ -3849,6 +3861,7 @@ function buildUnifiedPDFPreviewDocument(pageChunks, isMonochromeMode, isDark, op
       .pdf-page-wrap { width:${PDF_LAYOUT.width}px; height:${PDF_LAYOUT.height}px; margin:0 auto 18px; overflow:hidden; flex:0 0 auto; break-inside:avoid; page-break-inside:avoid; contain:layout style paint; content-visibility:auto; contain-intrinsic-size:${PDF_LAYOUT.width}px ${PDF_LAYOUT.height}px; }
       .pdf-page { background:${pageBg}; color:${textColor}; width:${PDF_LAYOUT.width}px; height:${PDF_LAYOUT.height}px; padding:${PDF_LAYOUT.padTop}px ${PDF_LAYOUT.padRight}px ${PDF_LAYOUT.padBottom}px ${PDF_LAYOUT.padLeft}px; box-sizing:border-box; position:relative; overflow:hidden; text-align:left; border-radius:12px; box-shadow:${pageShadow}; break-inside:avoid; page-break-inside:avoid; line-height:1.38; font-size:12pt; }
       ${PDF_FORMAT_THEME_CSS}
+      ${_pdfMarginCSS()}
       ${PDF_FIGURE_LAYOUT_CSS}
       ${_pdfFontFaceCSS()}
       .pdf-page :not(th):not([style*="background"]):not(.block-example):not(.block-example *):not(.block-definition):not(.block-definition *):not(.block-warning):not(.block-warning *):not(.block-important):not(.block-important *):not(.block-note):not(.block-note *):not(.block-solution):not(.block-solution *):not(.block-accent):not(.pdf-footer) { background-color:transparent !important; }
