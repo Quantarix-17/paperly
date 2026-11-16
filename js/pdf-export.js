@@ -3737,11 +3737,275 @@ function _normalizePDFPageChunks(pageChunks) {
   return normalized;
 }
 
+// ===== FULL PAGE REFLOW INSIDE THE PRINT DOCUMENT (used by Export to PDF (fast)) =====
+// WHY: the pages handed to the print document were measured by the editor-side engine, with the editor's CSS. The print document
+// uses its own (tighter) CSS plus KaTeX's own equation margins, so a page can come out SHORTER (blank space at the bottom) or
+// TALLER (overflow) than it was measured. The old guard only pushed overflowing blocks onto a brand-new page and never pulled
+// anything back up, so one small overflow produced a nearly empty page ("unnecessary blank space").
+// HOW: this function runs INSIDE the print document after fonts / equations are ready. It takes every block of every page,
+// glues blocks that were cut at a page border back together, and lays the whole document out again, page by page, using the
+// REAL measured layout: a page is filled until the next block no longer fits; lists, tables and callout boxes are cut between
+// their items / rows / children (table header repeated, <ol> numbering continued); a heading is never left alone at the bottom;
+// manual page breaks are kept. If anything goes wrong the original pages are restored and the old guard runs instead.
+// It is embedded as source text (String(fn)), so it must stay self-contained and must not contain a closing script tag.
+function __pdfReflowPagesInIframe() {
+  var LIM = (Number(window.__PDF_LIMIT) || 0) + 1;
+  var HEAD = /^H[1-6]$/;
+  var ATOMIC = '.katex-eq, .katex-display, .katex, .fc-wrapper, .fc-svg-wrapper, .figure-pro, .figure-frame, figure, svg, img, canvas, pre, hr';
+  var wraps = Array.prototype.slice.call(document.querySelectorAll('.pdf-page-wrap'));
+  if (!wraps.length || LIM < 2) return false;
+  var parent = wraps[0].parentNode;
+  var anchor = wraps[wraps.length - 1].nextSibling;
+  var snapshot = wraps.map(function (w) { return w.cloneNode(true); });
+
+  function restore() {
+    Array.prototype.slice.call(document.querySelectorAll('.pdf-page-wrap')).forEach(function (w) { if (w.parentNode) w.parentNode.removeChild(w); });
+    snapshot.forEach(function (w) { parent.insertBefore(w, anchor); });
+  }
+
+  // ---------- measuring ----------
+  function blocksOf(page) {
+    var out = [];
+    for (var c = page.firstElementChild; c; c = c.nextElementSibling) if (!c.classList.contains('pdf-footer')) out.push(c);
+    return out;
+  }
+  function footerOf(page) {
+    for (var c = page.lastElementChild; c; c = c.previousElementSibling) if (c.classList.contains('pdf-footer')) return c;
+    return null;
+  }
+  function bottomOf(page) {
+    var b = 0, kids = page.children;
+    for (var i = 0; i < kids.length; i++) {
+      var k = kids[i];
+      if (k.classList.contains('pdf-footer')) continue;
+      var cs = getComputedStyle(k);
+      if (cs.display === 'none' || cs.position === 'absolute' || cs.position === 'fixed') continue;
+      var mb = parseFloat(cs.marginBottom) || 0;
+      var bt = k.offsetTop + k.offsetHeight + (mb > 0 ? mb : 0);
+      if (bt > b) b = bt;
+    }
+    return b;
+  }
+  function fits(page) { return bottomOf(page) <= LIM; }
+
+  // ---------- small helpers ----------
+  function hasOwnText(el) {
+    for (var c = el.firstChild; c; c = c.nextSibling) if (c.nodeType === 3 && /\S/.test(c.nodeValue)) return true;
+    return false;
+  }
+  function shell(el) {                                  // empty copy of a container (never copies the id / a hard-break flag)
+    var s = el.cloneNode(false);
+    s.removeAttribute('id'); s.removeAttribute('data-pdf-hard-break');
+    return s;
+  }
+  function tableOf(el) {                                // the table itself, or a wrapper that holds nothing but one table
+    if (!el || el.nodeType !== 1) return null;
+    if (el.tagName === 'TABLE') return el;
+    if (el.children.length === 1 && el.firstElementChild.tagName === 'TABLE' && !hasOwnText(el)) return el.firstElementChild;
+    return null;
+  }
+  function isBlank(el) {
+    if (el.hasAttribute('data-pdf-hard-break')) return false;
+    if (/^(IMG|SVG|CANVAS|TABLE|HR|IFRAME|VIDEO)$/i.test(el.tagName)) return false;
+    if (el.querySelector('img, svg, canvas, table, hr, iframe, video, .katex-eq, .katex')) return false;
+    return !/\S/.test((el.textContent || '').replace(/[\u00a0\u200b]/g, ' '));
+  }
+  function blockLevel(c) {
+    var d = getComputedStyle(c).display;
+    return d === 'block' || d === 'flex' || d === 'grid' || d === 'table' || d === 'list-item' || d === 'flow-root' || d === 'none';
+  }
+  function splittableContainer(x) {                     // a box that only holds block children can be cut between them
+    if (!/^(DIV|SECTION|BLOCKQUOTE|ARTICLE|ASIDE)$/.test(x.tagName)) return false;
+    if (x.matches(ATOMIC) || !x.children.length || hasOwnText(x)) return false;
+    for (var i = 0; i < x.children.length; i++) if (!blockLevel(x.children[i])) return false;
+    return true;
+  }
+
+  // ---------- 1) glue pieces that the editor-side engine cut at a page border ----------
+  function mergeInto(a, b) {
+    if (!a || !b || b.hasAttribute('data-pdf-hard-break')) return false;
+    var ta = tableOf(a), tb = tableOf(b);
+    if (ta && tb && ta.classList.contains('pdf-table-cont-next') && tb.classList.contains('pdf-table-cont-prev')) {
+      var dst = ta.tBodies.length ? ta.tBodies[ta.tBodies.length - 1] : ta.appendChild(document.createElement('tbody'));
+      Array.prototype.slice.call(tb.rows).forEach(function (r) { if (!r.parentNode || r.parentNode.tagName !== 'THEAD') dst.appendChild(r); });   // the repeated header row is dropped
+      if (!tb.classList.contains('pdf-table-cont-next')) ta.classList.remove('pdf-table-cont-next');
+      if (b.parentNode) b.parentNode.removeChild(b);
+      return true;
+    }
+    if (a.tagName === b.tagName && a.classList.contains('pdf-split-next') && b.classList.contains('pdf-split-prev')) {
+      var aLast = a.lastElementChild, bFirst = b.firstElementChild, keepNext = b.classList.contains('pdf-split-next');
+      while (b.firstChild) a.appendChild(b.firstChild);
+      if (!keepNext) a.classList.remove('pdf-split-next');
+      if (b.parentNode) b.parentNode.removeChild(b);
+      if (aLast && bFirst) mergeInto(aLast, bFirst);   // the cut can run through nested boxes / a table inside the box
+      return true;
+    }
+    return false;
+  }
+
+  // ---------- 2) cutting a block that does not fit ----------
+  // cut(page, x): x is the LAST block of the page and the page does not fit. Afterwards the page fits again. Returns the tail that
+  // still has to be placed (a new element), or x itself when nothing of x fits (x has then been taken out of the page).
+  function cutList(page, ul) {
+    var items = Array.prototype.filter.call(ul.children, function (c) { return c.tagName === 'LI'; });
+    if (items.length < 2) return null;
+    var moved = [];
+    while (items.length > 1 && !fits(page)) { var it = items.pop(); ul.removeChild(it); moved.unshift(it); }
+    if (!moved.length) return null;
+    if (!fits(page)) { moved.forEach(function (m) { ul.appendChild(m); }); return null; }
+    var rest = shell(ul);
+    if (rest.tagName === 'OL') { var st = ul.start; rest.setAttribute('start', String((isFinite(st) ? st : 1) + items.length)); }   // numbering goes on
+    moved.forEach(function (m) { rest.appendChild(m); });
+    ul.classList.add('pdf-split-next'); rest.classList.add('pdf-split-prev');
+    return rest;
+  }
+  function cutTable(page, x) {
+    var table = tableOf(x), outer = (table === x) ? null : x;
+    var all = Array.prototype.slice.call(table.rows);
+    var head = table.tHead ? Array.prototype.slice.call(table.tHead.rows) : [];
+    if (!head.length && all.length > 1 && all[0].cells.length && Array.prototype.every.call(all[0].cells, function (c) { return c.tagName === 'TH'; })) head = [all[0]];
+    var body = all.filter(function (r) { return head.indexOf(r) < 0; });
+    if (body.length < 2) return null;
+    var moved = [];
+    while (body.length > 1 && !fits(page)) { var r = body.pop(); moved.unshift({ row: r, parent: r.parentNode }); r.parentNode.removeChild(r); }
+    if (!moved.length) return null;
+    if (!fits(page)) { moved.forEach(function (m) { m.parent.appendChild(m.row); }); return null; }
+    var t = table.cloneNode(false); t.removeAttribute('id');
+    Array.prototype.forEach.call(table.children, function (c) { if (c.tagName === 'COLGROUP') t.appendChild(c.cloneNode(true)); });
+    if (head.length) { var th = document.createElement('thead'); head.forEach(function (h) { th.appendChild(h.cloneNode(true)); }); t.appendChild(th); }   // header row repeats
+    var tb = document.createElement('tbody'); moved.forEach(function (m) { tb.appendChild(m.row); }); t.appendChild(tb);
+    table.classList.add('pdf-table-cont-next'); t.classList.add('pdf-table-cont-prev');
+    if (!outer) return t;
+    var holder = shell(outer); holder.appendChild(t);
+    return holder;
+  }
+  function cutContainer(page, x) {
+    var kids = Array.prototype.slice.call(x.children), moved = [];
+    while (kids.length > 1 && !fits(page)) { var c = kids.pop(); x.removeChild(c); moved.unshift(c); }
+    if (fits(page)) {
+      if (!moved.length) return null;
+      var st = moved[0];                                  // the child that crossed the page end may stay partly on this page
+      x.appendChild(st);
+      if (!fits(page)) { var sub = cut(page, st); if (sub !== st && sub) moved[0] = sub; }
+      else moved.shift();
+    } else {                                              // a single child is left and it alone does not fit
+      var only = kids[0];
+      x.removeChild(only);
+      var shellFits = fits(page);
+      x.appendChild(only);
+      var sub2 = shellFits ? cut(page, only) : only;
+      if (sub2 === only || !sub2) {                       // nothing of it fits: the whole box moves on
+        if (only.parentNode !== x) x.appendChild(only);
+        moved.forEach(function (m) { x.appendChild(m); });
+        return null;
+      }
+      moved.unshift(sub2);
+    }
+    if (!moved.length || !x.children.length) {
+      moved.forEach(function (m) { x.appendChild(m); });
+      return null;
+    }
+    var rest = shell(x);
+    moved.forEach(function (m) { rest.appendChild(m); });
+    x.classList.add('pdf-split-next'); rest.classList.add('pdf-split-prev');
+    return rest;
+  }
+  function cut(page, x) {
+    if (fits(page)) return null;
+    var rest = null;
+    if (x.tagName === 'UL' || x.tagName === 'OL') rest = cutList(page, x);
+    else if (tableOf(x)) rest = cutTable(page, x);
+    else if (splittableContainer(x)) rest = cutContainer(page, x);
+    if (rest === null) { if (x.parentNode) x.parentNode.removeChild(x); return x; }
+    return rest;
+  }
+  function squeeze(page, el) {                          // one block taller than a whole page: scale it down so nothing is clipped
+    var avail = LIM - 1 - el.offsetTop - 2, hh = el.offsetHeight;
+    if (hh > 0 && avail > 0) el.style.zoom = String(Math.max(0.35, Math.min(1, avail / hh)));
+  }
+
+  try {
+    // ---------- take every block out of its page ----------
+    var blocks = [];
+    wraps.forEach(function (w) {
+      var pg = w.querySelector('.pdf-page'); if (!pg) return;
+      Array.prototype.slice.call(pg.childNodes).forEach(function (n) {
+        if (n.nodeType === 1) {
+          if (n.classList.contains('pdf-footer')) return;
+          pg.removeChild(n); blocks.push(n);
+        } else if (n.nodeType === 3 && /\S/.test(String(n.nodeValue).replace(/[\u00a0\u200b]/g, ' '))) {
+          var p = document.createElement('p'); p.appendChild(n); blocks.push(p);       // stray text becomes a paragraph, never lost
+        } else if (n.parentNode) pg.removeChild(n);
+      });
+    });
+    var tmpl = wraps[0].cloneNode(true);                  // an empty page (only its footer is left)
+    var tmplPage = tmpl.querySelector('.pdf-page'); if (tmplPage) tmplPage.style.fontSize = '';
+
+    var merged = [];
+    blocks.forEach(function (b) { var prev = merged[merged.length - 1]; if (prev && mergeInto(prev, b)) return; merged.push(b); });
+
+    // ---------- lay the document out again ----------
+    var slots = wraps.slice(), pageIdx = 0, page, queue = merged.slice(), guard = 0;
+    function pageAt(i) {
+      while (slots.length <= i) {
+        var last = slots[slots.length - 1], nw = tmpl.cloneNode(true);
+        last.parentNode.insertBefore(nw, last.nextSibling);
+        slots.push(nw);
+      }
+      return slots[i].querySelector('.pdf-page');
+    }
+    function put(pg, el) { var f = footerOf(pg); if (f) pg.insertBefore(el, f); else pg.appendChild(el); }
+    function next(carryHeadings) {
+      if (carryHeadings) {                                // a heading is never the last thing on a page
+        var bl = blocksOf(page);
+        while (bl.length > 1 && HEAD.test(bl[bl.length - 1].tagName)) { var h = bl.pop(); page.removeChild(h); queue.unshift(h); }
+      }
+      pageIdx++; page = pageAt(pageIdx);
+    }
+    page = pageAt(0);
+
+    while (queue.length) {
+      if (guard++ > 40000) throw new Error('reflow did not finish');
+      var b = queue.shift();
+      var hasBlocks = blocksOf(page).length > 0;
+      if (b.classList.contains('manual-page-break')) { if (hasBlocks) next(false); continue; }          // manual break: what follows starts a new page
+      if (b.hasAttribute('data-pdf-hard-break') && hasBlocks) { next(false); hasBlocks = false; }
+      if (!hasBlocks && isBlank(b)) continue;                                                           // a page never starts with an empty line
+      put(page, b);
+      if (fits(page)) continue;
+      var rest = cut(page, b);
+      if (rest === b) {                                                                                 // nothing of b fits on this page
+        if (!hasBlocks) { put(page, b); squeeze(page, b); continue; }                                   // taller than a whole page: keep it, scaled
+        queue.unshift(b); next(true); continue;
+      }
+      if (rest) { queue.unshift(rest); next(true); }
+    }
+
+    // ---------- tidy up ----------
+    var used = pageIdx + 1;
+    if (pageIdx > 0 && !blocksOf(page).length) used = pageIdx;
+    slots.slice(used).forEach(function (w) { if (w.parentNode) w.parentNode.removeChild(w); });
+    var all = document.querySelectorAll('.pdf-page-wrap');
+    for (var n = 0; n < all.length; n++) {
+      var f = all[n].querySelector('.pdf-footer');
+      if (f) f.textContent = 'Page ' + (n + 1) + ' of ' + all.length;
+    }
+    return true;
+  } catch (err) {
+    try { console.warn('[PDF] page reflow failed, using the simple margin guard instead:', err); } catch (_) {}
+    restore();
+    return false;
+  }
+}
+
 // ===== BOTTOM-MARGIN GUARD FOR THE PRINT DOCUMENT (used by Export to PDF (fast)) =====
 // The slow exporter keeps text out of the bottom margin because it measures each page with pageFits():
 // content must end above  padTop + contentHeight - PDF_BOTTOM_SAFETY.  The print document is laid out again by the browser with
 // its own CSS, so a page can come out taller than it was measured. This script runs INSIDE the print document, after fonts and
-// equations are ready, measures every page in that real layout and applies the same limit:
+// equations are ready, measures every page in that real layout and applies the same limit.
+// enforcePageMargins() = __pdfReflowPagesInIframe(): the whole document is laid out again in the real print layout (pages are
+// refilled, so a page can never be left half empty by an overflow elsewhere). enforcePageMarginsLegacy() is the old per-page guard,
+// kept only as the fallback if the reflow throws:
 //   1) text only slightly too low  -> the page text is set a little smaller (11pt instead of 12pt, like shrinkPageToFit)
 //   2) still too low               -> whole trailing blocks move to a new page (a heading is never left alone at the bottom)
 //   3) one block taller than a page -> that block is scaled down to fit
@@ -3771,7 +4035,7 @@ function _pdfEnforceMarginScript() {
     "  for (var i = 0; i < kids.length; i++) { if (!kids[i].classList.contains('pdf-footer')) out.push(kids[i]); }",
     '  return out;',
     '}',
-    'function enforcePageMargins(){',
+    'function enforcePageMarginsLegacy(){',
     // content-visibility:auto skips the layout of off-screen pages, which would make their blocks measure as 0
     "  if (!document.getElementById('pdf-measure-override')) {",
     "    var st = document.createElement('style'); st.id = 'pdf-measure-override';",
@@ -3826,6 +4090,14 @@ function _pdfEnforceMarginScript() {
     "    if (f) f.textContent = 'Page ' + (n + 1) + ' of ' + all.length;",
     '  }',
     '  return changed;',
+    '}',
+    // the real fix: a full reflow in the print layout. The guard above is only the fallback if the reflow throws.
+    String(__pdfReflowPagesInIframe),
+    'function enforcePageMargins(){',
+    '  var ok = false;',
+    '  try { ok = __pdfReflowPagesInIframe(); } catch (e) { ok = false; }',
+    '  if (!ok) { try { return enforcePageMarginsLegacy(); } catch (e2) { return false; } }',
+    '  return ok;',
     '}'
   ].join('\n    ');
 }
@@ -4152,6 +4424,17 @@ async function computeTruePDFPages(htmlOverride) {
 
   try { _keepHeadingsWithNext(pageEls); } catch (e) { console.warn('keep-with-next pass failed:', e); }
 
+  // Pages that start after a MANUAL page break: flag their first block, so the print layout (fast export) re-flows the
+  // document without ever pulling content across that break. The flag lives on a real block, the page chunk stays unchanged.
+  pageEls.forEach((el) => {
+    try {
+      if (el.hasAttribute && el.hasAttribute('data-pdf-hard-page')) {
+        const first = _pdfWrapperOf(el).firstElementChild;
+        if (first) first.setAttribute('data-pdf-hard-break', '1');
+      }
+    } catch (_) { /* cosmetic flag only */ }
+  });
+
   for (const page of pageEls) {
     _pdfFitWideInlineMath(page);
     if (typeof shrinkOverflowingKatexEquations === 'function') shrinkOverflowingKatexEquations(page);
@@ -4190,6 +4473,7 @@ function _pdfWrapperOf(page) { return (page && page.querySelector && page.queryS
 function _keepHeadingsWithNext(pageEls) {
   const isHeading = (el) => !!el && el.nodeType === 1 && /^H[1-6]$/.test(el.tagName);
   for (let i = 0; i < pageEls.length - 1; i++) {
+    if (pageEls[i + 1].hasAttribute && pageEls[i + 1].hasAttribute('data-pdf-hard-page')) continue;   // a manual page break stays where the author put it
     const cur = _pdfWrapperOf(pageEls[i]), nxt = _pdfWrapperOf(pageEls[i + 1]);
     const isEmptyBlock = (el) => !!el && el.nodeType === 1 && !(el.textContent || '').trim() && !el.querySelector('img, svg, canvas, table, hr, .katex-eq');
     while (cur.lastElementChild && cur.children.length > 1 && isEmptyBlock(cur.lastElementChild)) cur.removeChild(cur.lastElementChild);
@@ -4804,7 +5088,10 @@ async function appendNodeWithPagination(node, currentPage, createPage) {
     }
     if (node.nodeType !== Node.ELEMENT_NODE) return currentPage;
     if (node.classList && node.classList.contains('manual-page-break')) {
-        return pageHasContent(currentPage) ? createPage() : currentPage;
+        if (!pageHasContent(currentPage)) return currentPage;
+        const _breakPage = createPage();
+        if (_breakPage && _breakPage.setAttribute) _breakPage.setAttribute('data-pdf-hard-page', '1');   // see computeTruePDFPages
+        return _breakPage;
     }
 
     if (/^(UL|OL)$/i.test(node.tagName)) {
@@ -5030,6 +5317,11 @@ async function splitListElement(node, currentPage, createPage) {
     appendToFitWrapper(page, list);
     list.innerHTML = '';
     let didSplit = false;
+    // A list cut by a page break: the next piece must CONTINUE the numbering of an <ol> (it used to restart at 1), and both
+    // pieces are flagged so the print layout can glue them back together when the page has room (see __pdfReflowPagesInIframe).
+    let placedItems = 0;                 // <li> already laid out in earlier pieces
+    let lastPiece = null;                // the previous non-empty piece
+    const baseStart = /^OL$/i.test(node.tagName) ? (parseInt(node.getAttribute('start'), 10) || 1) : 0;
 
     for (const item of items) {
         const itemClone = item.cloneNode(true);
@@ -5046,6 +5338,7 @@ async function splitListElement(node, currentPage, createPage) {
         if (!pageFits(page)) {
             list.removeChild(itemClone);
             if (!list.children.length && list.parentNode) list.parentNode.removeChild(list);   // do not leave an empty <ul> behind (it hid a stranded heading)
+            else { placedItems += list.children.length; lastPiece = list; }
             page = createPage();
             if (typeof processMathEquationsInContainer === 'function') processMathEquationsInContainer(page);
             if (typeof renderAllKatexVisuals === 'function') renderAllKatexVisuals(page);
@@ -5053,6 +5346,8 @@ async function splitListElement(node, currentPage, createPage) {
             list = cloneElementShell(node);
             appendToFitWrapper(page, list);
             list.innerHTML = '';
+            if (baseStart && placedItems) list.setAttribute('start', String(baseStart + placedItems));
+            if (lastPiece) { lastPiece.classList.add('pdf-split-next'); list.classList.add('pdf-split-prev'); }
             list.appendChild(itemClone);
             didSplit = true;
         }
