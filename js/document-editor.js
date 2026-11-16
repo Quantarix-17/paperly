@@ -207,25 +207,68 @@ function _getScrollEl() {
   return document.scrollingElement || document.documentElement;
 }
 
+// Ref-counted style locks. Overlapping runs (held Ctrl+Z, rapid paginate clicks) used to
+// record each other's temporary padding / min-height / scroll-behavior as the "original"
+// and restore it forever. Now the originals are captured once, by the first holder, and
+// restored only when the last holder releases.
+const _styleLocks = new Map();
+const _CONTAINER_LOCK_PROPS = ['minHeight', 'overflowAnchor', 'paddingBottom'];
+function _acquireStyleLock(el, props) {
+  let s = _styleLocks.get(el);
+  if (!s) { s = { count: 0, orig: {}, flags: {} }; _styleLocks.set(el, s); }
+  props.forEach(p => { if (!(p in s.orig)) s.orig[p] = el.style[p]; });
+  s.count++;
+  return s;
+}
+function _releaseStyleLock(el) {
+  const s = _styleLocks.get(el);
+  if (!s) return;
+  if (--s.count > 0) return;
+  _styleLocks.delete(el);
+  Object.keys(s.orig).forEach(p => { try { el.style[p] = s.orig[p] || ''; } catch (_) {} });
+}
+function _acquireContainerLock() {
+  if (!docContainer) return null;
+  const el = docContainer;
+  const s = _acquireStyleLock(el, _CONTAINER_LOCK_PROPS);
+  if (!s.flags.locked) {
+    s.flags.locked = true;
+    // Keep the outer layout from jumping when innerHTML = '' collapses the container.
+    el.style.minHeight = Math.max(el.scrollHeight || 0, 400) + 'px';
+    el.style.overflowAnchor = 'none';
+  }
+  return { el };
+}
+function _releaseContainerLock(lock) {
+  if (lock && lock.el) _releaseStyleLock(lock.el);
+}
+
 function _beginScrollLock() {
   if (!docContainer) return null;
   const el = _getScrollEl();
+  const root = document.documentElement;
+  const ctr = docContainer;
+  const cs = _acquireStyleLock(ctr, _CONTAINER_LOCK_PROPS);
+  _acquireStyleLock(el, ['scrollBehavior']);
+  _acquireStyleLock(root, ['scrollBehavior']);
   const st = {
     el,
+    root,
+    ctr,
     top: el.scrollTop,
     left: el.scrollLeft,
-    prevBehavior: el.style.scrollBehavior,
-    prevRootBehavior: document.documentElement.style.scrollBehavior,
-    prevPad: docContainer.style.paddingBottom,
     userMoved: false,
     listeners: []
   };
   el.style.scrollBehavior = 'auto';
-  document.documentElement.style.scrollBehavior = 'auto';
+  root.style.scrollBehavior = 'auto';
   try {
-    const basePad = parseFloat(getComputedStyle(docContainer).paddingBottom) || 0;
-    const extra = Math.max(el.scrollHeight || 0, docContainer.scrollHeight || 0);
-    docContainer.style.paddingBottom = (basePad + extra) + 'px';
+    if (!cs.flags.padded) {
+      cs.flags.padded = true;
+      const basePad = parseFloat(getComputedStyle(ctr).paddingBottom) || 0;
+      const extra = Math.max(el.scrollHeight || 0, ctr.scrollHeight || 0);
+      ctr.style.paddingBottom = (basePad + extra) + 'px';
+    }
   } catch (_) {}
   const mark = () => { st.userMoved = true; };
   [docContainer, el].forEach(t => {
@@ -245,14 +288,13 @@ function _applyScrollLock(st) {
 
 function _endScrollLock(st) {
   if (!st) return;
-  try { docContainer.style.paddingBottom = st.prevPad || ''; } catch (_) {}
+  try { _releaseStyleLock(st.ctr); } catch (_) {}
   _applyScrollLock(st);
   st.listeners.forEach(([t, ev, fn]) => { try { t.removeEventListener(ev, fn); } catch (_) {} });
   st.listeners = [];
   const finish = () => {
     _applyScrollLock(st);
-    st.el.style.scrollBehavior = st.prevBehavior || '';
-    document.documentElement.style.scrollBehavior = st.prevRootBehavior || '';
+    try { _releaseStyleLock(st.el); _releaseStyleLock(st.root); } catch (_) {}
   };
   if (typeof requestAnimationFrame === 'function') requestAnimationFrame(finish); else finish();
 }
@@ -1111,14 +1153,17 @@ function pageHasContent(page) {
   const coverJoined = _getCoverLines().join(' ');
   const placeholders = promptPhrases.concat([coverJoined]).map(_squashText).filter(Boolean);
   let rest = _squashText(text);
-  placeholders.forEach(p => { rest = rest.split(p).join(''); });
+  let removedPlaceholder = false;
+  placeholders.forEach(p => { if (rest.includes(p)) { removedPlaceholder = true; rest = rest.split(p).join(''); } });
   rest = rest.replace(/[^\p{L}\p{N}]+/gu, '');
-  const isPhraseOnly = rest === '' || rest === 'page1' || rest === 'page1of1';
+  // Text made only of symbols ("—", "***", "→") is real content, not a placeholder.
+  const symbolsOnly = rest === '' && !removedPlaceholder && text.length > 0;
+  const isPhraseOnly = !symbolsOnly && (rest === '' || rest === 'page1' || rest === 'page1of1');
   const isShortWithPrompt = text.length <= 160 && promptPhrases.some(p => normalized.includes(p));
   const isCover = normalized.includes('created by tamim') && text.length <= 400;
   const isPlaceholderOnly = isPhraseOnly || isShortWithPrompt || isCover;
 
-  const hasVisual = !!page.querySelector('img, svg, table, .katex-eq, .fc-wrapper, .figure-pro, .block-solution, .quiz-container');
+  const hasVisual = !!page.querySelector('img, svg, table, hr, .katex-eq, .fc-wrapper, .figure-pro, .block-solution, .quiz-container');
 
   let hasCanvasInk = false;
   const canvases = page.querySelectorAll('canvas');
@@ -1214,7 +1259,16 @@ const HISTORY = {
     }
   },
 
-  async undo() {
+  // Serialised: a held Ctrl+Z used to start overlapping setDocumentHTMLAndPaginate() runs.
+  undo() { return this._enqueue(() => this._undoImpl()); },
+  redo() { return this._enqueue(() => this._redoImpl()); },
+  _enqueue(fn) {
+    const run = (this._queue || Promise.resolve()).then(fn).catch(err => console.warn('[history]', err));
+    this._queue = run;
+    return run;
+  },
+
+  async _undoImpl() {
     this._flushPendingSave();
     if (this.undoStack.length <= 1) {
       if (typeof displayToastNotification === 'function') displayToastNotification("ℹ Nothing to undo.");
@@ -1230,7 +1284,7 @@ const HISTORY = {
     }
   },
 
-  async redo() {
+  async _redoImpl() {
     if (this.redoStack.length === 0) {
       if (typeof displayToastNotification === 'function') displayToastNotification("ℹ Nothing to redo.");
       return;
@@ -1297,7 +1351,7 @@ function getCanvasSnapshotHTML() {
       if (!e) { e = { html: _pageSnapshotHTML(page) }; _pageSnapCache.set(page, e); }
       html = e.html;
     }
-    entries.push({ has, html });
+    entries.push({ has, html, hard: !!(page.dataset && page.dataset.hardBreak) });
   });
   const first = entries.findIndex(e => e.has);
   if (first < 0) return '';
@@ -1308,7 +1362,8 @@ function getCanvasSnapshotHTML() {
   return entries.map((e, i) => {
     if (!e.has) return (i > first && i < last) ? BR + SPACER + BR : '';
     if (e.html.replace(/<p class="blank-page-spacer">(?:&nbsp;|\u00a0)<\/p>/g, '').trim() === '') return BR + e.html + BR;
-    return e.html;
+    // a page that started after a manual break keeps that break in the saved HTML
+    return (e.hard && i > first ? BR : '') + e.html;
   }).join('');
 }
 window.getCanvasSnapshotHTML = getCanvasSnapshotHTML;
@@ -1481,6 +1536,19 @@ function saveCaretPosition() {
   const activePage = el && el.closest ? el.closest('.doc-page-canvas') : null;
   if (!activePage) return null;
   const markerId = 'caret-marker-' + Date.now() + '-' + (++_caretMarkerSeq);
+  // Non-collapsed selection: drop the END marker first so the start offsets stay valid.
+  if (!range.collapsed) {
+    const endContainer = range.endContainer;
+    const endEl = endContainer.nodeType === 3 ? endContainer.parentElement : endContainer;
+    if (endEl && endEl.closest && endEl.closest('.doc-page-canvas')) {
+      const endMarker = document.createElement('span');
+      endMarker.id = markerId + '-end';
+      endMarker.style.display = 'none';
+      const re = range.cloneRange();
+      re.collapse(false);
+      re.insertNode(endMarker);
+    }
+  }
   const marker = document.createElement('span');
   marker.id = markerId;
   marker.style.display = 'none';
@@ -1497,12 +1565,19 @@ function restoreCaretPosition(markerId) {
   const parent = marker.parentNode;
   const page = marker.closest('.doc-page-canvas');
   if (page) { try { page.focus({ preventScroll: true }); } catch (_) { page.focus(); } }
+  const endMarker = document.getElementById(markerId + '-end');
   const selection = window.getSelection();
   const range = document.createRange();
   range.setStartBefore(marker);
-  range.collapse(true);
+  if (endMarker) range.setEndBefore(endMarker); else range.collapse(true);
   selection.removeAllRanges();
   selection.addRange(range);
+  // end marker first, so the start boundary is not shifted by its removal
+  if (endMarker && endMarker.parentNode) {
+    const endParent = endMarker.parentNode;
+    endParent.removeChild(endMarker);
+    if (endParent.normalize && endParent !== parent) endParent.normalize();
+  }
   parent.removeChild(marker);
   if (parent.normalize) parent.normalize();
 }
@@ -1655,21 +1730,21 @@ async function _paginateDocumentHTMLCore(rawHtml, triggerSave = true) {
   // Lock the container height so the outer layout (scrollbar, other UI)
   // does not jump when innerHTML = '' collapses it. This is the #1 scroll
   // stability fix; it is invisible to the user.
-  const prevHeight = Math.max(docContainer.scrollHeight || 0, 400);
-  const prevMinHeight = docContainer.style.minHeight;
-  docContainer.style.minHeight = prevHeight + 'px';
-  const prevOverflowAnchor = docContainer.style.overflowAnchor;
-  docContainer.style.overflowAnchor = 'none';
-
-  _enterPagination();
-  _hideDoc();
+  const _ctrLock = _acquireContainerLock();
+  let _entered = false;
   let _revealed = false;
   const reveal = () => { if (!_revealed) { _revealed = true; _unhideDoc(); } };
-  document.documentElement.classList.remove('perf-cv-on');
-  window.__mathLastOverflowSig = null;
-  const scrollLock = _beginScrollLock();
-  const markerId = _saveCaretOffset();
+  let scrollLock = null;
+  let markerId = null;
   try {
+    // Everything that can throw lives inside the try, so the finally below always
+    // balances _enterPagination() and releases the locks.
+    _enterPagination(); _entered = true;
+    _hideDoc();
+    document.documentElement.classList.remove('perf-cv-on');
+    window.__mathLastOverflowSig = null;
+    scrollLock = _beginScrollLock();
+    markerId = _saveCaretOffset();
     docContainer.innerHTML = '';
     const tempSource = document.createElement('div');
     tempSource.innerHTML = _prepareHTML(rawHtml);
@@ -1723,14 +1798,13 @@ async function _paginateDocumentHTMLCore(rawHtml, triggerSave = true) {
     }
   } finally {
     // Release the min-height lock and restore overflow-anchor.
-    docContainer.style.minHeight = prevMinHeight || '';
-    docContainer.style.overflowAnchor = prevOverflowAnchor || '';
+    _releaseContainerLock(_ctrLock);
     if (runId === _paginateRunId) _activeSourceHTML = null;
     _endScrollLock(scrollLock);
     // Suppress font-loadingdone re-settle for 3 s.
     _suppressFontSettleUntil = Date.now() + 3000;
     reveal();
-    _exitPagination();
+    if (_entered) _exitPagination();
   }
 }
 
@@ -1967,7 +2041,8 @@ function _flowFixOverflow(page) {
   if (r.placed) { popped.shift(); if (r.tail) popped.unshift(r.tail); }
   if (!popped.length) return 1;
   let target = _nextEditorPage(page);
-  if (!target) target = createNewPageAfter(page);
+  // never push overflow across a manual page break: open a fresh page in front of it
+  if (!target || target.dataset.hardBreak) target = createNewPageAfter(page);
   const frag = document.createDocumentFragment();
   popped.forEach(n => frag.appendChild(n));
   target.prepend(frag);
@@ -2621,21 +2696,21 @@ async function _paginateDocumentCanvasAsyncCoreImpl(rawHtml, triggerSave, scratc
 
   // Lock the container height so the outer layout doesn't jump during
   // innerHTML = '' — this is the #1 scroll stability fix. Invisible.
-  const prevHeight = Math.max(docContainer.scrollHeight || 0, 400);
-  const prevMinHeight = docContainer.style.minHeight;
-  docContainer.style.minHeight = prevHeight + 'px';
-  const prevOverflowAnchor = docContainer.style.overflowAnchor;
-  docContainer.style.overflowAnchor = 'none';
-
-  _enterPagination();
-  _hideDoc();
+  const _ctrLock = _acquireContainerLock();
+  let _entered = false;
   let _revealed = false;
   const reveal = () => { if (!_revealed) { _revealed = true; _unhideDoc(); } };
-  document.documentElement.classList.remove('perf-cv-on');
-  window.__mathLastOverflowSig = null;
-  const scrollLock = _beginScrollLock();
-  const markerId = _saveCaretOffset();
+  let scrollLock = null;
+  let markerId = null;
   try {
+    // Everything that can throw lives inside the try, so the finally below always
+    // balances _enterPagination() and releases the locks.
+    _enterPagination(); _entered = true;
+    _hideDoc();
+    document.documentElement.classList.remove('perf-cv-on');
+    window.__mathLastOverflowSig = null;
+    scrollLock = _beginScrollLock();
+    markerId = _saveCaretOffset();
     docContainer.innerHTML = '';
     const tempSource = document.createElement('div');
     tempSource.innerHTML = _prepareHTML(rawHtml);
@@ -2723,13 +2798,12 @@ async function _paginateDocumentCanvasAsyncCoreImpl(rawHtml, triggerSave, scratc
       generateLivePDFIframePreview();
     }
   } finally {
-    docContainer.style.minHeight = prevMinHeight || '';
-    docContainer.style.overflowAnchor = prevOverflowAnchor || '';
+    _releaseContainerLock(_ctrLock);
     if (runId === _paginateRunId) _activeSourceHTML = null;
     _endScrollLock(scrollLock);
     _suppressFontSettleUntil = Date.now() + 3000;
     reveal();
-    _exitPagination();
+    if (_entered) _exitPagination();
   }
 }
 
@@ -2894,9 +2968,35 @@ function handlePageKeydown(e) {
 // `docContainer.innerHTML = ''` runs, phantom events fire on removed pages.
 // Without these guards they would schedule a reflow right AFTER pagination
 // finished — the visible second bounce.
+// Pressing Enter inside a split block makes the browser copy split-head / split-tail
+// onto the new paragraph; _mergeSplitBlocks would then glue both halves back together.
+// The first half must stop being a "head", the new half must stop being a "tail".
+function _fixSplitClassesAfterEnter() {
+  try {
+    const sel = window.getSelection();
+    if (!sel || !sel.rangeCount) return;
+    const n = sel.anchorNode;
+    let cur = n && n.nodeType === 3 ? n.parentElement : n;
+    while (cur && !(cur.classList && (cur.classList.contains('split-head') || cur.classList.contains('split-tail')))) {
+      if (cur.classList && cur.classList.contains('doc-page-canvas')) return;
+      cur = cur.parentElement;
+    }
+    if (!cur) return;
+    const prev = cur.previousElementSibling;
+    if (!prev || prev.tagName !== cur.tagName) return;
+    const cloned = (prev.classList.contains('split-head') && cur.classList.contains('split-head')) ||
+                   (prev.classList.contains('split-tail') && cur.classList.contains('split-tail'));
+    if (!cloned) return;
+    prev.classList.remove('split-head');
+    cur.classList.remove('split-tail');
+    [prev, cur].forEach(el => { if (!el.getAttribute('class')) el.removeAttribute('class'); });
+  } catch (_) { /* best effort */ }
+}
+
 function handleCanvasInput(event) {
   const page = event && event.currentTarget;
   if (!page || !page.isConnected) return;
+  if (event.inputType === 'insertParagraph') _fixSplitClassesAfterEnter();
   if (page.classList) _dirtyPages.add(page);
   _htmlSetToken++;
   if (typeof invalidatePDFPreviewCache === 'function') invalidatePDFPreviewCache();
@@ -3715,7 +3815,9 @@ function detectRequestedPageNumber(promptText) {
   const normalized = convertBengaliDigitsToEnglish(promptText);
   const patterns = [
     /\bpage\s*(?:number|no\.?|#)?\s*(\d+)\b/i,
-    /(\d+)\s*(?:নম্বর|নং)?\s*(?:পেজ|পৃষ্ঠা|পাতা)/,
+    // number first: only with an explicit ordinal marker ("৩ নম্বর পেজ", "৩য় পেজ").
+    // A bare "10 পেজের নোট" means "10 pages of notes", not "edit page 10".
+    /(\d+)\s*(?:নম্বর|নং|য়|র্থ|তম|ম)\s*(?:পেজ|পৃষ্ঠা|পাতা)(?!\p{L})/u,
     /(?:পেজ|পৃষ্ঠা|পাতা)\s*(?:নম্বর|নং)?\s*(\d+)/
   ];
   for (const re of patterns) {
@@ -3752,6 +3854,7 @@ function getMultiPageEditContext(pageNumbers) {
   const nums = [...new Set((pageNumbers || []).map(n => parseInt(n, 10)).filter(n => n >= 1 && n <= totalPages))].sort((a, b) => a - b);
   if (!nums.length) return null;
   const selected = new Set(nums);
+  const contextAdded = new Set();
   let contextString = '';
   nums.forEach(n => {
     const clone = pages[n - 1].cloneNode(true);
@@ -3759,7 +3862,8 @@ function getMultiPageEditContext(pageNumbers) {
     const cleanHTML = typeof convertKatexSpansToLatexSource === 'function' ? convertKatexSpansToLatexSource(clone.innerHTML) : clone.innerHTML;
     contextString += `\n[PAGE ${n} — TARGET, EDIT ONLY THIS PAGE]\n${cleanHTML}\n[/PAGE ${n}]\n`;
     for (const neighbor of [n - 1, n + 1]) {
-      if (neighbor >= 1 && neighbor <= totalPages && !selected.has(neighbor)) {
+      if (neighbor >= 1 && neighbor <= totalPages && !selected.has(neighbor) && !contextAdded.has(neighbor)) {
+        contextAdded.add(neighbor);
         const nc = pages[neighbor - 1].cloneNode(true);
         nc.querySelectorAll('.page-footer-number').forEach(f => f.remove());
         contextString += `\n[PAGE ${neighbor} — CONTEXT ONLY, DO NOT MODIFY]\n${typeof convertKatexSpansToLatexSource === 'function' ? convertKatexSpansToLatexSource(nc.innerHTML) : nc.innerHTML}\n[/PAGE ${neighbor}]\n`;
@@ -3889,6 +3993,7 @@ function stepSelectedFontSize(deltaPx) {
 
   document.execCommand('styleWithCSS', false, false);
   document.execCommand('fontSize', false, '7');
+  try { document.execCommand('styleWithCSS', false, true); } catch (_) { /* restore default */ }
   Array.from(page.querySelectorAll('font[size="7"]')).forEach(el => {
     el.removeAttribute('size');
     el.style.fontSize = targetPx + 'px';
@@ -4062,9 +4167,40 @@ function extractBeautifyHtmlFromAIResponse(rawContent) {
       });
     }
   }
-  const trimmed = String(rawContent).trim();
-  if (/<(?:h[1-6]|p|div|table|ul|ol|section)\b/i.test(trimmed)) {
-    return trimmed.replace(/^```(?:html)?\s*/i, '').replace(/\s*```$/i, '').trim();
+  // Truncated JSON (finishReason === 'length'): the closing quote is missing, so the
+  // regex above cannot match. Salvage the partial html_content string instead.
+  const _raw = String(rawContent);
+  const _open = _raw.match(/"html_content"\s*:\s*"/);
+  if (_open) {
+    let part = _raw.slice(_open.index + _open[0].length);
+    const _bs = part.match(/\\+$/);
+    if (_bs && _bs[0].length % 2 === 1) part = part.slice(0, -1);      // cut mid-escape
+    part = part.replace(/\\u[0-9a-fA-F]{0,3}$/, '');                  // cut mid-\uXXXX
+    part = part.replace(/"\s*}\s*$/, '');                             // stray closing of the object
+    let decoded;
+    try {
+      decoded = JSON.parse('"' + part + '"');
+    } catch (_) {
+      decoded = part.replace(/\\(u[0-9a-fA-F]{4}|["\\\/bfnrt])/g, (full, k) => {
+        switch (k[0]) {
+          case 'n': return '\n';
+          case 'r': return '';
+          case 't': return '\t';
+          case 'b': return '\b';
+          case 'f': return '\f';
+          case 'u': return String.fromCharCode(parseInt(k.slice(1), 16));
+          default: return k;
+        }
+      });
+    }
+    return decoded.trim();
+  }
+  const trimmed = _raw.trim();
+  const unfenced = trimmed.replace(/^```(?:json|html)?\s*/i, '').replace(/\s*```$/i, '').trim();
+  // Never hand raw JSON back as if it were HTML.
+  if (/^[\[{]/.test(unfenced)) return '';
+  if (/<(?:h[1-6]|p|div|table|ul|ol|section)\b/i.test(unfenced)) {
+    return unfenced;
   }
   return '';
 }
@@ -4138,7 +4274,10 @@ function getBeautifyMaxTokens() {
 }
 
 function detectOutputLanguage(promptText) {
-  const text = (promptText || '').toString();
+  // Count only visible text: tag and attribute names are Latin letters and skew the result.
+  const text = (promptText || '').toString()
+    .replace(/<(style|script)\b[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<\/?[a-z][^>]*>/gi, ' ');
   if (/\b(in\s+english|everything\s+(should\s+be\s+)?in\s+english|english\s+only|reply\s+in\s+english|write\s+in\s+english)\b/i.test(text)) return 'en';
   if (/(বাংলায়|বাংলা\s*ভাষায়)/i.test(text)) return 'bn';
   const bengaliChars = (text.match(/[\u0980-\u09FF]/g) || []).length;
@@ -4147,7 +4286,8 @@ function detectOutputLanguage(promptText) {
 }
 
 // ===== DETECT BROKEN PAGES =====
-function getBrokenPages() {
+function getBrokenPages(opts = {}) {
+  const includeEmpty = opts.includeEmpty !== false;
   const container = docContainer || document.getElementById('document-view-container');
   if (!container) return [];
   const pages = Array.from(container.querySelectorAll('.doc-page-canvas'));
@@ -4155,7 +4295,7 @@ function getBrokenPages() {
   pages.forEach((page, index) => {
     const brokenEquations = typeof findBrokenEquations === 'function' ? findBrokenEquations(page) : [];
     const hasBrokenKatex = page.querySelectorAll('.katex-eq.katex-render-failed, .katex-eq[data-render-pending="true"]').length > 0;
-    const isEmpty = pages.length > 1 && !pageHasContent(page);
+    const isEmpty = includeEmpty && pages.length > 1 && !pageHasContent(page);
     if (brokenEquations.length > 0 || hasBrokenKatex || isEmpty) {
       brokenIndices.push(index);
     }
@@ -4273,7 +4413,14 @@ async function beautifyDocument(options = {}) {
     if (chatMsg && typeof appendChatMessageToUI === 'function') appendChatMessageToUI('ai', chatMsg);
   };
 
-  const brokenIndices = getBrokenPages();
+  // An ordinary empty page is not a rendering fault: only broken equations / KaTeX
+  // trigger the repair-and-return path, so the real beautify still runs otherwise.
+  let brokenIndices = [];
+  try {
+    brokenIndices = getBrokenPages({ includeEmpty: false });
+  } catch (scanErr) {
+    console.warn('[beautifyDocument] broken-page scan failed:', scanErr);
+  }
 
   if (hasAIModel && brokenIndices.length > 0) {
     try {
@@ -4368,10 +4515,22 @@ async function beautifyDocument(options = {}) {
     return;
   }
 
-  const sourceForAI = typeof getCanvasContentWithLatexSource === 'function' ? getCanvasContentWithLatexSource() : currentFullHTML;
-  const outputLanguage = detectOutputLanguage(sourceForAI || currentFullHTML);
-  const source = getBeautifySourceHTML() || sourceForAI || currentFullHTML;
-  const maxTokens = getBeautifyMaxTokens();
+  let sourceForAI, outputLanguage, source, maxTokens;
+  try {
+    sourceForAI = typeof getCanvasContentWithLatexSource === 'function' ? getCanvasContentWithLatexSource() : currentFullHTML;
+    outputLanguage = detectOutputLanguage(sourceForAI || currentFullHTML);
+    source = getBeautifySourceHTML() || sourceForAI || currentFullHTML;
+    maxTokens = getBeautifyMaxTokens();
+  } catch (prepErr) {
+    // Without this, a throw here left isAIGenerating = true and the send button disabled.
+    console.error('[beautifyDocument] preparing source failed:', prepErr);
+    if (window.APP_STATE) window.APP_STATE.isAIGenerating = false;
+    if (sendBtn) sendBtn.disabled = false;
+    if (typeof displayToastNotification === 'function') {
+      displayToastNotification('Error Beautify failed: ' + (prepErr && prepErr.message ? prepErr.message : 'unknown'));
+    }
+    return;
+  }
 
   if (typeof ProgressUI !== 'undefined' && ProgressUI.show) {
     ProgressUI.show('Beautifying…', 'Single-pass full-document formatting…');
@@ -4910,7 +5069,10 @@ function fitOneDiagramSvgLabels(svg) {
         const cx = rectX + rectW / 2;
         const cy = rectY + rectH / 2;
 
-        const original = (textEl.textContent || '').replace(/\s+/g, ' ').trim();
+        const _existingTspans = Array.from(textEl.querySelectorAll('tspan'));
+        const original = (_existingTspans.length
+          ? _existingTspans.map(t => t.textContent).join(' ')
+          : (textEl.textContent || '')).replace(/\s+/g, ' ').trim();
         if (!original) return;
 
         const fontSize = _svgFontPx(textEl);
