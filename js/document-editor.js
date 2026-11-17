@@ -99,6 +99,9 @@ function _syncPageMarginCSS() {
     const pad = `${L.padTop}px ${L.padRight}px ${L.padBottom}px ${L.padLeft}px`;
     let css = `.doc-page-canvas, .pdf-page { box-sizing:border-box !important; padding:${pad} !important; }`;
     if (Number.isFinite(Number(L.footerBottom))) css += ` .page-footer-number, .pdf-footer { bottom:${Number(L.footerBottom)}px !important; }`;
+    // Typography comes from the SAME tokens (PDF_TYPE) the PDF / print / Word exports use, so an edit to PDF_TYPE
+    // changes the editor and every export together. (pdf-export.js may load after this file -> guarded + re-run on load.)
+    if (typeof _pdfTypographyCSS === 'function') css += '\n' + _pdfTypographyCSS(false);
     let st = document.getElementById('unified-page-margin-css');
     if (!st) { st = document.createElement('style'); st.id = 'unified-page-margin-css'; (document.head || document.documentElement).appendChild(st); }
     if (st.textContent !== css) st.textContent = css;
@@ -107,6 +110,7 @@ function _syncPageMarginCSS() {
   } catch (e) { console.warn('[page margins]', e); }
 }
 _syncPageMarginCSS();
+window.addEventListener('load', _syncPageMarginCSS);   // pdf-export.js (PDF_TYPE) is available by now
 
 function _mirrorPageFormatClasses(snapEl, pageEl) {
   const extra = Array.from(pageEl.classList).filter(c => /^(pdf-format-|text-format-)/.test(c));
