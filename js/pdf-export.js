@@ -249,6 +249,7 @@ function getDocumentTopicName() {
 // slide-studio.js) — so what opens in Word looks like the document on
 // screen, while every other element stays plain, editable Word content.
 async function exportToWordDocumentLegacy(btn) {
+  await _pdfEnsureExportFonts();
   if (typeof ensureAllPagesMathRendered === 'function') ensureAllPagesMathRendered();
   const rawContent = typeof getAllCanvasHTML === 'function' ? getAllCanvasHTML() : '';
   if (!rawContent || rawContent.includes('Start typing here')) {
@@ -294,8 +295,12 @@ async function exportToWordDocumentLegacy(btn) {
     // their on-screen look once opened in Word — the app's own stylesheet
     // isn't available inside a standalone exported file.
     const wordStyles = `
-      body { font-family: Calibri, Arial, sans-serif; font-size: 12pt; color:#111; line-height:1.5; }
-      h1, h2, h3, h4 { font-family: Calibri, Arial, sans-serif; color:#111; }
+      body { font-family: 'Times New Roman', Times, serif; font-size: 12pt; color:#111; line-height:${PDF_TYPE.lineHeight}; }
+      h1, h2, h3 { font-family: ${PDF_TYPE.headingFont}; font-weight:bold; color:#111; }
+      h1 { font-size:${PDF_TYPE.h1.size}; line-height:${PDF_TYPE.h1.lineHeight}; margin:${PDF_TYPE.h1.margin}; }
+      h2 { font-size:${PDF_TYPE.h2.size}; line-height:${PDF_TYPE.h2.lineHeight}; margin:${PDF_TYPE.h2.margin}; }
+      h3 { font-size:${PDF_TYPE.h3.size}; line-height:${PDF_TYPE.h3.lineHeight}; margin:${PDF_TYPE.h3.margin}; }
+      p { margin:${PDF_TYPE.paragraphMargin}; line-height:${PDF_TYPE.lineHeight}; }
       table { border-collapse: collapse; }
       td, th { border: 1pt solid #cbd5e1; padding: 4pt 6pt; }
       img { max-width: 100%; }
@@ -615,6 +620,7 @@ function _downloadBlobToDefaultFolder(blob, filename) {
 }
 
 async function exportToHighQualityPDF(btn) {
+  await _pdfEnsureExportFonts();
   const toast = (m) => { if (typeof displayToastNotification === 'function') displayToastNotification(m); };
   const pages = _collectRenderableEditorPages();
   if (!pages.length || (typeof docContainer !== 'undefined' && docContainer && docContainer.innerText && docContainer.innerText.includes('Start typing here'))) {
@@ -667,6 +673,7 @@ let _fastPdfRunning = false;
 async function exportToPDFFast(btn) {
   const toast = (m) => { if (typeof displayToastNotification === 'function') displayToastNotification(m); };
   if (_fastPdfRunning) return;
+  await _pdfEnsureExportFonts();
   const pages = _collectRenderableEditorPages();
   if (!pages.length || (typeof docContainer !== 'undefined' && docContainer && docContainer.innerText && docContainer.innerText.includes('Start typing here'))) {
     toast('⚠️ Document is empty.');
@@ -2522,6 +2529,7 @@ async function _exportTruePDFViaPrintDialog(btn) {
 
 // ===== IMAGE PDF (RASTERIZED) =====
 async function exportToImagePDF(btn) {
+  await _pdfEnsureExportFonts();
   if (typeof invalidatePDFPreviewCache === 'function') invalidatePDFPreviewCache();
   if (typeof ensureAllPagesMathRendered === 'function') ensureAllPagesMathRendered();
   const editorPagesBefore = _collectRenderableEditorPages();
@@ -3564,6 +3572,155 @@ function _pdfFontFaceCSS() {
       .photocopy-mode, .photocopy-mode *{text-shadow:none !important;-webkit-text-stroke:0 !important;}`;
 }
 
+
+
+// ===== FONT READINESS (a missing font silently changes line breaks -> different page breaks) =====
+async function _pdfEnsureExportFonts() {
+  try {
+    if (!document.fonts || typeof document.fonts.load !== 'function') return { ok: true, missing: [] };
+    const specs = ['12pt "Times New Roman"', 'bold 22pt Arial', 'bold 16pt Arial', 'bold 13pt Arial'];
+    await Promise.all(specs.map(sp => document.fonts.load(sp, 'Aa\u0985').catch(() => null)));
+    if (document.fonts.ready) await document.fonts.ready;
+    const missing = specs.filter(sp => { try { return !document.fonts.check(sp); } catch (_) { return false; } });
+    if (missing.length) console.warn('[export parity] fonts not available, line breaks may differ from the editor:', missing);
+    return { ok: !missing.length, missing };
+  } catch (e) { return { ok: true, missing: [] }; }
+}
+
+// ===== PARITY CHECK: editor vs export, computed-style by computed-style =====
+// Run from the console:  await runExportParityCheck()      -> prints a table, returns { ok, diffs }
+// Builds the real export document (the same builder the preview/print uses) in a hidden iframe and compares what the
+// browser actually computes there with what it computes in the editor. Any difference is a mismatch.
+async function runExportParityCheck(opts) {
+  const o = opts || {};
+  const PROPS = ['font-family','font-size','font-weight','font-style','color','line-height','margin-top','margin-bottom',
+    'margin-left','margin-right','padding-top','padding-bottom','padding-left','border-bottom-width','text-align'];
+  const sample = '<h1>Heading 1</h1><h2>Heading 2</h2><h3>Heading 3</h3><p>Paragraph text <b>bold</b> <i>italic</i>.</p>'
+    + '<ul><li>List item</li></ul><ol><li>Numbered item</li></ol>'
+    + '<table><thead><tr><th>Head</th></tr></thead><tbody><tr><td>Cell</td></tr></tbody></table>';
+  const tags = ['h1','h2','h3','p','ul','ol','li','th','td'];
+  await _pdfEnsureExportFonts();
+
+  const classes = (typeof _getActivePDFFormatClasses === 'function') ? _getActivePDFFormatClasses(false, false) : '';
+  const edPage = document.createElement('div');
+  edPage.className = 'doc-page-canvas pdf-export-parity-probe' + (classes ? ' ' + classes : '');
+  edPage.style.cssText = 'position:absolute;left:-10000px;top:0;visibility:hidden;';
+  edPage.innerHTML = sample;
+  (document.getElementById('document-view-container') || document.body).appendChild(edPage);
+
+  const iframe = document.createElement('iframe');
+  iframe.style.cssText = 'position:fixed;left:-10000px;top:0;width:1000px;height:1200px;border:0;visibility:hidden;';
+  document.body.appendChild(iframe);
+  try {
+    const builder = (typeof buildUnifiedPDFPreviewDocument === 'function') ? buildUnifiedPDFPreviewDocument : _buildFallbackPreviewHTML;
+    iframe.srcdoc = builder([sample], false, false, {});
+    await new Promise(res => { iframe.onload = res; setTimeout(res, 4000); });
+    const exDoc = iframe.contentDocument;
+    if (exDoc.fonts && exDoc.fonts.ready) { try { await exDoc.fonts.ready; } catch (_) {} }
+    const exPage = exDoc.querySelector('.pdf-page');
+    if (!exPage) throw new Error('export page not found');
+    const diffs = [];
+    for (const tag of tags) {
+      const a = edPage.querySelector(tag), b = exPage.querySelector(tag);
+      if (!a || !b) { diffs.push({ tag, prop: '(element)', editor: !!a, export: !!b }); continue; }
+      const ca = getComputedStyle(a), cb = exDoc.defaultView.getComputedStyle(b);
+      for (const prop of PROPS) {
+        const va = ca.getPropertyValue(prop), vb = cb.getPropertyValue(prop);
+        if (va !== vb) diffs.push({ tag, prop, editor: va, export: vb });
+      }
+    }
+    const pa = getComputedStyle(edPage), pb = exDoc.defaultView.getComputedStyle(exPage);
+    for (const prop of ['width','height','padding-top','padding-right','padding-bottom','padding-left','font-size','line-height']) {
+      const va = pa.getPropertyValue(prop), vb = pb.getPropertyValue(prop);
+      if (va !== vb) diffs.push({ tag: '.page', prop, editor: va, export: vb });
+    }
+    const ok = diffs.length === 0;
+    if (!o.silent) { console.log(ok ? '[export parity] OK - editor and export match' : '[export parity] MISMATCH'); if (!ok) console.table(diffs); }
+    return { ok, diffs };
+  } finally {
+    edPage.remove(); iframe.remove();
+  }
+}
+if (typeof window !== 'undefined') window.runExportParityCheck = runExportParityCheck;
+
+// ===== SINGLE SOURCE OF TRUTH FOR EXPORT <-> EDITOR PARITY =====
+// Everything that decides how a page LOOKS is defined once here and consumed by
+//   - the live editor            (document-editor.js -> _syncPageMarginCSS)
+//   - the PDF preview builder    (_buildFallbackPreviewHTML)
+//   - the print / PDF builder    (buildUnifiedPDFPreviewDocument)
+// so a change made in ONE place reaches all of them. The word export reads PDF_TYPE too.
+const PDF_TYPE = {
+  headingFont: "'Arial', sans-serif",
+  lineHeight: 1.38,
+  paragraphMargin: '0 0 7pt',
+  listMargin: '6pt 0 8pt 20pt',
+  listPaddingLeft: '20pt',
+  footerFallbackBottom: 22,
+  h1: { size: '22pt', margin: '0 0 10pt',  color: '#172554', lineHeight: 1.2,  paddingBottom: '6px' },
+  h2: { size: '16pt', margin: '12pt 0 6pt', color: '#1e3a8a', lineHeight: 1.25 },
+  h3: { size: '13pt', margin: '10pt 0 4pt', color: '#075985', lineHeight: 1.28 }
+};
+
+function _pdfTypographyCSS(mono) {
+  const T = PDF_TYPE;
+  const ink = (typeof PDF_MONO_INK !== 'undefined') ? PDF_MONO_INK : '#1f1f1f';
+  const col = (c) => (mono ? ink : c);
+  const sel = (tag) => `.doc-page-canvas ${tag}, .pdf-page ${tag}`;
+  return `
+${sel('h1')} { font-size:${T.h1.size}; margin:${T.h1.margin}; font-family:${T.headingFont}; font-weight:bold; color:${col(T.h1.color)} !important; border-bottom:0; padding-bottom:${T.h1.paddingBottom}; line-height:${T.h1.lineHeight}; }
+${sel('h2')} { font-size:${T.h2.size}; margin:${T.h2.margin}; font-family:${T.headingFont}; font-weight:bold; color:${col(T.h2.color)} !important; line-height:${T.h2.lineHeight}; }
+${sel('h3')} { font-size:${T.h3.size}; margin:${T.h3.margin}; font-family:${T.headingFont}; font-weight:bold; color:${col(T.h3.color)} !important; line-height:${T.h3.lineHeight}; }
+${sel('p')} { margin:${T.paragraphMargin}; line-height:${T.lineHeight}; }
+${sel('ul')}, ${sel('ol')} { margin:${T.listMargin}; padding-left:${T.listPaddingLeft}; }
+.pdf-page li, .pdf-page td, .pdf-page th, .pdf-page blockquote, .pdf-page figcaption { line-height:${T.lineHeight}; }
+`;
+}
+
+function _pdfFooterCSS(footerColor) {
+  const fb = Number(PDF_LAYOUT.footerBottom);
+  const bottom = Number.isFinite(fb) ? fb : PDF_TYPE.footerFallbackBottom;
+  return `.pdf-footer { position:absolute; bottom:${bottom}px; left:0; right:0; text-align:center; font-size:10pt; color:${footerColor}; font-family:${PDF_DOC_FONT_STACK}; }`;
+}
+
+// Live mirror of the editor's own stylesheet: every rule that styles the CONTENT of a page
+// (".doc-page-canvas <something>") is copied into the export document, so new editor CSS is exported
+// automatically. Skipped on purpose: the page box itself (size/margin are owned by PDF_LAYOUT), dark-mode and
+// theme-wrapper rules (the export has its own), editing-UI rules (hover/focus/selection/handles), @media rules,
+// and rules that need editor-only CSS variables the export document does not define.
+function _pdfEditorMirrorCSS() {
+  const out = [];
+  try {
+    const SKIP = /:hover|:focus|:active|::selection|::-webkit|\.dark\b|(^|[\s,>+~])html\b|pdf-export-measure-page|data-oversized|data-paginate|photocopy|\.selected|resize|handle|toolbar|contenteditable|:is\(|:where\(|:has\(/i;
+    const PART = /^\.doc-page-canvas(\.pdf-format-[\w-]+)?\s+\S/;
+    for (const sheet of Array.from(document.styleSheets || [])) {
+      let rules;
+      try { rules = sheet.cssRules; } catch (_) { continue; }   // cross-origin sheet
+      if (!rules) continue;
+      for (const r of Array.from(rules)) {
+        if (r.type !== 1 || !r.selectorText) continue;
+        const selText = r.selectorText;
+        if (SKIP.test(selText)) continue;
+        const parts = selText.split(',').map(x => x.trim());
+        if (!parts.every(x => PART.test(x))) continue;
+        const cssText = r.cssText;
+        const vars = cssText.match(/var\(\s*--[\w-]+/g) || [];
+        if (vars.some(v => !/--(t|c|blk|pair)-/.test(v))) continue;
+        out.push(cssText);
+      }
+    }
+  } catch (e) { console.warn('[editor mirror css]', e); }
+  return out.join('\n');
+}
+
+function _pdfSharedPageCSS(opts) {
+  const o = opts || {};
+  return [
+    _pdfEditorMirrorCSS(),            // live copy of the editor's content rules
+    _pdfTypographyCSS(!!o.mono),      // tokens win ties: same specificity, later in the cascade
+    _pdfFooterCSS(o.footerColor || '#4b5563')
+  ].join('\n');
+}
+
 // ===== ONE MARGIN FOR EVERYTHING =====
 // PDF_LAYOUT is the single source of truth for the page margins. Every page surface (editor page, measuring page,
 // preview, print / PDF page) gets exactly these paddings with !important so no theme, format class or stylesheet
@@ -3582,7 +3739,7 @@ function _buildFallbackPreviewHTML(pageChunks, isMonochromeMode, isDark) {
   const bgColor = '#f3f4f6';
   const pageBg = '#ffffff';
   const textColor = isMonochromeMode ? PDF_MONO_INK : '#111827';
-  const headingColor = isMonochromeMode ? PDF_MONO_INK : '#1e3a8a';
+  const headingColor = isMonochromeMode ? PDF_MONO_INK : '#172554';
   const headingBorderColor = isMonochromeMode ? '#000000' : '#2563eb';
   const borderColor = isMonochromeMode ? '#000000' : '#d1d5db';
   const footerColor = isMonochromeMode ? '#111111' : '#4b5563';
@@ -3606,13 +3763,7 @@ function _buildFallbackPreviewHTML(pageChunks, isMonochromeMode, isDark) {
       ${_pdfMarginCSS()}
       ${PDF_FIGURE_LAYOUT_CSS}
       ${_pdfFontFaceCSS()}
-      .pdf-page p, .pdf-page li, .pdf-page td, .pdf-page th, .pdf-page blockquote, .pdf-page figcaption { line-height:1.38; }
-      .pdf-page p { margin:0 0 7pt; }
-      .pdf-page ul, .pdf-page ol { margin:6pt 0 8pt 20pt; padding-left:20pt; }
-      .pdf-footer { position:absolute; bottom:22px; left:0; right:0; text-align:center; font-size:10pt; color:${footerColor}; font-family:${PDF_DOC_FONT_STACK}; }
-      h1{font-family:${PDF_DOC_FONT_STACK};font-size:22pt;color:${headingColor};border-bottom:2px solid ${headingBorderColor};padding-bottom:4px;line-height:1.2;margin:0 0 10pt;}
-      h2{font-family:${PDF_DOC_FONT_STACK};font-size:16pt;color:#1e40af;line-height:1.25;}
-      h3{font-family:${PDF_DOC_FONT_STACK};font-size:13pt;color:#0369a1;line-height:1.28;}
+      ${_pdfSharedPageCSS({ mono: isMonochromeMode, footerColor })}
       /* FIX: this fallback builder had no table/img/svg rules at all -- see the
          matching fix in buildUnifiedPDFPreviewDocument() above for why these
          are needed (image/table content otherwise renders unstyled/oversized). */
@@ -3637,6 +3788,7 @@ function _buildFallbackPreviewHTML(pageChunks, isMonochromeMode, isDark) {
       @media print { html, body { height:auto !important; overflow:visible !important; } .pdf-page-wrap { width:210mm !important; height:297mm !important; background:${pageBg} !important; content-visibility:visible !important; contain-intrinsic-size:auto !important; page-break-before:always !important; break-before:page !important; page-break-after:avoid !important; break-after:avoid !important; margin:0 !important; } .pdf-page-wrap:first-of-type { page-break-before:auto !important; break-before:auto !important; } .pdf-page { width:210mm !important; height:297mm !important; } body { padding:0; background:${pageBg} !important; } }
       ${typeof getPaginateCompactCSS === 'function' ? getPaginateCompactCSS('.pdf-page') : ''}
       ${PDF_SPLIT_CONTINUATION_CSS}
+      ${PDF_EDITOR_PARITY_CSS}
     </style>
   </head><body${pageClasses ? ` class="${pageClasses}"` : ''}>${pagesHTML}
   <script>
@@ -3737,65 +3889,50 @@ function _normalizePDFPageChunks(pageChunks) {
   return normalized;
 }
 
-// ===== FULL PAGE REFLOW INSIDE THE PRINT DOCUMENT (used by Export to PDF (fast)) =====
-// WHY: the pages handed to the print document were measured by the editor-side engine, with the editor's CSS. The print document
-// uses its own (tighter) CSS plus KaTeX's own equation margins, so a page can come out SHORTER (blank space at the bottom) or
-// TALLER (overflow) than it was measured. The old guard only pushed overflowing blocks onto a brand-new page and never pulled
-// anything back up, so one small overflow produced a nearly empty page ("unnecessary blank space").
-// HOW: this function runs INSIDE the print document after fonts / equations are ready. It takes every block of every page,
-// glues blocks that were cut at a page border back together, and lays the whole document out again, page by page, using the
-// REAL measured layout: a page is filled until the next block no longer fits; lists, tables and callout boxes are cut between
-// their items / rows / children (table header repeated, <ol> numbering continued); a heading is never left alone at the bottom;
-// manual page breaks are kept. If anything goes wrong the original pages are restored and the old guard runs instead.
-// It is embedded as source text (String(fn)), so it must stay self-contained and must not contain a closing script tag.
-function __pdfReflowPagesInIframe() {
-  var LIM = (Number(window.__PDF_LIMIT) || 0) + 1;
+// ===== SHARED PAGE-REFLOW ENGINE (used by BOTH export modes) =====
+// WHY: pages used to be decided one block at a time, as the blocks arrived. A paragraph that did not fit jumped whole to the next page, a
+// list / box / table inside a box moved as one piece, and the print layout (fast mode) measures a little differently from the editor,
+// so pages were left part-empty ("unnecessary blank space"). A small overflow could even leave an almost empty page.
+// HOW: this engine takes every block of every page, glues blocks that were cut at a page border back together, and lays the whole
+// document out again in the REAL layout of the pages it is given: a page is filled until the next block no longer fits, and what does
+// not fit is CUT instead of moved whole:
+//   - a paragraph is cut between words (at least 2 lines stay on each page, like Word's widow / orphan control),
+//   - a list between its items (an <ol> keeps counting), a table between its rows (header row repeated),
+//   - a box (callout, solution panel ...) between its children, going deeper when a child is a list / table / paragraph / box itself.
+// A heading is never left alone at the bottom of a page, manual page breaks are kept, one block taller than a page is scaled down.
+// It is generic: cfg tells it where the blocks of a page live (hostOf), what is page furniture (isChrome: the footer), how to test
+// "does this page still fit" (fits), how to make / drop a page, and how to scale an oversize block (squeeze).
+// It is self-contained (it is also embedded as source text into the print document), so it must not use anything outside cfg, and its
+// source must never contain a closing script tag. It returns the list of pages that are in use afterwards; it throws if it fails, the
+// caller restores the original pages.
+function __pdfReflowEngine(cfg) {
   var HEAD = /^H[1-6]$/;
   var ATOMIC = '.katex-eq, .katex-display, .katex, .fc-wrapper, .fc-svg-wrapper, .figure-pro, .figure-frame, figure, svg, img, canvas, pre, hr';
-  var wraps = Array.prototype.slice.call(document.querySelectorAll('.pdf-page-wrap'));
-  if (!wraps.length || LIM < 2) return false;
-  var parent = wraps[0].parentNode;
-  var anchor = wraps[wraps.length - 1].nextSibling;
-  var snapshot = wraps.map(function (w) { return w.cloneNode(true); });
+  var INLINE_ATOM = '.katex-eq, .katex, svg, img, canvas, .pdf-native-math, script, style';
+  var pages = cfg.pages.slice();
+  if (!pages.length) return pages;
+  var isChrome = cfg.isChrome || function () { return false; };
+  function hostOf(pg) { return cfg.hostOf(pg); }
+  function fits(pg) { return cfg.fits(pg); }
 
-  function restore() {
-    Array.prototype.slice.call(document.querySelectorAll('.pdf-page-wrap')).forEach(function (w) { if (w.parentNode) w.parentNode.removeChild(w); });
-    snapshot.forEach(function (w) { parent.insertBefore(w, anchor); });
-  }
-
-  // ---------- measuring ----------
-  function blocksOf(page) {
-    var out = [];
-    for (var c = page.firstElementChild; c; c = c.nextElementSibling) if (!c.classList.contains('pdf-footer')) out.push(c);
+  // ---------- helpers ----------
+  function blocksOf(pg) {
+    var h = hostOf(pg), out = [];
+    for (var c = h.firstElementChild; c; c = c.nextElementSibling) if (!isChrome(c)) out.push(c);
     return out;
   }
-  function footerOf(page) {
-    for (var c = page.lastElementChild; c; c = c.previousElementSibling) if (c.classList.contains('pdf-footer')) return c;
-    return null;
+  function put(pg, el) {
+    var h = hostOf(pg), ref = null;
+    for (var c = h.firstElementChild; c; c = c.nextElementSibling) if (isChrome(c)) { ref = c; break; }
+    if (ref) h.insertBefore(el, ref); else h.appendChild(el);
   }
-  function bottomOf(page) {
-    var b = 0, kids = page.children;
-    for (var i = 0; i < kids.length; i++) {
-      var k = kids[i];
-      if (k.classList.contains('pdf-footer')) continue;
-      var cs = getComputedStyle(k);
-      if (cs.display === 'none' || cs.position === 'absolute' || cs.position === 'fixed') continue;
-      var mb = parseFloat(cs.marginBottom) || 0;
-      var bt = k.offsetTop + k.offsetHeight + (mb > 0 ? mb : 0);
-      if (bt > b) b = bt;
-    }
-    return b;
-  }
-  function fits(page) { return bottomOf(page) <= LIM; }
-
-  // ---------- small helpers ----------
   function hasOwnText(el) {
     for (var c = el.firstChild; c; c = c.nextSibling) if (c.nodeType === 3 && /\S/.test(c.nodeValue)) return true;
     return false;
   }
   function shell(el) {                                  // empty copy of a container (never copies the id / a hard-break flag)
     var s = el.cloneNode(false);
-    s.removeAttribute('id'); s.removeAttribute('data-pdf-hard-break');
+    s.removeAttribute('id'); s.removeAttribute('data-pdf-hard-break'); s.removeAttribute('data-pdf-tal');
     return s;
   }
   function tableOf(el) {                                // the table itself, or a wrapper that holds nothing but one table
@@ -3820,8 +3957,13 @@ function __pdfReflowPagesInIframe() {
     for (var i = 0; i < x.children.length; i++) if (!blockLevel(x.children[i])) return false;
     return true;
   }
+  function isTextBlock(x) {                             // a paragraph (or a <div> used as one): only text and inline pieces
+    if (x.tagName !== 'P' && x.tagName !== 'DIV') return false;
+    if (x.matches(ATOMIC) || x.querySelector('p, div, ul, ol, table, h1, h2, h3, h4, h5, h6, li, blockquote, pre, hr')) return false;
+    return /\S/.test(x.textContent || '');
+  }
 
-  // ---------- 1) glue pieces that the editor-side engine cut at a page border ----------
+  // ---------- 1) glue pieces that were cut at a page border back together ----------
   function mergeInto(a, b) {
     if (!a || !b || b.hasAttribute('data-pdf-hard-break')) return false;
     var ta = tableOf(a), tb = tableOf(b);
@@ -3836,16 +3978,19 @@ function __pdfReflowPagesInIframe() {
       var aLast = a.lastElementChild, bFirst = b.firstElementChild, keepNext = b.classList.contains('pdf-split-next');
       while (b.firstChild) a.appendChild(b.firstChild);
       if (!keepNext) a.classList.remove('pdf-split-next');
+      if (a.hasAttribute('data-pdf-tal')) { a.style.textAlignLast = ''; a.removeAttribute('data-pdf-tal'); }
+      a.normalize();                                     // the two halves of a cut word-run become one text node again
       if (b.parentNode) b.parentNode.removeChild(b);
-      if (aLast && bFirst) mergeInto(aLast, bFirst);   // the cut can run through nested boxes / a table inside the box
+      if (aLast && bFirst && !isTextBlock(a)) mergeInto(aLast, bFirst);   // the cut can run through nested boxes / a table inside the box
       return true;
     }
     return false;
   }
 
   // ---------- 2) cutting a block that does not fit ----------
-  // cut(page, x): x is the LAST block of the page and the page does not fit. Afterwards the page fits again. Returns the tail that
-  // still has to be placed (a new element), or x itself when nothing of x fits (x has then been taken out of the page).
+  // cut(page, x): x is the LAST block of the page (or the last child of the last block, going down) and the page does not fit.
+  // Afterwards the page fits again. Returns the tail that still has to be placed (a new element), or x itself when nothing of x
+  // fits (x has then been taken out of its parent).
   function cutList(page, ul) {
     var items = Array.prototype.filter.call(ul.children, function (c) { return c.tagName === 'LI'; });
     if (items.length < 2) return null;
@@ -3872,7 +4017,11 @@ function __pdfReflowPagesInIframe() {
     if (!fits(page)) { moved.forEach(function (m) { m.parent.appendChild(m.row); }); return null; }
     var t = table.cloneNode(false); t.removeAttribute('id');
     Array.prototype.forEach.call(table.children, function (c) { if (c.tagName === 'COLGROUP') t.appendChild(c.cloneNode(true)); });
-    if (head.length) { var th = document.createElement('thead'); head.forEach(function (h) { th.appendChild(h.cloneNode(true)); }); t.appendChild(th); }   // header row repeats
+    if (head.length) {                                   // header row repeats
+      var th = document.createElement('thead');
+      head.forEach(function (h) { var hc = h.cloneNode(true); th.appendChild(hc); if (cfg.afterClone) cfg.afterClone(hc); });
+      t.appendChild(th);
+    }
     var tb = document.createElement('tbody'); moved.forEach(function (m) { tb.appendChild(m.row); }); t.appendChild(tb);
     table.classList.add('pdf-table-cont-next'); t.classList.add('pdf-table-cont-prev');
     if (!outer) return t;
@@ -3910,90 +4059,217 @@ function __pdfReflowPagesInIframe() {
     x.classList.add('pdf-split-next'); rest.classList.add('pdf-split-prev');
     return rest;
   }
+
+  // ----- a paragraph is cut between words -----
+  function textNodesOf(root) {                           // text that may be cut (never the inside of an equation / image)
+    var out = [], w = document.createTreeWalker(root, 4, null, false), n;
+    while ((n = w.nextNode())) {
+      var skip = false;
+      for (var a = n.parentNode; a && a !== root; a = a.parentNode) if (a.nodeType === 1 && a.matches(INLINE_ATOM)) { skip = true; break; }
+      if (!skip) out.push(n);
+    }
+    return out;
+  }
+  function headClone(p, c) {                             // a throw-away copy of p that ends at cut point c (only used for measuring)
+    var h = p.cloneNode(true), n = textNodesOf(h)[c.ti];
+    var r = document.createRange(); r.setStart(n, c.off); r.setEndAfter(h.lastChild); r.deleteContents();
+    return h;
+  }
+  function cutParagraph(page, p) {
+    var cs = getComputedStyle(p);
+    var lh = parseFloat(cs.lineHeight); if (!(lh > 0)) lh = (parseFloat(cs.fontSize) || 16) * 1.4;
+    var totalLines = Math.round(p.offsetHeight / lh);
+    if (totalLines < 4) return null;                     // too short to leave 2 lines on both pages: it moves whole
+    var nodes = textNodesOf(p), cands = [];
+    nodes.forEach(function (n, ti) {
+      var s = n.nodeValue;
+      for (var i = 0; i < s.length; i++) {
+        if (!/\s/.test(s.charAt(i))) continue;
+        if (i + 1 < s.length ? /\s/.test(s.charAt(i + 1)) : ti === nodes.length - 1) continue;   // break before the next word, not inside a run of spaces
+        cands.push({ ti: ti, off: i + 1 });
+      }
+    });
+    if (cands.length < 3) return null;
+    var cur = p;
+    function show(el) { if (el === cur) return; cur.parentNode.replaceChild(el, cur); cur = el; }
+    var lo = 0, hi = cands.length - 1, best = -1;
+    while (lo <= hi) {                                   // the longest start of the paragraph that still fits, leaving a tail of >= 2 lines
+      var mid = (lo + hi) >> 1, probe = headClone(p, cands[mid]);
+      show(probe);
+      var lines = Math.round(probe.offsetHeight / lh);
+      if (fits(page) && lines <= totalLines - 2) { best = mid; lo = mid + 1; } else hi = mid - 1;
+    }
+    show(p);
+    if (best < 0) return null;
+    var c = cands[best];
+    var r = document.createRange(); r.setStart(nodes[c.ti], c.off); r.setEndAfter(p.lastChild);
+    var frag = r.extractContents();                      // the tail is MOVED (not copied): equation canvases / images stay intact
+    var tail = shell(p); tail.appendChild(frag);
+    var headLines = Math.round(p.offsetHeight / lh);
+    if (!fits(page) || headLines < 2 || !/\S/.test(tail.textContent || '')) {      // not as measured: undo, move the paragraph whole
+      while (tail.firstChild) p.appendChild(tail.firstChild);
+      p.normalize();
+      return null;
+    }
+    if (getComputedStyle(p).textAlign === 'justify') { p.style.textAlignLast = 'justify'; p.setAttribute('data-pdf-tal', '1'); }   // no ragged line at the cut
+    if (parseFloat(cs.textIndent) > 0) tail.style.textIndent = '0';
+    p.classList.add('pdf-split-next'); tail.classList.add('pdf-split-prev');
+    return tail;
+  }
+
   function cut(page, x) {
     if (fits(page)) return null;
     var rest = null;
     if (x.tagName === 'UL' || x.tagName === 'OL') rest = cutList(page, x);
     else if (tableOf(x)) rest = cutTable(page, x);
     else if (splittableContainer(x)) rest = cutContainer(page, x);
+    else if (cfg.splitParagraphs !== false && isTextBlock(x)) rest = cutParagraph(page, x);
     if (rest === null) { if (x.parentNode) x.parentNode.removeChild(x); return x; }
     return rest;
   }
-  function squeeze(page, el) {                          // one block taller than a whole page: scale it down so nothing is clipped
-    var avail = LIM - 1 - el.offsetTop - 2, hh = el.offsetHeight;
-    if (hh > 0 && avail > 0) el.style.zoom = String(Math.max(0.35, Math.min(1, avail / hh)));
+
+  // ---------- take every block out of its page ----------
+  var blocks = [];
+  pages.forEach(function (pg) {
+    var h = hostOf(pg);
+    Array.prototype.slice.call(h.childNodes).forEach(function (n) {
+      if (n.nodeType === 1) {
+        if (isChrome(n)) return;
+        h.removeChild(n); blocks.push(n);
+      } else if (n.nodeType === 3 && /\S/.test(String(n.nodeValue).replace(/[\u00a0\u200b]/g, ' '))) {
+        var p = document.createElement('p'); p.appendChild(n); blocks.push(p);        // stray text becomes a paragraph, never lost
+      } else if (n.parentNode) h.removeChild(n);
+    });
+  });
+  var merged = [];
+  blocks.forEach(function (b) { var prev = merged[merged.length - 1]; if (prev && mergeInto(prev, b)) return; merged.push(b); });
+
+  // ---------- lay the document out again ----------
+  var pageIdx = 0, page, queue = merged.slice(), guard = 0;
+  function pageAt(i) { while (pages.length <= i) pages.push(cfg.makePage(pages[pages.length - 1])); return pages[i]; }
+  function next(carryHeadings) {
+    if (carryHeadings) {                                 // a heading is never the last thing on a page
+      var bl = blocksOf(page);
+      while (bl.length > 1 && HEAD.test(bl[bl.length - 1].tagName)) { var h = bl.pop(); h.parentNode.removeChild(h); queue.unshift(h); }
+    }
+    pageIdx++; page = pageAt(pageIdx);
+  }
+  page = pageAt(0);
+  while (queue.length) {
+    if (guard++ > 40000) throw new Error('reflow did not finish');
+    var b = queue.shift();
+    var hasBlocks = blocksOf(page).length > 0;
+    if (b.classList.contains('manual-page-break')) { if (hasBlocks) next(false); continue; }          // manual break: what follows starts a new page
+    if (b.hasAttribute('data-pdf-hard-break') && hasBlocks) { next(false); hasBlocks = false; }
+    if (!hasBlocks && isBlank(b)) continue;                                                           // a page never starts with an empty line
+    put(page, b);
+    if (fits(page)) continue;
+    var rest = cut(page, b);
+    if (rest === b) {                                                                                 // nothing of b fits on this page
+      if (!hasBlocks) { put(page, b); if (cfg.squeeze) cfg.squeeze(page, b); continue; }              // taller than a whole page: keep it, scaled
+      queue.unshift(b); next(true); continue;
+    }
+    if (rest) { queue.unshift(rest); next(true); }
   }
 
+  // ---------- tidy up ----------
+  var used = pageIdx + 1;
+  if (pageIdx > 0 && !blocksOf(page).length) used = pageIdx;
+  pages.slice(used).forEach(function (pg) { cfg.removePage(pg); });
+  return pages.slice(0, used);
+}
+
+// Runs INSIDE the print document (Export to PDF (fast)): the page limit is the real, measured print layout.
+function __pdfReflowPagesInIframe() {
+  var LIM = (Number(window.__PDF_LIMIT) || 0) + 1;
+  var wraps = Array.prototype.slice.call(document.querySelectorAll('.pdf-page-wrap'));
+  if (!wraps.length || LIM < 2) return false;
+  var parent = wraps[0].parentNode, anchor = wraps[wraps.length - 1].nextSibling;
+  var snapshot = wraps.map(function (w) { return w.cloneNode(true); });
+  function restore() {
+    Array.prototype.slice.call(document.querySelectorAll('.pdf-page-wrap')).forEach(function (w) { if (w.parentNode) w.parentNode.removeChild(w); });
+    snapshot.forEach(function (w) { parent.insertBefore(w, anchor); });
+  }
+  function bottomOf(page) {
+    var b = 0, kids = page.children;
+    for (var i = 0; i < kids.length; i++) {
+      var k = kids[i];
+      if (k.classList.contains('pdf-footer')) continue;
+      var cs = getComputedStyle(k);
+      if (cs.display === 'none' || cs.position === 'absolute' || cs.position === 'fixed') continue;
+      var mb = parseFloat(cs.marginBottom) || 0;
+      var bt = k.offsetTop + k.offsetHeight + (mb > 0 ? mb : 0);
+      if (bt > b) b = bt;
+    }
+    return b;
+  }
   try {
-    // ---------- take every block out of its page ----------
-    var blocks = [];
-    wraps.forEach(function (w) {
-      var pg = w.querySelector('.pdf-page'); if (!pg) return;
-      Array.prototype.slice.call(pg.childNodes).forEach(function (n) {
-        if (n.nodeType === 1) {
-          if (n.classList.contains('pdf-footer')) return;
-          pg.removeChild(n); blocks.push(n);
-        } else if (n.nodeType === 3 && /\S/.test(String(n.nodeValue).replace(/[\u00a0\u200b]/g, ' '))) {
-          var p = document.createElement('p'); p.appendChild(n); blocks.push(p);       // stray text becomes a paragraph, never lost
-        } else if (n.parentNode) pg.removeChild(n);
-      });
+    var tmpl = wraps[0].cloneNode(true);                 // an empty page: only its footer stays
+    Array.prototype.slice.call(tmpl.querySelector('.pdf-page').children).forEach(function (c) { if (!c.classList.contains('pdf-footer')) tmpl.querySelector('.pdf-page').removeChild(c); });
+    var tp = tmpl.querySelector('.pdf-page'); tp.style.fontSize = '';
+    var pgs = wraps.map(function (w) { return w.querySelector('.pdf-page'); });
+    var used = __pdfReflowEngine({
+      pages: pgs,
+      hostOf: function (pg) { return pg; },
+      isChrome: function (el) { return el.classList.contains('pdf-footer'); },
+      fits: function (pg) { return bottomOf(pg) <= LIM; },
+      makePage: function (last) {
+        var nw = tmpl.cloneNode(true), lw = last.closest('.pdf-page-wrap');
+        lw.parentNode.insertBefore(nw, lw.nextSibling);
+        return nw.querySelector('.pdf-page');
+      },
+      removePage: function (pg) { var w = pg.closest('.pdf-page-wrap'); if (w && w.parentNode) w.parentNode.removeChild(w); },
+      squeeze: function (pg, el) {                       // one block taller than a whole page: scale it down so nothing is clipped
+        var avail = LIM - 1 - el.offsetTop - 2, hh = el.offsetHeight;
+        if (hh > 0 && avail > 0) el.style.zoom = String(Math.max(0.35, Math.min(1, avail / hh)));
+      }
     });
-    var tmpl = wraps[0].cloneNode(true);                  // an empty page (only its footer is left)
-    var tmplPage = tmpl.querySelector('.pdf-page'); if (tmplPage) tmplPage.style.fontSize = '';
-
-    var merged = [];
-    blocks.forEach(function (b) { var prev = merged[merged.length - 1]; if (prev && mergeInto(prev, b)) return; merged.push(b); });
-
-    // ---------- lay the document out again ----------
-    var slots = wraps.slice(), pageIdx = 0, page, queue = merged.slice(), guard = 0;
-    function pageAt(i) {
-      while (slots.length <= i) {
-        var last = slots[slots.length - 1], nw = tmpl.cloneNode(true);
-        last.parentNode.insertBefore(nw, last.nextSibling);
-        slots.push(nw);
-      }
-      return slots[i].querySelector('.pdf-page');
-    }
-    function put(pg, el) { var f = footerOf(pg); if (f) pg.insertBefore(el, f); else pg.appendChild(el); }
-    function next(carryHeadings) {
-      if (carryHeadings) {                                // a heading is never the last thing on a page
-        var bl = blocksOf(page);
-        while (bl.length > 1 && HEAD.test(bl[bl.length - 1].tagName)) { var h = bl.pop(); page.removeChild(h); queue.unshift(h); }
-      }
-      pageIdx++; page = pageAt(pageIdx);
-    }
-    page = pageAt(0);
-
-    while (queue.length) {
-      if (guard++ > 40000) throw new Error('reflow did not finish');
-      var b = queue.shift();
-      var hasBlocks = blocksOf(page).length > 0;
-      if (b.classList.contains('manual-page-break')) { if (hasBlocks) next(false); continue; }          // manual break: what follows starts a new page
-      if (b.hasAttribute('data-pdf-hard-break') && hasBlocks) { next(false); hasBlocks = false; }
-      if (!hasBlocks && isBlank(b)) continue;                                                           // a page never starts with an empty line
-      put(page, b);
-      if (fits(page)) continue;
-      var rest = cut(page, b);
-      if (rest === b) {                                                                                 // nothing of b fits on this page
-        if (!hasBlocks) { put(page, b); squeeze(page, b); continue; }                                   // taller than a whole page: keep it, scaled
-        queue.unshift(b); next(true); continue;
-      }
-      if (rest) { queue.unshift(rest); next(true); }
-    }
-
-    // ---------- tidy up ----------
-    var used = pageIdx + 1;
-    if (pageIdx > 0 && !blocksOf(page).length) used = pageIdx;
-    slots.slice(used).forEach(function (w) { if (w.parentNode) w.parentNode.removeChild(w); });
     var all = document.querySelectorAll('.pdf-page-wrap');
     for (var n = 0; n < all.length; n++) {
       var f = all[n].querySelector('.pdf-footer');
       if (f) f.textContent = 'Page ' + (n + 1) + ' of ' + all.length;
     }
-    return true;
+    return used.length > 0;
   } catch (err) {
     try { console.warn('[PDF] page reflow failed, using the simple margin guard instead:', err); } catch (_) {}
     restore();
+    return false;
+  }
+}
+
+// Slow mode (and the pages that fast mode starts from): re-flow the measured pages. Returns true if the pages were re-flowed.
+function _pdfReflowMeasuredPages(pageEls, createPage) {
+  if (typeof __pdfReflowEngine !== 'function' || !pageEls.length || typeof pageFits !== 'function') return false;
+  const original = pageEls.slice();
+  const backups = original.map((p) => _pdfWrapperOf(p).cloneNode(true));
+  const created = [];
+  const drop = (p) => { if (p && p.parentNode) p.parentNode.removeChild(p); };
+  try {
+    const used = __pdfReflowEngine({
+      pages: original,
+      hostOf: _pdfWrapperOf,
+      fits: (p) => pageFits(p),
+      makePage: () => { const p = createPage(); created.push(p); return p; },     // createPage() also registers the page in pageEls
+      removePage: drop,
+      afterClone: (el) => {
+        if (typeof processMathEquationsInContainer === 'function') processMathEquationsInContainer(el);
+        if (typeof renderAllKatexVisuals === 'function') renderAllKatexVisuals(el);
+      },
+      squeeze: (p) => { if (typeof _fitOversizedVisualsToPage === 'function') _fitOversizedVisualsToPage(p); }
+    });
+    pageEls.length = 0;
+    used.forEach((p) => pageEls.push(p));
+    return true;
+  } catch (e) {
+    console.warn('[PDF] page reflow failed, keeping the first layout:', e);
+    created.forEach(drop);
+    original.forEach((p, i) => {
+      const w = _pdfWrapperOf(p);
+      while (w.firstChild) w.removeChild(w.firstChild);
+      while (backups[i].firstChild) w.appendChild(backups[i].firstChild);
+    });
+    pageEls.length = 0;
+    original.forEach((p) => pageEls.push(p));
     return false;
   }
 }
@@ -4092,6 +4368,7 @@ function _pdfEnforceMarginScript() {
     '  return changed;',
     '}',
     // the real fix: a full reflow in the print layout. The guard above is only the fallback if the reflow throws.
+    String(__pdfReflowEngine),
     String(__pdfReflowPagesInIframe),
     'function enforcePageMargins(){',
     '  var ok = false;',
@@ -4110,7 +4387,7 @@ function buildUnifiedPDFPreviewDocument(pageChunks, isMonochromeMode, isDark, op
   const bgColor = '#f3f4f6';
   const pageBg = '#ffffff';
   const textColor = isMonochromeMode ? PDF_MONO_INK : '#111827';
-  const headingColor = isMonochromeMode ? PDF_MONO_INK : '#1e3a8a';
+  const headingColor = isMonochromeMode ? PDF_MONO_INK : '#172554';
   const headingBorderColor = isMonochromeMode ? '#000000' : '#2563eb';
   const borderColor = isMonochromeMode ? '#000000' : '#d1d5db';
   const footerColor = isMonochromeMode ? '#111111' : '#4b5563';
@@ -4131,7 +4408,7 @@ function buildUnifiedPDFPreviewDocument(pageChunks, isMonochromeMode, isDark, op
       html, body { margin:0; padding:0; height:100%; overflow-y:auto; overflow-x:hidden; -webkit-overflow-scrolling:touch; }
       body { background:${bgColor}; font-family:${PDF_DOC_FONT_STACK}; line-height:1.38; font-size:12pt; display:flex; flex-direction:column; align-items:center; padding:20px 10px; }
       .pdf-page-wrap { width:${PDF_LAYOUT.width}px; height:${PDF_LAYOUT.height}px; margin:0 auto 18px; overflow:hidden; flex:0 0 auto; break-inside:avoid; page-break-inside:avoid; contain:layout style paint; content-visibility:auto; contain-intrinsic-size:${PDF_LAYOUT.width}px ${PDF_LAYOUT.height}px; }
-      .pdf-page { background:${pageBg}; color:${textColor}; width:${PDF_LAYOUT.width}px; height:${PDF_LAYOUT.height}px; padding:${PDF_LAYOUT.padTop}px ${PDF_LAYOUT.padRight}px ${PDF_LAYOUT.padBottom}px ${PDF_LAYOUT.padLeft}px; box-sizing:border-box; position:relative; overflow:hidden; text-align:left; border-radius:12px; box-shadow:${pageShadow}; break-inside:avoid; page-break-inside:avoid; line-height:1.38; font-size:12pt; }
+      .pdf-page { background:${pageBg}; color:${textColor}; width:${PDF_LAYOUT.width}px; height:${PDF_LAYOUT.height}px; padding:${PDF_LAYOUT.padTop}px ${PDF_LAYOUT.padRight}px ${PDF_LAYOUT.padBottom}px ${PDF_LAYOUT.padLeft}px; box-sizing:border-box; position:relative; overflow:hidden; text-align:left; border-radius:0; box-shadow:${pageShadow}; break-inside:avoid; page-break-inside:avoid; line-height:1.38; font-size:12pt; }
       ${PDF_FORMAT_THEME_CSS}
       ${_pdfMarginCSS()}
       ${PDF_FIGURE_LAYOUT_CSS}
@@ -4146,15 +4423,9 @@ function buildUnifiedPDFPreviewDocument(pageChunks, isMonochromeMode, isDark, op
       .pdf-page :not(th):not(.block-example):not(.block-example *):not(.block-definition):not(.block-definition *):not(.block-warning):not(.block-warning *):not(.block-important):not(.block-important *):not(.block-note):not(.block-note *):not(.block-solution):not(.block-solution *):not(.block-accent):not(.pdf-footer) { color:${PDF_MONO_INK} !important; }
       ` : ''}
       .pdf-page p, .pdf-page li, .pdf-page h1, .pdf-page h2, .pdf-page h3, .pdf-page h4, .pdf-page blockquote, .pdf-page table, .pdf-page pre, .pdf-page code, .pdf-page img { orphans:2; widows:2; break-inside:avoid; page-break-inside:avoid; }
-      .pdf-page p { margin:0 0 7pt; line-height:1.38; }
-      .pdf-page ul, .pdf-page ol { margin:6pt 0 8pt 20pt; padding-left:20pt; }
-      .pdf-page li { margin:3pt 0; line-height:1.38; }
       .pdf-page > h1:first-child { margin-top:0; }
       .pdf-page > h2:first-child { margin-top:0; }
-      .pdf-footer { position:absolute; bottom:${PDF_LAYOUT.footerBottom}px; left:0; right:0; text-align:center; font-size:10pt; color:${footerColor}; font-family:${PDF_DOC_FONT_STACK}; }
-      h1{font-family:${PDF_DOC_FONT_STACK};font-size:22pt;margin:0 0 10pt;color:${headingColor};border-bottom:2px solid ${headingBorderColor};padding-bottom:4px;line-height:1.2}
-      h2{font-family:${PDF_DOC_FONT_STACK};font-size:16pt;margin:12pt 0 6pt;color:#1e40af;line-height:1.25}
-      h3{font-family:${PDF_DOC_FONT_STACK};font-size:13pt;margin:10pt 0 4pt;color:#0369a1;line-height:1.28}
+      ${_pdfSharedPageCSS({ mono: isMonochromeMode, footerColor })}
       h4{font-family:${PDF_DOC_FONT_STACK};font-size:12.8pt;margin:8pt 0 4pt;color:#334155;line-height:1.32}
       table{width:100%;border-collapse:collapse;table-layout:fixed;margin:10pt 0;font-size:10.6pt} th{background:${isMonochromeMode ? '#000000' : '#2563eb'};color:#ffffff;padding:7px 8px;border:1px solid ${borderColor};text-align:left;font-size:10.8pt;line-height:1.3} td{border:1px solid ${borderColor};padding:6px 8px;word-break:break-word;line-height:1.34;vertical-align:top} tr:nth-child(even){background:${isMonochromeMode ? 'transparent' : '#f8fafc'}}
       /* FIX: styles.css's ".doc-page-canvas svg { max-width:100%; height:auto; }"
@@ -4198,6 +4469,7 @@ function buildUnifiedPDFPreviewDocument(pageChunks, isMonochromeMode, isDark, op
       @media screen and (max-width:850px) { body{padding:8px 0 !important; align-items:center;} .pdf-page-wrap{margin:0 auto 12px; overflow:hidden;} .pdf-page{transform-origin:top left;} }
       ${typeof getPaginateCompactCSS === 'function' ? getPaginateCompactCSS('.pdf-page') : ''}
       ${PDF_SPLIT_CONTINUATION_CSS}
+      ${PDF_EDITOR_PARITY_CSS}
     </style>
   </head><body${pageClasses ? ` class="${pageClasses}"` : ''}>${pagesHTML}
   <script>
@@ -4389,8 +4661,30 @@ function buildUnifiedPDFPreviewDocument(pageChunks, isMonochromeMode, isDark, op
 }
 
 // ===== COMPUTE TRUE PDF PAGES =====
+// getAllCanvasHTML() joins the editor pages but drops the manual page breaks (the editor keeps a break as data-hard-break on the page that
+// follows it; only getCanvasSnapshotHTML() writes them out). Without them the export pulled content up across a break the editor shows.
+// The same page HTML is rebuilt here with a break in front of every page that started after one. If the rebuilt text is not exactly
+// what getAllCanvasHTML() returned (pagination in flight, stale cache) nothing is changed.
+function _pdfHTMLWithManualBreaks(base) {
+  try {
+    const pages = Array.from(document.querySelectorAll('#document-view-container .doc-page-canvas'));
+    if (!base || !pages.some((p) => p.dataset && p.dataset.hardBreak)) return base;
+    const parts = [], hard = [];
+    for (const page of pages) {
+      if (typeof pageHasContent === 'function' && !pageHasContent(page)) continue;
+      const clone = page.cloneNode(true);
+      clone.querySelectorAll('.page-footer-number').forEach((f) => f.remove());
+      if (typeof stripEmojiFromNode === 'function') stripEmojiFromNode(clone);
+      parts.push(clone.innerHTML);
+      hard.push(!!(page.dataset && page.dataset.hardBreak));
+    }
+    if (parts.join('') !== base) return base;
+    return parts.map((h, i) => (hard[i] && i > 0 ? '<div class="manual-page-break"></div>' : '') + h).join('');
+  } catch (e) { return base; }
+}
+
 async function computeTruePDFPages(htmlOverride) {
-  const rawHtml = htmlOverride !== undefined ? htmlOverride : (typeof getAllCanvasHTML === 'function' ? getAllCanvasHTML() : '');
+  const rawHtml = htmlOverride !== undefined ? htmlOverride : _pdfHTMLWithManualBreaks(typeof getAllCanvasHTML === 'function' ? getAllCanvasHTML() : '');
 
   const offscreen = document.createElement('div');
   offscreen.style.cssText = `position:fixed;left:-10000px;top:0;width:${PDF_LAYOUT.width}px;pointer-events:none;visibility:hidden;z-index:-1;`;
@@ -4434,6 +4728,10 @@ async function computeTruePDFPages(htmlOverride) {
       }
     } catch (_) { /* cosmetic flag only */ }
   });
+
+  // Re-flow the measured pages (fill every page, cut paragraphs / lists / tables / boxes instead of moving them whole). Both export modes
+  // start from these pages, so this is what removes the blank space at the bottom of a page.
+  try { _pdfReflowMeasuredPages(pageEls, createPage); } catch (e) { console.warn('[PDF] measured-page reflow skipped:', e); }
 
   for (const page of pageEls) {
     _pdfFitWideInlineMath(page);
@@ -4522,6 +4820,17 @@ const PDF_BOTTOM_SAFETY = 12;
 
 // A block (callout panel / equation panel / table) that is cut by a page break must look like ONE block:
 // the open edge is flat, has no margin and no border, so the two halves join the way a Word table does.
+// Rules the EDITOR injects into its own document (document-editor.js: injectEquationStyles / injectTightPageStyles). The pages are measured
+// inside the app document (where these rules exist) but printed in a separate document (where they did not), so every display equation
+// came out ~20px taller in the print (katex.css gives .katex-display a 1em margin, the editor sets it to 0) and split paragraphs / list
+// items got a margin or a bullet at the cut. Keep this block identical to those editor rules.
+const PDF_EDITOR_PARITY_CSS = `
+.eq-line{display:block;text-align:center;text-indent:0;margin:6px 0;max-width:100%;}
+.eq-line .katex-display{margin:0 !important;text-align:center;}
+li.split-tail{list-style:none;counter-increment:list-item 0;}
+.split-head{margin-bottom:0 !important;}
+.split-tail{margin-top:0 !important;text-indent:0 !important;}
+`;
 const PDF_SPLIT_CONTINUATION_CSS = `
 .pdf-split-next{margin-bottom:0 !important;border-bottom-left-radius:0 !important;border-bottom-right-radius:0 !important;border-bottom-width:0 !important;}
 .pdf-split-prev{margin-top:0 !important;border-top-left-radius:0 !important;border-top-right-radius:0 !important;border-top-width:0 !important;}
