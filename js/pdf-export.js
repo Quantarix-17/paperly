@@ -2589,7 +2589,7 @@ async function exportToImagePDF(btn) {
 
     let exportedPages = 0;
     for (let i = 0; i < pageList.length; i++) {
-      if (isCancellationRequested) {
+      if (typeof isCancellationRequested !== 'undefined' && isCancellationRequested) {
         if (typeof displayToastNotification === 'function') displayToastNotification(`Stopped at page ${i} – partial PDF saved.`);
         break;
       }
@@ -3606,7 +3606,7 @@ async function runExportParityCheck(opts) {
   edPage.className = 'doc-page-canvas pdf-export-parity-probe' + (classes ? ' ' + classes : '');
   edPage.style.cssText = 'position:absolute;left:-10000px;top:0;visibility:hidden;';
   edPage.innerHTML = sample;
-  (document.getElementById('document-view-container') || document.body).appendChild(edPage);
+  document.body.appendChild(edPage);   // NOT inside #document-view-container: it is watched by MutationObservers (reflow / history)
 
   const iframe = document.createElement('iframe');
   iframe.style.cssText = 'position:fixed;left:-10000px;top:0;width:1000px;height:1200px;border:0;visibility:hidden;';
@@ -3650,7 +3650,9 @@ if (typeof window !== 'undefined') window.runExportParityCheck = runExportParity
 //   - the print / PDF builder    (buildUnifiedPDFPreviewDocument)
 // so a change made in ONE place reaches all of them. The word export reads PDF_TYPE too.
 const PDF_TYPE = {
-  headingFont: "'Arial', sans-serif",
+  // The editor forces --font-doc (Times stack) on every non-math element with !important, so headings render in the
+  // document font, NOT in the Arial named by the static h1/h2/h3 rules. Keep the export identical to what is on screen.
+  headingFont: PDF_DOC_FONT_STACK,
   lineHeight: 1.38,
   paragraphMargin: '0 0 7pt',
   listMargin: '6pt 0 8pt 20pt',
@@ -3690,8 +3692,12 @@ function _pdfFooterCSS(footerColor) {
 function _pdfEditorMirrorCSS() {
   const out = [];
   try {
-    const SKIP = /:hover|:focus|:active|::selection|::-webkit|\.dark\b|(^|[\s,>+~])html\b|pdf-export-measure-page|data-oversized|data-paginate|photocopy|\.selected|resize|handle|toolbar|contenteditable|:is\(|:where\(|:has\(/i;
-    const PART = /^\.doc-page-canvas(\.pdf-format-[\w-]+)?\s+\S/;
+    // never copy: dark-mode wrappers, the editor shell, off-screen measuring pages, editing UI / interaction states
+    const SKIP = /\.dark\b|editor-page-light|(^|[\s,>+~(])html\b|(^|[\s,>+~(])body\b|pdf-export-measure-page|data-oversized|data-paginate|photocopy|:hover|:focus|:active|::selection|::-webkit|\.selected|resize|handle|toolbar|contenteditable|:empty|placeholder/i;
+    // (a) content rules:  .doc-page-canvas[.pdf-format-x] <descendant ...>
+    const CONTENT = /^(:root\s+)?\.doc-page-canvas((\.|:not\()[^\s]*)?\s+\S/;
+    // (b) page-level THEME rules (custom properties, backgrounds, page fonts): .doc-page-canvas.pdf-format-x / .text-format-x
+    const THEME_PAGE = /^(:root\s+)?\.doc-page-canvas(\.(pdf|text)-format-[\w-]+)+(:not\([^)]*\))*$/;
     for (const sheet of Array.from(document.styleSheets || [])) {
       let rules;
       try { rules = sheet.cssRules; } catch (_) { continue; }   // cross-origin sheet
@@ -3700,11 +3706,11 @@ function _pdfEditorMirrorCSS() {
         if (r.type !== 1 || !r.selectorText) continue;
         const selText = r.selectorText;
         if (SKIP.test(selText)) continue;
-        const parts = selText.split(',').map(x => x.trim());
-        if (!parts.every(x => PART.test(x))) continue;
+        const parts = selText.split(/,(?![^()]*\))/).map(x => x.trim());      // split on commas outside (...)
+        if (!parts.every(x => CONTENT.test(x) || THEME_PAGE.test(x))) continue;
         const cssText = r.cssText;
         const vars = cssText.match(/var\(\s*--[\w-]+/g) || [];
-        if (vars.some(v => !/--(t|c|blk|pair)-/.test(v))) continue;
+        if (vars.some(v => !/--(t|c|blk|pair)-/.test(v))) continue;           // editor-only variable -> would resolve to nothing
         out.push(cssText);
       }
     }
@@ -3715,7 +3721,7 @@ function _pdfEditorMirrorCSS() {
 function _pdfSharedPageCSS(opts) {
   const o = opts || {};
   return [
-    _pdfEditorMirrorCSS(),            // live copy of the editor's content rules
+    o.mono ? '' : _pdfEditorMirrorCSS(),   // live copy of the editor's content/theme rules (monochrome keeps its own black/white rules)
     _pdfTypographyCSS(!!o.mono),      // tokens win ties: same specificity, later in the cascade
     _pdfFooterCSS(o.footerColor || '#4b5563')
   ].join('\n');
